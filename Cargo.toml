@@ -1,0 +1,11 @@
+[workspace]
+
+members = [ "gamiscreen-client-linux","gamiscreen-server"]
+
+[workspace.package]
+name = "gamiscreen"
+version = "0.1.0"
+edition = "2024"
+authors = ["Lukasz Klimek"]
+license = "GPL-3.0"
+rust-version = "1.89"

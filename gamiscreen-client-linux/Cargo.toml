@@ -1,0 +1,43 @@
+[package]
+name = "gamiscreen-client-linux"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "time",
+    "process",
+] }
+# reqwest = { version = "0.12", default-features = false, features = [
+#     "json",
+#     "rustls-tls",
+# ] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "2"
+directories = "6"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+zbus = { version = "5.10", default-features = false, features = ["tokio"] }
+zbus_names = "4.2"
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+rpassword = "7"
+nix = "0.30"
+uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
+urlencoding = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+gamiscreen-server = { path = "../gamiscreen-server", features = [
+    "rest-client",
+] }
+
+[[bin]]
+name = "gamiscreen-client-linux"
+path = "src/main.rs"

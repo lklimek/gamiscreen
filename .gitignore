@@ -1,1 +1,7 @@
 /target
+*/config.yaml
+src/main.rs
+gamiscreen-server/data
+gamiscreen-web/node_modules
+gamiscreen-web/dist
+logs/

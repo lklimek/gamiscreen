@@ -1,0 +1,31 @@
+jwt_secret: "change-this-to-a-long-random-secret"
+dev_cors_origin: "http://localhost:5173"  # optional; only for development
+listen_port: 5151  # optional; server listens on this port if set
+users:
+  - username: "parent"
+    # bcrypt hash for password "secret123" (example only; change it!)
+    # To generate your own bcrypt hash on Linux:
+    # - Using htpasswd (Debian/Ubuntu: sudo apt-get install apache2-utils)
+    #     htpasswd -nbBC 12 ignored 'your_password' | cut -d: -f2
+    # - Or using mkpasswd (Debian/Ubuntu: sudo apt-get install whois)
+    #     mkpasswd -m bcrypt 'your_password'
+    password_hash: "$2b$12$4fueo8QJqUZo5n6yYkI8YusEVf8VdR9PZkqH3UlfZo2p2TzZgCk9i"
+    role: parent
+  - username: "alice"
+    # bcrypt hash for password "kidpass" (example only; change it!)
+    # See commands above to generate your own hash
+    password_hash: "$2b$12$h3SqcX1uM3m8I6WcU2kZ5OeGQYqI4mYt0oFj2v8qz0w1r2s3t4u5vW"
+    role: child
+    child_id: "alice"
+children:
+  - id: "alice"
+    display_name: "Alice"
+  - id: "bob"
+    display_name: "Bob"
+tasks:
+  - id: "homework"
+    name: "Homework done"
+    minutes: 30
+  - id: "chores"
+    name: "Chores completed"
+    minutes: 15

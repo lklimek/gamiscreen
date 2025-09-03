@@ -1,0 +1,13 @@
+# Example config for gamiscreen-client-linux
+# Place as: ~/.config/gamiscreen/client.yaml
+
+server_url: "http://127.0.0.1:5151"
+child_id: "alice"
+device_id: "alice-pc"
+# Optional (defaults shown)
+# interval_secs: 60
+# If not set, the client tries DBus: GNOME → login1
+# lock_cmd:
+#   - loginctl
+#   - lock-session
+#   - $XDG_SESSION_ID
