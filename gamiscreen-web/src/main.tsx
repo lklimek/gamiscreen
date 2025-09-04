@@ -11,3 +11,12 @@ createRoot(container).render(
     <App />
   </React.StrictMode>
 )
+
+// Register service worker in production builds
+if ('serviceWorker' in navigator && import.meta.env.MODE === 'production') {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
+      console.warn('Service worker registration failed:', err)
+    })
+  })
+}
