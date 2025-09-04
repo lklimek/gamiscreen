@@ -129,6 +129,7 @@ pub fn router(state: AppState) -> Router {
         .fallback(get(serve_embedded))
         .with_state(state.clone())
         .layer(trace)
+        .layer(middleware::from_fn(add_security_headers))
         .layer(middleware::from_fn(add_request_id));
 
     // Optionally add CORS for dev if configured
@@ -170,6 +171,64 @@ async fn add_request_id(
     if let Ok(hv) = HeaderValue::from_str(&rid) {
         resp.headers_mut().insert(hdr, hv);
     }
+    Ok(resp)
+}
+
+async fn add_security_headers(
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> Result<AxumResponse, AppError> {
+    let path = req.uri().path().to_string();
+    let mut resp = next.run(req).await;
+
+    // General security headers for all responses
+    let headers = resp.headers_mut();
+    headers.insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        HeaderName::from_static("x-frame-options"),
+        HeaderValue::from_static("SAMEORIGIN"),
+    );
+    headers.insert(
+        HeaderName::from_static("referrer-policy"),
+        HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(
+        HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static("geolocation=(), microphone=(), camera=()"),
+    );
+    headers.insert(
+        HeaderName::from_static("cross-origin-opener-policy"),
+        HeaderValue::from_static("same-origin"),
+    );
+    headers.insert(
+        HeaderName::from_static("cross-origin-resource-policy"),
+        HeaderValue::from_static("same-origin"),
+    );
+    // HSTS is only honored on HTTPS; harmless otherwise
+    headers.insert(
+        HeaderName::from_static("strict-transport-security"),
+        HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+    );
+
+    // Disable caching for API and health endpoints
+    if path == "/healthz" || path.starts_with("/api/") || path == "/api" {
+        headers.insert(
+            HeaderName::from_static("cache-control"),
+            HeaderValue::from_static("no-store, no-cache, must-revalidate, private"),
+        );
+        headers.insert(
+            HeaderName::from_static("pragma"),
+            HeaderValue::from_static("no-cache"),
+        );
+        headers.insert(
+            HeaderName::from_static("expires"),
+            HeaderValue::from_static("0"),
+        );
+    }
+
     Ok(resp)
 }
 
@@ -465,7 +524,7 @@ struct ErrorBody {
 }
 
 #[derive(Debug)]
-enum AppError {
+pub enum AppError {
     BadRequest(String),
     Unauthorized,
     Forbidden,
