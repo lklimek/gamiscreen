@@ -40,8 +40,9 @@ Pages / Flow
   - Tasks come from `/api/children/{id}/tasks` and include `last_done` for the child.
   - If a task was completed today, a small “Done” badge appears next to its name; hover shows the last done time.
   - Clicking a task (parent only) opens a confirmation dialog and then calls `/api/children/{id}/reward`.
-  - After a task reward, the UI updates remaining and marks the task as done for today immediately.
-  - Auto-refresh every 60s.
+  - After a reward, remaining updates immediately, the task is marked done for today, and reward history refreshes (page 1).
+  - Reward History: collapsible section with a refresh button and pagination.
+  - Auto-refresh every 60s for remaining/tasks.
 
 Config
 - `VITE_API_BASE_URL` (optional): base URL for API (e.g., `http://localhost:3000`). When omitted, calls same-origin.

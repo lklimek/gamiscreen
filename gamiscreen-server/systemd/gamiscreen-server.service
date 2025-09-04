@@ -1,0 +1,22 @@
+[Unit]
+Description=GamiScreen Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={binary_path}
+Restart=always
+RestartSec=5s
+Environment=RUST_LOG=info
+# Default config/db locations for a system install:
+Environment=CONFIG_PATH={config_path}
+Environment=DB_PATH={db_path}
+# Optionally set a fixed port (otherwise taken from CONFIG_PATH or default 5151)
+#Environment=PORT=5151
+WorkingDirectory={working_dir}
+User={user}
+Group={group}
+
+[Install]
+WantedBy=multi-user.target
