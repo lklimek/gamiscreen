@@ -1,15 +1,14 @@
 // Basic service worker for offline caching
 const CACHE_NAME = 'gamiscreen-cache-v1';
-const OFFLINE_URL = '/';
+const OFFLINE_URL = 'index.html';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
     (async () => {
       const cache = await caches.open(CACHE_NAME);
       await cache.addAll([
-        '/',
-        '/index.html',
-        '/manifest.webmanifest',
+        'index.html',
+        'manifest.webmanifest',
       ]);
       self.skipWaiting();
     })()
@@ -65,4 +64,3 @@ self.addEventListener('fetch', (event) => {
     })()
   );
 });
-

@@ -1,0 +1,62 @@
+name: Deploy Web to GitHub Pages
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'gamiscreen-web/**'
+      - '.github/workflows/deploy-gh-pages.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gamiscreen-web/package-lock.json
+
+      - name: Install deps
+        working-directory: gamiscreen-web
+        run: npm ci
+
+      - name: Build (GH Pages base)
+        working-directory: gamiscreen-web
+        env:
+          # Show server URL input on GH Pages build
+          VITE_ALLOW_CUSTOM_SERVER_URL: '1'
+        run: |
+          REPO_NAME="${GITHUB_REPOSITORY#*/}"
+          npm run build -- --base="/${REPO_NAME}/"
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: gamiscreen-web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+

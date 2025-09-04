@@ -1,21 +1,21 @@
 {
   "name": "Gamiscreen",
   "short_name": "Gamiscreen",
-  "start_url": "/",
-  "scope": "/",
+  "start_url": ".",
+  "scope": ".",
   "display": "standalone",
   "background_color": "#0ea5e9",
   "theme_color": "#0ea5e9",
   "description": "Reward earned screen time.",
   "icons": [
     {
-      "src": "/icons/icon-192x192.png",
+      "src": "icons/icon-192x192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/icons/icon-512x512.png",
+      "src": "icons/icon-512x512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
@@ -26,18 +26,18 @@
       "name": "Status",
       "short_name": "Status",
       "description": "View remaining minutes",
-      "url": "/#status",
+      "url": "#status",
       "icons": [
-        { "src": "/icons/icon-192x192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" }
+        { "src": "icons/icon-192x192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" }
       ]
     },
     {
       "name": "Login",
       "short_name": "Login",
       "description": "Open login screen",
-      "url": "/#login",
+      "url": "#login",
       "icons": [
-        { "src": "/icons/icon-192x192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" }
+        { "src": "icons/icon-192x192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" }
       ]
     }
   ]

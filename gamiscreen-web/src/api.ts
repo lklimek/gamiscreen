@@ -5,6 +5,7 @@ export interface TaskWithStatusDto { id: string; name: string; minutes: number; 
 export interface RemainingDto { child_id: string; remaining_minutes: number }
 
 const TOKEN_KEY = 'gamiscreen.token'
+const SERVER_BASE_KEY = 'gamiscreen.server_base'
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY)
@@ -13,6 +14,23 @@ export function getToken(): string | null {
 export function setToken(token: string | null) {
   if (token) localStorage.setItem(TOKEN_KEY, token)
   else localStorage.removeItem(TOKEN_KEY)
+}
+
+export function getServerBase(): string | null {
+  try {
+    return localStorage.getItem(SERVER_BASE_KEY)
+  } catch {
+    return null
+  }
+}
+
+export function setServerBase(url: string | null) {
+  try {
+    if (url && url.trim()) localStorage.setItem(SERVER_BASE_KEY, url.replace(/\/+$/, ''))
+    else localStorage.removeItem(SERVER_BASE_KEY)
+  } catch {
+    // ignore storage errors (private mode, etc.)
+  }
 }
 
 export type Role = 'parent' | 'child'
@@ -40,7 +58,9 @@ export function getAuthClaims(): JwtClaims | null {
 }
 
 function apiBase(): string {
-  // Prefer explicit env; fallback to same-origin
+  // Prefer user-configured base (for GH Pages), then env, then same-origin
+  const ls = getServerBase()
+  if (ls) return ls.replace(/\/+$/, '')
   const env = (import.meta as any).env || {}
   const v = env.VITE_API_BASE_URL || ''
   if (v) return v

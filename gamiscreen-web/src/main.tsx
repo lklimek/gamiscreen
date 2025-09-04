@@ -15,7 +15,9 @@ createRoot(container).render(
 // Register service worker in production builds
 if ('serviceWorker' in navigator && import.meta.env.MODE === 'production') {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch((err) => {
+    const base = (import.meta as any).env?.BASE_URL || '/'
+    const url = (base.endsWith('/') ? base : base + '/') + 'sw.js'
+    navigator.serviceWorker.register(url).catch((err) => {
       console.warn('Service worker registration failed:', err)
     })
   })
