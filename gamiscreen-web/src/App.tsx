@@ -42,6 +42,13 @@ export function App() {
   const loggedIn = !!token
   const claims = getAuthClaims()
   const isChild = claims?.role === 'child'
+  // PWA install prompt handling
+  const [installEvt, setInstallEvt] = useState<null | (Event & { prompt: () => Promise<void> })>(null)
+  const [installed, setInstalled] = useState<boolean>(() => {
+    const isStandalone = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches
+    const isIOSStandalone = (navigator as any).standalone === true
+    return isStandalone || isIOSStandalone
+  })
 
   const logout = () => {
     setToken(null)
@@ -59,6 +66,24 @@ export function App() {
       }
     }
   }, [loggedIn])
+
+  useEffect(() => {
+    const onBip = (e: Event & { preventDefault: () => void; prompt: () => Promise<void> }) => {
+      e.preventDefault()
+      setInstallEvt(e)
+    }
+    const onInstalled = () => { setInstalled(true); setInstallEvt(null) }
+    window.addEventListener('beforeinstallprompt', onBip as any)
+    window.addEventListener('appinstalled', onInstalled)
+    const mm = window.matchMedia && window.matchMedia('(display-mode: standalone)')
+    const onDisplayChange = () => setInstalled(mm.matches)
+    mm && mm.addEventListener && mm.addEventListener('change', onDisplayChange)
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onBip as any)
+      window.removeEventListener('appinstalled', onInstalled)
+      mm && mm.removeEventListener && mm.removeEventListener('change', onDisplayChange)
+    }
+  }, [])
 
   return (
     <main className="container">
@@ -96,6 +121,11 @@ export function App() {
           )}
         </section>
       </article>
+      {!installed && installEvt && (
+        <footer style={{ textAlign: 'center', fontSize: 12, marginTop: 12 }}>
+          <a href="#install" onClick={async (e) => { e.preventDefault(); const ev = installEvt; try { await ev.prompt(); } catch {} }}>Install app</a>
+        </footer>
+      )}
     </main>
   )
 }
