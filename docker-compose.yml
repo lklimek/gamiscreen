@@ -1,0 +1,24 @@
+version: "3.8"
+
+services:
+  gamiscreen-server:
+    build:
+      context: .
+      dockerfile: gamiscreen-server/Dockerfile
+    image: gamiscreen/server:latest
+    container_name: gamiscreen-server
+    restart: unless-stopped
+    ports:
+      - "5151:5151"
+    environment:
+      - RUST_LOG=info
+      - CONFIG_PATH=/etc/gamiscreen/config.yaml
+      - DB_PATH=/var/lib/gamiscreen/app.db
+    volumes:
+      # Provide your server config on the host
+      - ./gamiscreen-server/config.yaml:/etc/gamiscreen/config.yaml:ro
+      # Persist the SQLite database in a named volume
+      - gamiscreen-data:/var/lib/gamiscreen
+
+volumes:
+  gamiscreen-data:
