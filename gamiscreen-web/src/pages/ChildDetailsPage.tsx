@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getAuthClaims, getRemaining, listChildren, listChildTasks, rewardMinutes, TaskWithStatusDto, listChildRewards, RewardHistoryItemDto } from '../api'
+import { getAuthClaims, getRemaining, listChildren, listChildRewards, listChildTasks, RewardHistoryItemDto, rewardMinutes, TaskWithStatusDto } from '../api'
 
 export function ChildDetailsPage(props: { childId: string }) {
   const { childId } = props
@@ -53,7 +53,7 @@ export function ChildDetailsPage(props: { childId: string }) {
       setRewardsLoading(true)
       const rh = await listChildRewards(childId, nextPage, perPage)
       setRewards(rh)
-    } catch {}
+    } catch { }
     finally { setRewardsLoading(false) }
   }
 
@@ -133,7 +133,7 @@ export function ChildDetailsPage(props: { childId: string }) {
                 <div className="row" style={{ gap: 8, alignItems: 'center' }}>
                   <span className="subtitle">+{t.minutes} min</span>
                   {canClick && (
-                    <button className={isDoneToday ? 'contrast' : undefined} onClick={() => setConfirm({ mode: 'task', task: t })}>Choose</button>
+                    <button className={isDoneToday ? 'contrast' : undefined} onClick={() => setConfirm({ mode: 'task', task: t })}>Accept</button>
                   )}
                 </div>
               </div>
@@ -147,7 +147,7 @@ export function ChildDetailsPage(props: { childId: string }) {
           <h3 className="title" style={{ fontSize: 16, marginBottom: 8 }}>Custom</h3>
           <form onSubmit={(e) => { e.preventDefault(); const n = parseInt(customMinutes, 10); if (Number.isFinite(n) && n > 0) { setConfirm({ mode: 'custom', minutes: n }) } }} className="row" style={{ gap: 8, alignItems: 'center' }}>
             <input type="number" min={1} step={1} placeholder="e.g., 15" value={customMinutes} onChange={e => setCustomMinutes(e.target.value)} />
-            <button type="submit">Choose</button>
+            <button type="submit">Accept</button>
           </form>
         </div>
       )}
@@ -194,9 +194,9 @@ export function ChildDetailsPage(props: { childId: string }) {
                 )}
               </tbody>
             </table>
-            <div className="row" style={{justifyContent:'space-between'}}>
-              <button className="secondary" disabled={page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>Previous</button>
-              <button className="secondary" disabled={rewards.length < perPage} onClick={()=>setPage(p=>p+1)}>Next</button>
+            <div className="row" style={{ justifyContent: 'space-between' }}>
+              <button className="secondary" disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Previous</button>
+              <button className="secondary" disabled={rewards.length < perPage} onClick={() => setPage(p => p + 1)}>Next</button>
             </div>
           </div>
         )}
