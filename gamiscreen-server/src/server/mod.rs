@@ -395,6 +395,15 @@ async fn api_child_register(
     Path(p): Path<ChildPathId>,
     Json(body): Json<api::ClientRegisterReq>,
 ) -> Result<Json<api::ClientRegisterResp>, AppError> {
+    // Ensure child exists in DB
+    let exists = state
+        .store
+        .child_exists(&p.id)
+        .await
+        .map_err(AppError::internal)?;
+    if !exists {
+        return Err(AppError::not_found(format!("child not found: {}", p.id)));
+    }
     let device_id = body.device_id.clone();
     let token = auth::issue_jwt_for_user(
         &state,

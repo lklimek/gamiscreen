@@ -109,6 +109,24 @@ impl Store {
         .map_err(|e| e.to_string())?
     }
 
+    pub async fn child_exists(&self, child: &str) -> Result<bool, String> {
+        use schema::children::dsl::*;
+        let pool = self.pool.clone();
+        let child_id = child.to_string();
+        tokio::task::spawn_blocking(move || -> Result<bool, String> {
+            let mut conn = pool.get().map_err(|e| e.to_string())?;
+            configure_sqlite_conn(&mut conn).map_err(|e| format!("pragma error: {e}"))?;
+            let count: i64 = children
+                .filter(id.eq(&child_id))
+                .count()
+                .get_result(&mut conn)
+                .map_err(|e| e.to_string())?;
+            Ok(count > 0)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
     pub async fn list_tasks(&self) -> Result<Vec<Task>, String> {
         use schema::tasks::dsl::*;
         let pool = self.pool.clone();
