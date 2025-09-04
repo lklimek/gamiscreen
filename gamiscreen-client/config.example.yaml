@@ -1,4 +1,4 @@
-# Example config for gamiscreen-client-linux
+# Example config for gamiscreen-client
 # Place as: ~/.config/gamiscreen/client.yaml
 
 server_url: "http://127.0.0.1:5151"

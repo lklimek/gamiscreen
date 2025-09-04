@@ -1,6 +1,6 @@
 [workspace]
 
-members = [ "gamiscreen-client-linux","gamiscreen-server"]
+members = [ "gamiscreen-client","gamiscreen-server"]
 
 [workspace.package]
 name = "gamiscreen"

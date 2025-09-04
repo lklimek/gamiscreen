@@ -39,7 +39,7 @@ fn init_tracing() {
 }
 
 fn keyring_entry(server_url: &str) -> Result<keyring::Entry, AppError> {
-    let service = "gamiscreen-client-linux";
+    let service = "gamiscreen-client";
     keyring::Entry::new(service, &crate::config::normalize_server_url(server_url))
         .map_err(|e| AppError::Keyring(e.to_string()))
 }

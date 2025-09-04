@@ -873,7 +873,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gamiscreen-client-linux"
+name = "gamiscreen-client"
 version = "0.1.0"
 dependencies = [
  "base64",

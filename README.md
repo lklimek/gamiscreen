@@ -68,7 +68,7 @@ The Linux client sends a heartbeat every minute with UTC minute timestamps. Miss
 
 ## Linux Client Registration (CLI)
 
-- `gamiscreen-client-linux login`:
+- `gamiscreen-client login`:
   - Logs in as Parent or Child.
   - If Parent, prompts for `child_id` to provision; generates a `device_id` and calls `/api/client/register`.
   - Stores device token in the system keyring and writes `~/.config/gamiscreen/client.yaml` with `server_url`, `child_id`, and `device_id`.
@@ -77,7 +77,7 @@ The Linux client sends a heartbeat every minute with UTC minute timestamps. Miss
 
 - Server: [gamiscreen-server/](gamiscreen-server/) — Rust server that exposes REST endpoints, tracks usage, and serves the web UI. Example config: [`gamiscreen-server/config.yaml.example`](gamiscreen-server/config.yaml.example)
 - Web: [gamiscreen-web/](gamiscreen-web/) — React + TypeScript SPA. See [`gamiscreen-web/README.md`](gamiscreen-web/README.md) for dev and build instructions.
-- Linux client: [gamiscreen-client-linux/](gamiscreen-client-linux/) — CLI and daemon for Linux session control (Timekpr‑Next integration).
+- Linux client: [gamiscreen-client/](gamiscreen-client/) — CLI and daemon for Linux session control (Timekpr‑Next integration).
 
 ## Installation
 

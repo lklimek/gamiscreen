@@ -130,7 +130,7 @@ fn read_machine_id() -> Option<String> {
 }
 
 fn keyring_entry_for_login(server_url: &str) -> Result<keyring::Entry, AppError> {
-    keyring::Entry::new("gamiscreen-client-linux", server_url)
+    keyring::Entry::new("gamiscreen-client", server_url)
         .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))
 }
 

@@ -1,5 +1,5 @@
 [package]
-name = "gamiscreen-client-linux"
+name = "gamiscreen-client"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -39,5 +39,5 @@ gamiscreen-server = { path = "../gamiscreen-server", features = [
 ] }
 
 [[bin]]
-name = "gamiscreen-client-linux"
+name = "gamiscreen-client"
 path = "src/main.rs"

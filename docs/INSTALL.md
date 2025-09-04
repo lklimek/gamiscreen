@@ -68,7 +68,7 @@ env VITE_DEV_PROXY=1 VITE_API_PROXY_TARGET=http://localhost:5151 npm run dev
 
 ```
 # From workspace root
-cargo install --path gamiscreen-client-linux
+cargo install --path gamiscreen-client
 ```
 
 2) Authenticate and bootstrap
@@ -76,21 +76,21 @@ cargo install --path gamiscreen-client-linux
 ```
 # Logs in and stores a device-bound token in the keyring;
 # also writes ~/.config/gamiscreen/client.yaml
-gamiscreen-client-linux login --server http://localhost:5151 --username parent
+gamiscreen-client login --server http://localhost:5151 --username parent
 ```
 
-Alternatively, create the config manually from `gamiscreen-client-linux/config.example.yaml` and ensure the keyring has a token for the server URL.
+Alternatively, create the config manually from `gamiscreen-client/config.example.yaml` and ensure the keyring has a token for the server URL.
 
 3) Run as a systemd user service (recommended)
 
 ```
 mkdir -p ~/.config/systemd/user
-cp gamiscreen-client-linux/systemd/gamiscreen-client-linux.service ~/.config/systemd/user/
+cp gamiscreen-client/systemd/gamiscreen-client.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now gamiscreen-client-linux
+systemctl --user enable --now gamiscreen-client
 
 # View logs
-journalctl --user -u gamiscreen-client-linux -f
+journalctl --user -u gamiscreen-client -f
 ```
 
 Notes

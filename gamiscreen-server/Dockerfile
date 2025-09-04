@@ -15,12 +15,12 @@ WORKDIR /app
 # Leverage Docker layer caching for Rust deps
 COPY Cargo.toml Cargo.lock ./
 COPY gamiscreen-server/Cargo.toml gamiscreen-server/Cargo.toml
-COPY gamiscreen-client-linux/Cargo.toml gamiscreen-client-linux/Cargo.toml
+COPY gamiscreen-client/Cargo.toml gamiscreen-client/Cargo.toml
 
 # Create minimal placeholders to satisfy workspace structure
-RUN mkdir -p gamiscreen-server/src gamiscreen-client-linux/src \
+RUN mkdir -p gamiscreen-server/src gamiscreen-client/src \
  && echo "fn main(){}" > gamiscreen-server/src/main.rs \
- && echo "pub fn placeholder(){}" > gamiscreen-client-linux/src/lib.rs
+ && echo "pub fn placeholder(){}" > gamiscreen-client/src/lib.rs
 
 # Pre-build Rust dependencies without invoking web build.rs
 RUN SKIP_WEB_BUILD=1 cargo build -p gamiscreen-server --release || true

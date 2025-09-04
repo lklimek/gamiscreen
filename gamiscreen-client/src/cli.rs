@@ -10,7 +10,7 @@ const HELP_EPILOG: &str = r#"Config resolution order:
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "gamiscreen-client-linux",
+    name = "gamiscreen-client",
     version,
     about = "Linux client session agent for GamiScreen",
     long_about = None,
