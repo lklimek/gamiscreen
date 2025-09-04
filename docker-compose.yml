@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   gamiscreen-server:
     build:
@@ -20,5 +18,24 @@ services:
       # Persist the SQLite database in a named volume
       - gamiscreen-data:/var/lib/gamiscreen
 
+  gamiscreen-proxy:
+    image: caddy:2.8-alpine
+    container_name: gamiscreen-proxy
+    restart: unless-stopped
+    depends_on:
+      - gamiscreen-server
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./reverse-proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      - CERT_CN=${CERT_CN:-localhost}
+
+
 volumes:
   gamiscreen-data:
+  caddy-data:
+  caddy-config:
