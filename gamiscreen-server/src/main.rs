@@ -11,15 +11,41 @@ async fn main() {
     let args = cli::Cli::parse();
     if let Some(cmd) = args.command {
         match cmd {
-            cli::Command::Install { unit_path, config_path, db_path, bin_path, user, group, working_dir, force } => {
-                let bin = bin_path.unwrap_or_else(|| std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("/usr/local/bin/gamiscreen-server")));
-                if let Err(e) = install::install_system(&unit_path, &config_path, &db_path, &bin, &user, &group, &working_dir, force) {
+            cli::Command::Install {
+                unit_path,
+                config_path,
+                db_path,
+                bin_path,
+                user,
+                group,
+                working_dir,
+                force,
+            } => {
+                let bin = bin_path.unwrap_or_else(|| {
+                    std::env::current_exe().unwrap_or_else(|_| {
+                        std::path::PathBuf::from("/usr/local/bin/gamiscreen-server")
+                    })
+                });
+                if let Err(e) = install::install_system(
+                    &unit_path,
+                    &config_path,
+                    &db_path,
+                    &bin,
+                    &user,
+                    &group,
+                    &working_dir,
+                    force,
+                ) {
                     eprintln!("Install error: {}", e);
                     std::process::exit(2);
                 }
                 return;
             }
-            cli::Command::Uninstall { unit_path, remove_config, config_path } => {
+            cli::Command::Uninstall {
+                unit_path,
+                remove_config,
+                config_path,
+            } => {
                 if let Err(e) = install::uninstall_system(&unit_path, remove_config, &config_path) {
                     eprintln!("Uninstall error: {}", e);
                     std::process::exit(2);

@@ -14,6 +14,9 @@ pub struct ClientConfig {
     pub device_id: String,
     #[serde(default = "default_interval")]
     pub interval_secs: u64,
+    /// Seconds before lock to warn the user with a countdown
+    #[serde(default = "default_warn_before_lock_secs")]
+    pub warn_before_lock_secs: u64,
     /// Optional override for lock command. Example: ["loginctl", "lock-session", "$XDG_SESSION_ID"]
     #[serde(default)]
     pub lock_cmd: Option<Vec<String>>,
@@ -21,6 +24,10 @@ pub struct ClientConfig {
 
 fn default_interval() -> u64 {
     60
+}
+
+fn default_warn_before_lock_secs() -> u64 {
+    10
 }
 
 pub fn resolve_config_path(cli_value: Option<PathBuf>) -> Result<PathBuf, AppError> {

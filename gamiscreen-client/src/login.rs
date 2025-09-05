@@ -75,6 +75,7 @@ pub async fn login(
         child_id: reg.child_id,
         device_id: reg.device_id,
         interval_secs: 60,
+        warn_before_lock_secs: 10,
         lock_cmd: None,
     };
     let path = crate::config::default_config_path()

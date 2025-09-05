@@ -1,16 +1,18 @@
 use std::time::Duration;
 
 use gamiscreen_server::shared::api::{self};
-use tokio::time::sleep;
-use tracing::{error, info, warn};
+use tokio::time::{Instant, sleep};
+use tracing::{debug, error, info, warn};
 
 pub mod cli;
 pub mod config;
 pub mod login;
+pub mod notify;
 pub mod platform;
 
 pub use cli::{Cli, Command};
 pub use config::{ClientConfig, load_config, resolve_config_path};
+use notify::default_backend;
 pub use platform::linux::lock::{LockBackend, detect_lock_backend, enforce_lock_backend};
 
 #[derive(Debug, thiserror::Error)]
@@ -70,12 +72,16 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
     let mut last_accounted_minute: Option<i64> = None;
     let fail_fuse_secs = 300u64; // 5 minutes
 
+    // Countdown task controller (graceful cancel via signal)
+    let countdown_task = CountdownTask::new(cfg.warn_before_lock_secs);
+
     loop {
         let start = std::time::Instant::now();
         match send_heartbeat(&cfg, &token, &mut last_accounted_minute).await {
             Ok(rem) => {
                 info!(remaining = rem, "heartbeat ok");
                 failures = 0;
+                countdown_task.tick(rem as u64).await;
                 if rem <= 0 {
                     warn!("minutes exhausted; enforcing screen lock");
                     if let Err(e) = enforce_lock_backend(&backend).await {
@@ -142,4 +148,67 @@ fn read_token_from_keyring(server_url: &str) -> Result<String, AppError> {
     entry
         .get_password()
         .map_err(|e| AppError::Keyring(e.to_string()))
+}
+
+struct CountdownTask {
+    // new Instant when we should display notification
+    when_tx: tokio::sync::mpsc::Sender<tokio::time::Instant>,
+    // how many seconds before lock we should notify
+    notify_secs: u64,
+}
+
+impl CountdownTask {
+    fn new(warn_before_lock_secs: u64) -> Self {
+        let far_in_future = Instant::now() + Duration::from_secs(60 * 60 * 24 * 365 * 10); // 10 years
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(5);
+        tokio::spawn(async move {
+            let mut notifier = default_backend();
+
+            let mut when_notify = far_in_future;
+            // wait until deadline and show countdown; countdown will stop when new deadline arrives
+            loop {
+                tokio::select! {
+                    new_when = rx.recv() => {
+                        let Some(when) = new_when else {
+                            info!("countdown task: channel closed; exiting");
+                            break;
+                        };
+                        when_notify = when;
+
+                        // we got new msg - it means previous notification is obsolete
+                        debug!(?when_notify, "countdown task: new deadline received; closing previous notification");
+                        notifier.close().await;
+                        // continue to next loop iteration to wait for next deadline or timeout
+                    }
+
+                    _= tokio::time::sleep_until(when_notify) => {
+                        // countdown finished, we notify
+                        debug!("countdown task: deadline reached; showing countdown notification");
+                        when_notify = far_in_future; // reset to far future to avoid repeated notifications
+                        notifier.show_countdown(warn_before_lock_secs).await;
+                    }
+                }
+            }
+        });
+
+        Self {
+            when_tx: tx,
+            notify_secs: warn_before_lock_secs,
+        }
+    }
+
+    async fn tick(&self, left_mins: u64) {
+        if left_mins * 60 - self.notify_secs <= 0 {
+            // Most likely we are already in countdown or past it; no need to restart
+            return;
+        }
+
+        let when =
+            tokio::time::Instant::now() + Duration::from_secs(left_mins * 60 - self.notify_secs);
+        self.when_tx
+            .send(when)
+            .await
+            .expect("countdown task receiver dropped; this should not happen");
+    }
 }
