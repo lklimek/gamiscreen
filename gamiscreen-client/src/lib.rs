@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use gamiscreen_server::shared::api::{self};
@@ -13,7 +14,9 @@ pub mod platform;
 pub use cli::{Cli, Command};
 pub use config::{ClientConfig, load_config, resolve_config_path};
 use notify::default_backend;
-pub use platform::linux::lock::{LockBackend, detect_lock_backend, enforce_lock_backend};
+pub use platform::linux::lock::{
+    LockBackend, detect_lock_backend, enforce_lock_backend, is_session_locked,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -69,27 +72,50 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
     let token = read_token_from_keyring(&key)?;
 
     let mut failures: u32 = 0;
-    let mut last_accounted_minute: Option<i64> = None;
+    let mut unsent_minutes: BTreeSet<i64> = BTreeSet::new();
     let fail_fuse_secs = 300u64; // 5 minutes
 
     // Countdown task controller (graceful cancel via signal)
-    let countdown_task = CountdownTask::new(cfg.warn_before_lock_secs);
+    let countdown_task = CountdownTask::new(cfg.interval_secs, cfg.warn_before_lock_secs);
 
     loop {
         let start = std::time::Instant::now();
-        match send_heartbeat(&cfg, &token, &mut last_accounted_minute).await {
-            Ok(rem) => {
+        // If the session is locked, skip accounting and heartbeats for this loop.
+        let session_locked = is_session_locked().await;
+        tracing::debug!(?session_locked, "session lock status checked");
+        if let Ok(true) = &session_locked {
+            // Cancel any pending countdown notification
+            countdown_task.cancel().await;
+            info!("session locked; skipping heartbeat and accounting for this interval");
+            let elapsed = start.elapsed();
+            let interval = Duration::from_secs(cfg.interval_secs);
+            if elapsed < interval {
+                sleep(interval - elapsed).await;
+            }
+            continue;
+        }
+        // Enqueue minutes since last seen (inclusive of current minute)
+        let now_min: i64 = chrono::Utc::now().timestamp() / 60;
+        unsent_minutes.insert(now_min);
+
+        match send_pending(&cfg, &token, &mut unsent_minutes).await {
+            Ok(Some(rem)) => {
                 info!(remaining = rem, "heartbeat ok");
                 failures = 0;
-                countdown_task.tick(rem as u64).await;
+                if rem >= 1 {
+                    countdown_task.tick(rem as u64).await;
+                } else {
+                    // ensure any pending notification is closed if we are at/past zero
+                    countdown_task.cancel().await;
+                }
                 if rem <= 0 {
                     warn!("minutes exhausted; enforcing screen lock");
                     if let Err(e) = enforce_lock_backend(&backend).await {
                         error!(error=%e, "failed to enforce lock");
                     }
-                    sleep(Duration::from_secs(10)).await;
                 }
             }
+            Ok(None) => { /* nothing to send */ }
             Err(e) => {
                 failures = failures.saturating_add(1);
                 error!(error=%e, failures=failures, "heartbeat failed");
@@ -114,22 +140,16 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
     }
 }
 
-async fn send_heartbeat(
+async fn send_pending(
     cfg: &ClientConfig,
     token: &str,
-    last_accounted_minute: &mut Option<i64>,
-) -> Result<i32, AppError> {
-    let base = crate::config::normalize_server_url(&cfg.server_url);
-    let now_min: i64 = chrono::Utc::now().timestamp() / 60;
-    // safety cap of 24h to avoid huge payloads after long outages
-    let start_min = match *last_accounted_minute {
-        Some(prev) => (prev + 1).max(now_min - 60 * 24),
-        None => now_min,
-    };
-    let mut minutes = Vec::new();
-    for m in start_min..=now_min {
-        minutes.push(m);
+    unsent_minutes: &mut BTreeSet<i64>,
+) -> Result<Option<i32>, AppError> {
+    if unsent_minutes.is_empty() {
+        return Ok(None);
     }
+    let base = crate::config::normalize_server_url(&cfg.server_url);
+    let minutes: Vec<i64> = unsent_minutes.iter().copied().collect();
     let resp = api::rest::child_device_heartbeat_with_minutes(
         &base,
         &cfg.child_id,
@@ -139,8 +159,8 @@ async fn send_heartbeat(
     )
     .await
     .map_err(|e| AppError::Http(format!("heartbeat error: {e}")))?;
-    *last_accounted_minute = Some(now_min);
-    Ok(resp.remaining_minutes)
+    unsent_minutes.clear();
+    Ok(Some(resp.remaining_minutes))
 }
 
 fn read_token_from_keyring(server_url: &str) -> Result<String, AppError> {
@@ -151,15 +171,17 @@ fn read_token_from_keyring(server_url: &str) -> Result<String, AppError> {
 }
 
 struct CountdownTask {
-    // new Instant when we should display notification
+    /// new Instant when we should display notification
     when_tx: tokio::sync::mpsc::Sender<tokio::time::Instant>,
-    // how many seconds before lock we should notify
+    /// how many seconds before lock we should notify
     notify_secs: u64,
+    /// heartbeat interval in seconds
+    interval_secs: u64,
 }
 
 impl CountdownTask {
-    fn new(warn_before_lock_secs: u64) -> Self {
-        let far_in_future = Instant::now() + Duration::from_secs(60 * 60 * 24 * 365 * 10); // 10 years
+    fn new(interval_secs: u64, warn_before_lock_secs: u64) -> Self {
+        let far_in_future = Instant::now() + Duration::from_secs(interval_secs * 1000);
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(5);
         tokio::spawn(async move {
@@ -195,11 +217,12 @@ impl CountdownTask {
         Self {
             when_tx: tx,
             notify_secs: warn_before_lock_secs,
+            interval_secs,
         }
     }
 
     async fn tick(&self, left_mins: u64) {
-        if left_mins * 60 - self.notify_secs <= 0 {
+        if left_mins * 60 <= self.notify_secs {
             // Most likely we are already in countdown or past it; no need to restart
             return;
         }
@@ -210,5 +233,11 @@ impl CountdownTask {
             .send(when)
             .await
             .expect("countdown task receiver dropped; this should not happen");
+    }
+
+    async fn cancel(&self) {
+        // Send far-future deadline to ensure any visible notification is closed
+        let when = Instant::now() + Duration::from_secs(self.interval_secs * 1000);
+        let _ = self.when_tx.send(when).await;
     }
 }

@@ -1,11 +1,11 @@
 use std::process::Stdio;
 
 use tokio::process::Command;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{AppError, config::ClientConfig};
 use zbus::proxy::Proxy;
-use zbus_names::OwnedBusName;
+use zbus_names::{InterfaceName, OwnedBusName};
 
 #[derive(Clone, Debug)]
 pub enum LockBackend {
@@ -63,6 +63,90 @@ pub async fn enforce_lock_backend(backend: &LockBackend) -> Result<(), AppError>
         LockBackend::Login1 => lock_via_login1().await,
         LockBackend::CommandOverride(cmd) => lock_via_command(cmd).await,
     }
+}
+
+/// Detect if the current user session is locked.
+/// Tries GNOME ScreenSaver first, then falls back to login1's LockedHint.
+pub async fn is_session_locked() -> Result<bool, AppError> {
+    tracing::debug!("checking if session is locked");
+    // Try via GNOME ScreenSaver on the session bus
+    if let Ok(conn) = zbus::Connection::session().await
+        && let Ok(proxy) = zbus::fdo::DBusProxy::new(&conn).await
+        && proxy
+            .name_has_owner(
+                OwnedBusName::try_from("org.gnome.ScreenSaver")
+                    .unwrap()
+                    .into(),
+            )
+            .await
+            .unwrap_or(false)
+    {
+        // Prefer calling GetActive() which returns a bool
+        let proxy = Proxy::new(
+            &conn,
+            "org.gnome.ScreenSaver",
+            "/org/gnome/ScreenSaver",
+            "org.gnome.ScreenSaver",
+        )
+        .await
+        .map_err(|e| AppError::Dbus(e.to_string()))?;
+        let msg = proxy
+            .call_method("GetActive", &())
+            .await
+            .map_err(|e| AppError::Dbus(e.to_string()))?;
+        let body = msg.body();
+        if let Ok(active) = body.deserialize::<bool>() {
+            tracing::debug!(active, "org.gnome.ScreenSaver GetActive returned");
+            return Ok(active);
+        }
+        warn!("org.gnome.ScreenSaver GetActive returned unexpected body; assuming unlocked");
+        return Ok(false);
+    }
+
+    // Fallback to login1 LockedHint via system bus
+    if let Ok(conn) = zbus::Connection::system().await {
+        // Manager: GetSessionByPID(self_pid)
+        let mgr = Proxy::new(
+            &conn,
+            "org.freedesktop.login1",
+            "/org/freedesktop/login1",
+            "org.freedesktop.login1.Manager",
+        )
+        .await
+        .map_err(|e| AppError::Dbus(e.to_string()))?;
+        let pid: u32 = std::process::id();
+        let msg = mgr
+            .call_method("GetSessionByPID", &(pid))
+            .await
+            .map_err(|e| AppError::Dbus(e.to_string()))?;
+        // Deserialize message body into object path
+        let body = msg.body();
+        if let Ok(path) = body.deserialize::<zbus::zvariant::OwnedObjectPath>() {
+            let props = zbus::fdo::PropertiesProxy::builder(&conn)
+                .destination("org.freedesktop.login1")
+                .map_err(|e| AppError::Dbus(e.to_string()))?
+                .path(path.as_str())
+                .map_err(|e| AppError::Dbus(e.to_string()))?
+                .build()
+                .await
+                .map_err(|e| AppError::Dbus(e.to_string()))?;
+            let iface = InterfaceName::try_from("org.freedesktop.login1.Session").unwrap();
+            let val = props
+                .get(iface, "LockedHint")
+                .await
+                .map_err(|e| AppError::Dbus(e.to_string()))?;
+            // Try to convert to bool; default to false on mismatch
+            if let Ok(b) = bool::try_from(val) {
+                tracing::debug!(
+                    locked_hint = b,
+                    "org.freedesktop.login1.Session LockedHint read successfully"
+                );
+                return Ok(b);
+            }
+        }
+    }
+
+    Ok(false)
 }
 
 async fn lock_via_gnome_screensaver() -> Result<(), AppError> {
