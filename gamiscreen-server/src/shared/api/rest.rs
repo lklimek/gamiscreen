@@ -3,6 +3,8 @@
 
 use super::endpoints as ep;
 use super::*;
+use once_cell::sync::Lazy;
+use std::time::Duration;
 
 pub use reqwest::StatusCode;
 
@@ -16,10 +18,22 @@ pub enum RestError {
     Serde(String),
 }
 
-fn mk_client() -> Result<reqwest::Client, RestError> {
+static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
     reqwest::Client::builder()
+        // Keep TCP connections alive at kernel level
+        .tcp_keepalive(Some(Duration::from_secs(180)))
+        // Enable and tune the connection pool
+        .pool_max_idle_per_host(4)
+        .pool_idle_timeout(Duration::from_secs(180))
+        // Bound request duration
+        .timeout(Duration::from_secs(180))
         .build()
-        .map_err(|e| RestError::Http(e.to_string()))
+        .expect("failed to build HTTP client")
+});
+
+fn mk_client() -> Result<reqwest::Client, RestError> {
+    // Clone is cheap: clones a handle to the inner client and shares the pool
+    Ok(HTTP_CLIENT.clone())
 }
 
 async fn handle_json<T: for<'de> serde::Deserialize<'de>>(
