@@ -2,6 +2,8 @@
 
 The project consists of a Rust server, a React web UI (built and embedded into the server), and a Linux client. SQLite is used for storage, with migrations applied automatically on startup.
 
+See also: docs/CONFIGURATION.md for all server/client settings and docs/DOCKER.md for containerized deployment.
+
 ## Prerequisites
 
 - Rust toolchain (stable) and Cargo

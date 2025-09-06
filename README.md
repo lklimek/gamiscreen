@@ -1,90 +1,40 @@
-## Overview
+## TL;DR
 
-Parental control tool for managing screen time and rewarding kids with additional minutes for completing tasks.
+Gamiscreen is a self-hosted parental control tool that turns good habits into screen time. Parents grant minutes for completed tasks; a lightweight Linux agent enforces limits when time runs out.
 
-## Supported Features
+- Simple: grant minutes with one tap; see what’s left at a glance.
+- Reliable: the Linux client enforces limits, even if the server is briefly offline.
+- Private: runs on your own machine; no cloud required.
 
-- Authentication: parent and child roles via JWT.
-- Remaining time tracking with per-minute deduction from client heartbeats.
-- Parent dashboard: grid of children with remaining minutes; manual refresh and auto-refresh every 60s.
-- Child details:
-  - Remaining minutes with refresh.
-  - Tasks list with per-task minutes; “Done” indicator when completed today.
-  - Reward minutes: choose a task or enter custom minutes; confirmation dialog before submitting.
-  - Reward history: paginated list with refresh button; collapsible section.
-  - After rewarding, remaining updates immediately and reward history refreshes (page 1).
-- Linux client: sends per-minute usage heartbeats and enforces time limits (logs out/locks when time is up or offline >5m).
-- Server embeds and serves the built web app assets.
+## Features
+
+- Reward minutes for tasks or custom amounts; instant updates to remaining time.
+- Parent dashboard with auto-refresh to monitor all children.
+- Child view shows remaining time and today’s tasks at a glance.
+- Enforced limits on Linux: screen locks when time is up or offline for >5 minutes.
+- Built-in web app served by the server; no extra hosting needed.
 
 ## Platforms
 
-- Linux (client implemented)
-- Android (planned)
-- Windows (planned)
+- Linux client: supported today.
+- Android client: planned.
+- Windows client: planned.
 
-## Technology Stack
+## Get Started
 
-- Rust (server and clients)
-- React + TypeScript + Vite (web app)
-- Pico CSS (styling)
-- Timekpr‑Next (Linux session control)
+- Install and run the server, then set up the Linux client on your child’s device.
+- Start here: docs/INSTALL.md
 
-## Architecture
+## Learn More
 
-- Server: handles auth, tracks remaining/usage, reward logic, serves web assets.
-  - Modular update logic to allow additional clients.
-- Web app: parent/child UI to view remaining time and grant rewards.
-- Clients: Linux client today; other clients (e.g., Android) planned.
+- Architecture and technology stack: docs/ARCHITECTURE.md
+- Usage and workflows (parent/child, CLI): docs/USAGE.md
+- Auth and access control details: docs/AUTH.md
+- Configuration (server & client): docs/CONFIGURATION.md
+- Docker & reverse proxy setup: docs/DOCKER.md
 
-## Web Workflow
+## Project Layout
 
-Parent
-1. Login on the web app.
-2. Status page shows children with remaining minutes (auto‑refresh 60s; manual refresh available).
-3. Open a child’s details.
-4. Click a task or enter custom minutes.
-5. Confirmation dialog → POST `/api/children/{id}/reward`.
-6. Remaining updates and the task is marked done for today; reward history refreshes.
-
-Child
-1. Login on the web app.
-2. Child Details only (tasks visible, not clickable; no custom input).
-
-Minutes can carry over if not used in a day.
-
-The Linux client sends a heartbeat every minute with UTC minute timestamps. Missed minutes (bounded) are sent on reconnection. The server deduplicates by child and minute across devices and subtracts one minute per unique timestamp. If time is up or the server is unreachable for >5 minutes, the session is locked/logged out.
-
-## Auth & Access Control (MVP)
-
-- JWTs signed by the server; sessions tracked server‑side with inactivity window.
-- Roles:
-  - Parent: list children/tasks, view remaining, grant rewards.
-  - Child: send heartbeats for their own `child_id` and registered `device_id` only.
-- Device registration:
-  - `POST /api/client/register` issues a child token bound to `{ child_id, device_id }`.
-  - Parents can register on behalf of a child by passing `child_id`; children can self‑register without it.
-- Heartbeat enforcement:
-  - `POST /api/heartbeat` requires a child token; body `{ child_id, device_id }` must match token claims.
-
-## Linux Client Registration (CLI)
-
-- `gamiscreen-client login`:
-  - Logs in as Parent or Child.
-  - If Parent, prompts for `child_id` to provision; generates a `device_id` and calls `/api/client/register`.
-  - Stores device token in the system keyring and writes `~/.config/gamiscreen/client.yaml` with `server_url`, `child_id`, and `device_id`.
-
-## Sub‑Crates and Links
-
-- Server: [gamiscreen-server/](gamiscreen-server/) — Rust server that exposes REST endpoints, tracks usage, and serves the web UI. Example config: [`gamiscreen-server/config.yaml.example`](gamiscreen-server/config.yaml.example)
-- Web: [gamiscreen-web/](gamiscreen-web/) — React + TypeScript SPA. See [`gamiscreen-web/README.md`](gamiscreen-web/README.md) for dev and build instructions.
-- Linux client: [gamiscreen-client/](gamiscreen-client/) — CLI and daemon for Linux session control (Timekpr‑Next integration).
-
-## Installation
-
-- See docs/INSTALL.md for server and Linux client installation and quickstart.
-
-## Web App
-
-- Built with React + Vite + TypeScript and styled with Pico CSS.
-- The Rust server embeds and serves the built assets from `gamiscreen-web/dist/`.
-- Dev details and environment options are in `gamiscreen-web/README.md`.
+- `gamiscreen-server/`: Rust server exposing REST API and serving the web UI. Example config: `gamiscreen-server/config.yaml.example`
+- `gamiscreen-web/`: React + TypeScript SPA. See `gamiscreen-web/README.md` for dev details.
+- `gamiscreen-client/`: Linux agent and CLI (Timekpr‑Next integration).
