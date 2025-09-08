@@ -68,8 +68,8 @@ fn prompt_yes_no(prompt: &str) -> bool {
 
 async fn detect_backends() {
     // session bus: GNOME and org.freedesktop.ScreenSaver
-    if let Ok(conn) = zbus::Connection::session().await {
-        if let Ok(dbus) = zbus::fdo::DBusProxy::new(&conn).await {
+    if let Ok(conn) = zbus::Connection::session().await
+        && let Ok(dbus) = zbus::fdo::DBusProxy::new(&conn).await {
             let has_gnome = dbus
                 .name_has_owner(
                     zbus_names::OwnedBusName::try_from("org.gnome.ScreenSaver")
@@ -88,11 +88,10 @@ async fn detect_backends() {
                 .unwrap_or(false);
             info!(session_bus = true, has_gnome, has_fdo, "session bus screensaver services");
         }
-    }
 
     // system bus: login1
-    if let Ok(conn) = zbus::Connection::system().await {
-        if let Ok(dbus) = zbus::fdo::DBusProxy::new(&conn).await {
+    if let Ok(conn) = zbus::Connection::system().await
+        && let Ok(dbus) = zbus::fdo::DBusProxy::new(&conn).await {
             let has_login1 = dbus
                 .name_has_owner(
                     zbus_names::OwnedBusName::try_from("org.freedesktop.login1")
@@ -103,7 +102,6 @@ async fn detect_backends() {
                 .unwrap_or(false);
             info!(system_bus = true, has_login1, "system bus login1 service");
         }
-    }
 }
 
 async fn report_lock_status() {

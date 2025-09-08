@@ -205,7 +205,7 @@ async fn run_user_cmd(user: &str, prog: &str, args: &[&str]) -> Result<(), AppEr
 
 fn user_home_dir(user: &str) -> Option<PathBuf> {
     use nix::unistd::User;
-    User::from_name(user).ok().flatten().map(|u| PathBuf::from(u.dir))
+    User::from_name(user).ok().flatten().map(|u| u.dir)
 }
 
 fn is_root() -> bool {
@@ -226,16 +226,15 @@ fn resolve_target_user(user_opt: Option<String>, prompt_if_missing: bool) -> Res
             }
             return Ok(u);
         }
-        return Err(AppError::Config("username is required when running as root".into()));
+        Err(AppError::Config("username is required when running as root".into()))
     } else {
-        if let Some(u) = user_opt {
-            if u != cur {
+        if let Some(u) = user_opt
+            && u != cur {
                 return Err(AppError::Config(format!(
                     "cannot install for user '{}' when running as '{}' (run as root)",
                     u, cur
                 )));
             }
-        }
         Ok(cur)
     }
 }

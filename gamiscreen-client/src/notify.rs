@@ -22,6 +22,12 @@ pub struct Notifier {
     handle: Option<notify_rust::NotificationHandle>,
 }
 
+impl Default for Notifier {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Notifier {
     pub fn new() -> Self {
         // Start optimistic; if we fail to show, we downgrade to LogOnly.
@@ -112,7 +118,7 @@ impl Notifier {
     async fn close_inner(&mut self) {
         if let Some(h) = self.handle.take() {
             debug!("close: closing active notification");
-            let _ = h.close();
+            h.close();
         }
     }
 }
