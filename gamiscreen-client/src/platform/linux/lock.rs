@@ -6,12 +6,24 @@ use tracing::{info, warn};
 use crate::{AppError, config::ClientConfig};
 use zbus::proxy::Proxy;
 use zbus_names::{InterfaceName, OwnedBusName};
+use clap::ValueEnum;
 
 #[derive(Clone, Debug)]
 pub enum LockBackend {
     Gnome,
     Login1,
     CommandOverride(Vec<String>),
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+pub enum LockMethod {
+    All,
+    Gnome,
+    Fdo,
+    Login1Manager,
+    Login1Session,
+    Loginctl,
+    XdgScreensaver,
 }
 
 pub async fn detect_lock_backend(cfg: &ClientConfig) -> Result<LockBackend, AppError> {
@@ -60,8 +72,20 @@ pub async fn detect_lock_backend(cfg: &ClientConfig) -> Result<LockBackend, AppE
 pub async fn enforce_lock_backend(backend: &LockBackend) -> Result<(), AppError> {
     match backend {
         LockBackend::Gnome => lock_via_gnome_screensaver().await,
-        LockBackend::Login1 => lock_via_login1().await,
+        LockBackend::Login1 => lock_via_login1_manager().await,
         LockBackend::CommandOverride(cmd) => lock_via_command(cmd).await,
+    }
+}
+
+pub async fn lock_using_method(method: LockMethod) -> Result<(), AppError> {
+    match method {
+        LockMethod::All => Err(AppError::Config("'All' is not a concrete method".into())),
+        LockMethod::Gnome => lock_via_gnome_screensaver().await,
+        LockMethod::Fdo => lock_via_fdo_screensaver().await,
+        LockMethod::Login1Manager => lock_via_login1_manager().await,
+        LockMethod::Login1Session => lock_via_login1_session().await,
+        LockMethod::Loginctl => lock_via_command(&vec!["loginctl".into(), "lock-session".into()]).await,
+        LockMethod::XdgScreensaver => lock_via_command(&vec!["xdg-screensaver".into(), "lock".into()]).await,
     }
 }
 
@@ -149,7 +173,7 @@ pub async fn is_session_locked() -> Result<bool, AppError> {
     Ok(false)
 }
 
-async fn lock_via_gnome_screensaver() -> Result<(), AppError> {
+pub async fn lock_via_gnome_screensaver() -> Result<(), AppError> {
     let conn = zbus::Connection::session()
         .await
         .map_err(|e| AppError::Dbus(e.to_string()))?;
@@ -168,7 +192,7 @@ async fn lock_via_gnome_screensaver() -> Result<(), AppError> {
     Ok(())
 }
 
-async fn lock_via_login1() -> Result<(), AppError> {
+pub async fn lock_via_login1_manager() -> Result<(), AppError> {
     let conn = zbus::Connection::system()
         .await
         .map_err(|e| AppError::Dbus(e.to_string()))?;
@@ -182,6 +206,66 @@ async fn lock_via_login1() -> Result<(), AppError> {
     .map_err(|e| AppError::Dbus(e.to_string()))?;
     proxy
         .call_method("LockSessions", &())
+        .await
+        .map_err(|e| AppError::Dbus(e.to_string()))?;
+    Ok(())
+}
+
+pub async fn lock_via_login1_session() -> Result<(), AppError> {
+    use zbus::zvariant::OwnedObjectPath;
+
+    let conn = zbus::Connection::system()
+        .await
+        .map_err(|e| AppError::Dbus(e.to_string()))?;
+
+    let mgr = Proxy::new(
+        &conn,
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager",
+    )
+    .await
+    .map_err(|e| AppError::Dbus(e.to_string()))?;
+
+    let pid: u32 = std::process::id();
+    let msg = mgr
+        .call_method("GetSessionByPID", &(pid))
+        .await
+        .map_err(|e| AppError::Dbus(e.to_string()))?;
+    let body = msg.body();
+    let path: OwnedObjectPath = body
+        .deserialize()
+        .map_err(|e| AppError::Dbus(e.to_string()))?;
+
+    let sess = Proxy::new(
+        &conn,
+        "org.freedesktop.login1",
+        path.as_str(),
+        "org.freedesktop.login1.Session",
+    )
+    .await
+    .map_err(|e| AppError::Dbus(e.to_string()))?;
+    sess
+        .call_method("Lock", &())
+        .await
+        .map_err(|e| AppError::Dbus(e.to_string()))?;
+    Ok(())
+}
+
+pub async fn lock_via_fdo_screensaver() -> Result<(), AppError> {
+    let conn = zbus::Connection::session()
+        .await
+        .map_err(|e| AppError::Dbus(e.to_string()))?;
+    let proxy = Proxy::new(
+        &conn,
+        "org.freedesktop.ScreenSaver",
+        "/org/freedesktop/ScreenSaver",
+        "org.freedesktop.ScreenSaver",
+    )
+    .await
+    .map_err(|e| AppError::Dbus(e.to_string()))?;
+    proxy
+        .call_method("Lock", &())
         .await
         .map_err(|e| AppError::Dbus(e.to_string()))?;
     Ok(())

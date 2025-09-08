@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::platform::linux::lock::LockMethod;
 use clap::{Parser, Subcommand};
 
 const HELP_EPILOG: &str = r#"Config resolution order:
@@ -51,5 +52,11 @@ pub enum Command {
         /// Target username for user-level cleanup
         #[arg(long)]
         user: Option<String>,
+    },
+    /// Try lock methods and report status
+    Lock {
+        /// Method to use (default: all)
+        #[arg(long, value_enum, default_value_t = LockMethod::All)]
+        method: LockMethod,
     },
 }

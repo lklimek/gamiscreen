@@ -63,6 +63,10 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
             Command::Uninstall { user } => {
                 return platform::linux::install::uninstall_all(user.clone()).await;
             }
+            Command::Lock { method } => {
+                platform::linux::lock_tester::run_lock_cmd(*method).await;
+                return Ok(());
+            }
         }
     }
 

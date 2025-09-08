@@ -102,10 +102,10 @@ Notes
 
 ### Lock Testing (Linux)
 
-To diagnose screen‑lock behavior across desktops and full‑screen scenarios, a small tester binary is included. It tries several strategies and reports success:
+To diagnose screen‑lock behavior across desktops and full‑screen scenarios, use the helper CLI. It tries several strategies and reports success:
 
 ```
-cargo run -p gamiscreen-client --bin lock-tester
+cargo run -p gamiscreen-client -- lock
 ```
 
 Methods attempted, in order:
@@ -116,17 +116,17 @@ Methods attempted, in order:
 - `loginctl lock-session` (command)
 - `xdg-screensaver lock` (command; mostly X11)
 
-After each attempt, the tester queries lock status via GNOME ScreenSaver or login1 `LockedHint` when available.
+After each attempt, it queries lock status via GNOME ScreenSaver or login1 `LockedHint` when available.
 
 Select a single method with `--method` (default: `all`). Examples:
 
 ```
-cargo run -p gamiscreen-client --bin lock-tester -- --method login1-manager
-cargo run -p gamiscreen-client --bin lock-tester -- --method loginctl
+cargo run -p gamiscreen-client -- lock --method login1-manager
+cargo run -p gamiscreen-client -- lock --method loginctl
 ```
 
 Interactive mode
-- When run without `--method`, the tester runs each method sequentially and, after each attempt, prompts: "Did the screen lock? [y/N]". Unlock your screen if needed, then answer.
+- When run without `--method`, it runs each method sequentially and, after each attempt, prompts: "Did the screen lock? [y/N]". Unlock your screen if needed, then answer.
 - A summary is printed at the end listing which methods you confirmed as working on your setup.
 
 ### Client Install Helper (polkit + systemd)
