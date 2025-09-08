@@ -308,20 +308,7 @@ fn generate_update_manifest(out_dir: &Path) -> Result<(), String> {
         }
     }
 
-    // Fallback: ensure linux x86_64 exists even if API heuristics failed
-    if artifacts.is_empty() {
-        let url = format!(
-            "https://github.com/{}/releases/download/v{}/gamiscreen-client-linux-x86_64",
-            repo, version
-        );
-        // sha unknown; leave empty
-        artifacts.push(Artifact {
-            os: "linux".into(),
-            arch: "x86_64".into(),
-            url,
-            sha256: String::new(),
-        });
-    }
+    // Note: do not add fallback entries without verified sha256. If none found, produce empty list.
 
     let manifest = UpdateManifest {
         schema_version: 1,
@@ -337,20 +324,11 @@ fn generate_update_manifest(out_dir: &Path) -> Result<(), String> {
 
 fn write_minimal_manifest(out_dir: &Path) -> Result<(), String> {
     let version = env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".into());
-    let repo = repo_slug();
     let manifest = UpdateManifest {
         schema_version: 1,
         generated_at: chrono_now_rfc3339(),
         latest_version: version.clone(),
-        artifacts: vec![Artifact {
-            os: "linux".into(),
-            arch: "x86_64".into(),
-            url: format!(
-                "https://github.com/{}/releases/download/v{}/gamiscreen-client-linux-x86_64",
-                repo, version
-            ),
-            sha256: String::new(),
-        }],
+        artifacts: vec![], // no unverified artifacts
     };
     let data = serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?;
     let path = out_dir.join("update_manifest.json");
