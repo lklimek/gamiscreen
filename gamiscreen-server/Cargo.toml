@@ -17,27 +17,22 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml = "0.9"
-tower = "0.5"
 tower-http = { version = "0.6.6", features = ["cors", "trace", "fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 time = { version = "0.3", features = ["macros", "serde"] }
 diesel = { version = "2.1.6", features = ["sqlite", "chrono", "r2d2"] }
 diesel_migrations = "2.1.0"
-chrono = { version = "0.4", features = ["serde"] }
-r2d2 = "0.8"
+chrono = { version = "0.4.42", features = ["serde"] }
 jsonwebtoken = { version = "9" }
 bcrypt = "0.17"
 uuid = { version = "1", features = ["v4", "serde"] }
 rust-embed = "8"
 mime_guess = "2"
-hyper = { version = "1", features = ["http1", "client", "server"] }
-http-body-util = "0.1"
 percent-encoding = "2"
 thiserror = { version = "2" }
 clap = { version = "4", features = ["derive"] }
 tinytemplate = "1.2"
-once_cell = "1"
 
 gamiscreen-shared = { path = "../gamiscreen-shared" }
 
