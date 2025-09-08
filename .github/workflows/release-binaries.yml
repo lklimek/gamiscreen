@@ -54,6 +54,7 @@ jobs:
 
   build-server-linux-x86_64:
     name: Build gamiscreen-server (linux x86_64)
+    needs: [build-client-linux-x86_64]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -76,8 +77,8 @@ jobs:
 
       - name: Build server
         env:
-          # Allow build.rs to run npm to embed web UI
-          SKIP_WEB_BUILD: "0"
+          # Ensure server build.rs points to the current repository for manifest generation
+          UPDATE_REPO: ${{ github.repository }}
         run: |
           cargo build --release -p gamiscreen-server
           cp target/release/gamiscreen-server gamiscreen-server-linux-x86_64
