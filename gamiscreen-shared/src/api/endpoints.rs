@@ -1,4 +1,4 @@
-use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 
 fn base_join(base: &str, path: &str) -> String {
     let b = base.trim_end_matches('/');
@@ -41,3 +41,8 @@ pub fn child_device_heartbeat(base: &str, child_id: &str, device_id: &str) -> St
         ),
     )
 }
+
+pub fn update_manifest(base: &str) -> String {
+    base_join(base, "/api/update/manifest")
+}
+

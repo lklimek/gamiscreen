@@ -13,6 +13,7 @@ Gamiscreen is a self-hosted parental control tool that turns good habits into sc
 - Child view shows remaining time and today’s tasks at a glance.
 - Enforced limits on Linux: screen locks when time is up or offline for >5 minutes.
 - Built-in web app served by the server; no extra hosting needed.
+- Auto-update: server embeds a manifest of the latest client binaries; Linux client self-updates on start.
 
 ## Platforms
 
@@ -36,5 +37,6 @@ Gamiscreen is a self-hosted parental control tool that turns good habits into sc
 ## Project Layout
 
 - `gamiscreen-server/`: Rust server exposing REST API and serving the web UI. Example config: `gamiscreen-server/config.yaml.example`
+  - Public update manifest at `/api/update/manifest` (embedded at build time from GitHub Releases).
 - `gamiscreen-web/`: React + TypeScript SPA. See `gamiscreen-web/README.md` for dev details.
 - `gamiscreen-client/`: Linux agent and CLI (Timekpr‑Next integration).

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use crate::AppError;
 use crate::config::{load_config, resolve_config_path};
 use base64::Engine;
-use gamiscreen_server::shared::api::{self};
+use gamiscreen_shared::api::{self};
 use nix::unistd::getuid;
 
 pub async fn login(

@@ -1,5 +1,4 @@
-//! Minimal REST client helpers for consumers (e.g., platform agents).
-//! Feature-gated by `rest-client` to avoid pulling reqwest in the server binary.
+//! Minimal REST client helpers for consumers (clients).
 
 use super::endpoints as ep;
 use super::*;
@@ -32,7 +31,6 @@ static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
 });
 
 fn mk_client() -> Result<reqwest::Client, RestError> {
-    // Clone is cheap: clones a handle to the inner client and shares the pool
     Ok(HTTP_CLIENT.clone())
 }
 
@@ -42,10 +40,7 @@ async fn handle_json<T: for<'de> serde::Deserialize<'de>>(
     let status = res.status();
     if !status.is_success() {
         let body = res.text().await.unwrap_or_default();
-        return Err(RestError::Status {
-            status: status.as_u16(),
-            body,
-        });
+        return Err(RestError::Status { status: status.as_u16(), body });
     }
     res.json::<T>()
         .await
@@ -72,10 +67,7 @@ pub async fn child_register(
 ) -> Result<ClientRegisterResp, RestError> {
     let client = mk_client()?;
     let url = ep::child_register(base, child_id);
-    let body = ClientRegisterReq {
-        child_id: None,
-        device_id: device_id.to_string(),
-    };
+    let body = ClientRegisterReq { child_id: None, device_id: device_id.to_string() };
     let res = client
         .post(url)
         .bearer_auth(bearer)
@@ -86,7 +78,6 @@ pub async fn child_register(
     handle_json(res).await
 }
 
-// Convenience that takes minutes explicitly
 pub async fn child_device_heartbeat_with_minutes(
     base: &str,
     child_id: &str,
@@ -96,9 +87,7 @@ pub async fn child_device_heartbeat_with_minutes(
 ) -> Result<HeartbeatResp, RestError> {
     let client = mk_client()?;
     let url = ep::child_device_heartbeat(base, child_id, device_id);
-    let body = HeartbeatReq {
-        minutes: minutes.to_vec(),
-    };
+    let body = HeartbeatReq { minutes: minutes.to_vec() };
     let res = client
         .post(url)
         .bearer_auth(bearer)
@@ -182,3 +171,15 @@ pub async fn child_tasks(
         .map_err(|e| RestError::Http(e.to_string()))?;
     handle_json(res).await
 }
+
+pub async fn update_manifest(base: &str) -> Result<UpdateManifestDto, RestError> {
+    let client = mk_client()?;
+    let url = ep::update_manifest(base);
+    let res = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| RestError::Http(e.to_string()))?;
+    handle_json(res).await
+}
+

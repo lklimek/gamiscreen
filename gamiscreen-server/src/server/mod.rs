@@ -5,8 +5,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::server::auth::AuthCtx;
-use crate::shared::api;
-use crate::shared::api::ChildDto;
 use axum::http::{HeaderName, HeaderValue};
 use axum::middleware;
 use axum::response::Response as AxumResponse;
@@ -18,6 +16,8 @@ use axum::{
 };
 use bcrypt::verify;
 pub use config::{AppConfig, Role, UserConfig};
+use gamiscreen_shared::api;
+use gamiscreen_shared::api::ChildDto;
 use mime_guess::from_path;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
@@ -124,6 +124,7 @@ pub fn router(state: AppState) -> Router {
 
     let app = Router::new()
         .route("/healthz", get(health))
+        .route("/api/update/manifest", get(api_update_manifest))
         .route("/api/auth/login", post(api_auth_login))
         .merge(private)
         .fallback(get(serve_embedded))
@@ -149,6 +150,17 @@ pub fn router(state: AppState) -> Router {
 
 async fn health() -> &'static str {
     "ok"
+}
+
+async fn api_update_manifest() -> Result<axum::response::Response, AppError> {
+    // Serve the embedded JSON from OUT_DIR produced by build.rs
+    static DATA: &str = include_str!(concat!(env!("OUT_DIR"), "/update_manifest.json"));
+    let mut resp = axum::response::Response::new(axum::body::Body::from(DATA.to_string()));
+    resp.headers_mut().insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("application/json"),
+    );
+    Ok(resp)
 }
 
 async fn add_request_id(

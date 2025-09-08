@@ -840,6 +840,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2dff15bf788c671c1934e366d07e30c1814a8ef514e1af724a602e8a2fbe1b10"
 dependencies = [
  "futures-core",
+ "futures-sink",
 ]
 
 [[package]]
@@ -897,9 +898,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9fa08315bb612088cc391249efdc3bc77536f16c91f6cf495e6fbe85b20a4a81"
 dependencies = [
  "futures-core",
+ "futures-io",
  "futures-macro",
  "futures-sink",
  "futures-task",
+ "memchr",
  "pin-project-lite",
  "pin-utils",
  "slab",
@@ -914,14 +917,18 @@ dependencies = [
  "chrono",
  "clap",
  "directories",
- "gamiscreen-server",
+ "gamiscreen-shared",
+ "hex",
  "keyring",
  "nix 0.30.1",
  "notify-rust",
+ "reqwest",
  "rpassword",
+ "semver",
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2",
  "thiserror",
  "tinytemplate",
  "tokio",
@@ -943,6 +950,7 @@ dependencies = [
  "clap",
  "diesel",
  "diesel_migrations",
+ "gamiscreen-shared",
  "http-body-util",
  "hyper",
  "jsonwebtoken",
@@ -965,6 +973,18 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "gamiscreen-shared"
+version = "0.1.0"
+dependencies = [
+ "once_cell",
+ "percent-encoding",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]
@@ -2102,7 +2122,9 @@ checksum = "d429f34c8092b2d42c7c93cec323bb4adeb7c67698f70839adec842ec10c7ceb"
 dependencies = [
  "base64",
  "bytes",
+ "futures-channel",
  "futures-core",
+ "futures-util",
  "http",
  "http-body",
  "http-body-util",
@@ -2315,6 +2337,12 @@ dependencies = [
  "sha2",
  "zbus 4.4.0",
 ]
+
+[[package]]
+name = "semver"
+version = "1.0.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56e6fa9c48d24d85fb3de5ad847117517440f6beceb7798af16b4a87d616b8d0"
 
 [[package]]
 name = "serde"

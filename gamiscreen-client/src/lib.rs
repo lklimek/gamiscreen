@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use gamiscreen_server::shared::api::{self};
+use gamiscreen_shared::api::{self};
 use tokio::time::{Instant, sleep};
 use tracing::{debug, error, info, warn};
 
@@ -10,6 +10,7 @@ pub mod config;
 pub mod login;
 pub mod notify;
 pub mod platform;
+pub mod update;
 
 pub use cli::{Cli, Command};
 pub use config::{ClientConfig, load_config, resolve_config_path};
@@ -73,6 +74,11 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
     let cfg_path = resolve_config_path(cli.config)?;
     let cfg = load_config(&cfg_path)?;
     info!(path=?cfg_path, "loaded config");
+
+    // Auto-update check (best-effort)
+    if let Err(e) = update::maybe_self_update(&cfg).await {
+        warn!(error=%e, "auto-update failed; continuing with current binary");
+    }
 
     let backend = detect_lock_backend(&cfg).await?;
     info!(?backend, "lock backend selected");

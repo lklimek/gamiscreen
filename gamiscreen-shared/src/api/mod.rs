@@ -89,3 +89,20 @@ pub struct RewardHistoryItemDto {
     pub task_name: Option<String>,
     pub minutes: i32,
 }
+
+// Update manifest (public)
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UpdateManifestDto {
+    pub schema_version: u32,
+    pub generated_at: String,
+    pub latest_version: String,
+    pub artifacts: Vec<UpdateArtifactDto>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UpdateArtifactDto {
+    pub os: String,
+    pub arch: String,
+    pub url: String,
+    pub sha256: String,
+}

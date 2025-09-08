@@ -1,6 +1,4 @@
-//! Shared types across server and clients
-
-pub mod api;
+//! Shared types for the server (server-only). API DTOs moved to gamiscreen-shared.
 pub mod path;
 
 use serde::{Deserialize, Serialize};
