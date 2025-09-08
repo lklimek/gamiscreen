@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=%h/.cargo/bin/gamiscreen-client --config %h/.config/gamiscreen/client.yaml
+ExecStart={{ binary_path }} --config %h/.config/gamiscreen/client.yaml
 Restart=always
 RestartSec=5s
 Environment=RUST_LOG=info

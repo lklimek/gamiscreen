@@ -39,6 +39,7 @@ gamiscreen-server = { path = "../gamiscreen-server", features = [
 ] }
 notify-rust = { version = "4" }
 async-trait = "0.1"
+tinytemplate = "1.2"
 
 [[bin]]
 name = "gamiscreen-client"

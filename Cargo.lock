@@ -923,6 +923,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "thiserror",
+ "tinytemplate",
  "tokio",
  "tracing",
  "tracing-subscriber",

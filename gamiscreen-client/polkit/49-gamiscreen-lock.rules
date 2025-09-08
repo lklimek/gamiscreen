@@ -1,0 +1,8 @@
+polkit.addRule(function(action, subject) {
+  if ((action.id == "org.freedesktop.login1.lock-sessions" ||
+       action.id == "org.freedesktop.login1.lock-session") &&
+      subject.isInGroup("gamiscreen")) {
+    return polkit.Result.YES;
+  }
+});
+

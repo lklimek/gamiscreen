@@ -95,6 +95,8 @@ MVP will be shipped in three parts, in order: Server → Web App → Linux Clien
 
 ## Nice-to-Haves (post-MVP)
 
+- [ ] Negative remaining time support
+- [ ] Child can submit task completions for parent's acceptance
 - [ ] Multi-device coordination per child (don’t double-decrement)
 - [ ] Admin UI for CRUD on children/tasks (instead of static config)
 - [ ] Per-task caps and expiry windows

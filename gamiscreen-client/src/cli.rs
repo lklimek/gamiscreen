@@ -36,4 +36,20 @@ pub enum Command {
         #[arg(long)]
         username: Option<String>,
     },
+    /// Install helper: polkit rule + user systemd service
+    ///
+    /// When run as root, you must provide --user (or you will be prompted).
+    Install {
+        /// Target username for user-level setup (systemd --user, unit location)
+        #[arg(long)]
+        user: Option<String>,
+    },
+    /// Uninstall helper: remove polkit rule and user systemd service
+    ///
+    /// When run as root, you must provide --user (or you will be prompted).
+    Uninstall {
+        /// Target username for user-level cleanup
+        #[arg(long)]
+        user: Option<String>,
+    },
 }
