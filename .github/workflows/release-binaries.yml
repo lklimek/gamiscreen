@@ -5,6 +5,9 @@ on:
     types: [published]
   workflow_dispatch: {}
 
+permissions:
+  contents: write
+
 jobs:
   build-client-linux-x86_64:
     name: Build gamiscreen-client (linux x86_64)
@@ -33,6 +36,7 @@ jobs:
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
           files: |
             gamiscreen-client-linux-x86_64
             gamiscreen-client-linux-x86_64.sha256
@@ -83,6 +87,7 @@ jobs:
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
           files: |
             gamiscreen-server-linux-x86_64
             gamiscreen-server-linux-x86_64.sha256
