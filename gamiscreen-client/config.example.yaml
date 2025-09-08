@@ -7,8 +7,4 @@ device_id: "alice-pc"
 # Optional (defaults shown)
 # interval_secs: 60
 # warn_before_lock_secs: 10
-# If not set, the client tries DBus: GNOME → login1
-# lock_cmd:
-#   - loginctl
-#   - lock-session
-#   - $XDG_SESSION_ID
+# Locks via org.freedesktop.login1 Manager (DBus). Ensure polkit rule installed.

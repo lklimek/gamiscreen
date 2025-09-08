@@ -4,9 +4,9 @@ use tokio::process::Command;
 use tracing::{info, warn};
 
 use crate::{AppError, config::ClientConfig};
+use clap::ValueEnum;
 use zbus::proxy::Proxy;
 use zbus_names::{InterfaceName, OwnedBusName};
-use clap::ValueEnum;
 
 #[derive(Clone, Debug)]
 pub enum LockBackend {
@@ -26,29 +26,8 @@ pub enum LockMethod {
     XdgScreensaver,
 }
 
-pub async fn detect_lock_backend(cfg: &ClientConfig) -> Result<LockBackend, AppError> {
-    if let Some(custom) = &cfg.lock_cmd {
-        info!("using lock_cmd override");
-        return Ok(LockBackend::CommandOverride(custom.clone()));
-    }
-
-    // Check session bus for GNOME screensaver
-    if let Ok(conn) = zbus::Connection::session().await
-        && let Ok(proxy) = zbus::fdo::DBusProxy::new(&conn).await
-        && proxy
-            .name_has_owner(
-                OwnedBusName::try_from("org.gnome.ScreenSaver")
-                    .unwrap()
-                    .into(),
-            )
-            .await
-            .unwrap_or(false)
-    {
-        info!("detected org.gnome.ScreenSaver on session bus");
-        return Ok(LockBackend::Gnome);
-    }
-
-    // Check system bus for login1
+pub async fn detect_lock_backend(_cfg: &ClientConfig) -> Result<LockBackend, AppError> {
+    // Always use login1 Manager; verify availability for clearer errors.
     if let Ok(conn) = zbus::Connection::system().await
         && let Ok(proxy) = zbus::fdo::DBusProxy::new(&conn).await
         && proxy
@@ -60,12 +39,12 @@ pub async fn detect_lock_backend(cfg: &ClientConfig) -> Result<LockBackend, AppE
             .await
             .unwrap_or(false)
     {
-        info!("detected org.freedesktop.login1 on system bus");
+        info!("detected org.freedesktop.login1 on system bus; selecting login1 Manager");
         return Ok(LockBackend::Login1);
     }
 
     Err(AppError::Dbus(
-        "no supported DBus lock interface detected and no lock_cmd set".into(),
+        "org.freedesktop.login1 not available on system bus".into(),
     ))
 }
 
@@ -84,8 +63,12 @@ pub async fn lock_using_method(method: LockMethod) -> Result<(), AppError> {
         LockMethod::Fdo => lock_via_fdo_screensaver().await,
         LockMethod::Login1Manager => lock_via_login1_manager().await,
         LockMethod::Login1Session => lock_via_login1_session().await,
-        LockMethod::Loginctl => lock_via_command(&vec!["loginctl".into(), "lock-session".into()]).await,
-        LockMethod::XdgScreensaver => lock_via_command(&vec!["xdg-screensaver".into(), "lock".into()]).await,
+        LockMethod::Loginctl => {
+            lock_via_command(&vec!["loginctl".into(), "lock-session".into()]).await
+        }
+        LockMethod::XdgScreensaver => {
+            lock_via_command(&vec!["xdg-screensaver".into(), "lock".into()]).await
+        }
     }
 }
 
@@ -245,8 +228,7 @@ pub async fn lock_via_login1_session() -> Result<(), AppError> {
     )
     .await
     .map_err(|e| AppError::Dbus(e.to_string()))?;
-    sess
-        .call_method("Lock", &())
+    sess.call_method("Lock", &())
         .await
         .map_err(|e| AppError::Dbus(e.to_string()))?;
     Ok(())

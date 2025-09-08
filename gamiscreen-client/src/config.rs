@@ -17,9 +17,6 @@ pub struct ClientConfig {
     /// Seconds before lock to warn the user with a countdown
     #[serde(default = "default_warn_before_lock_secs")]
     pub warn_before_lock_secs: u64,
-    /// Optional override for lock command. Example: ["loginctl", "lock-session", "$XDG_SESSION_ID"]
-    #[serde(default)]
-    pub lock_cmd: Option<Vec<String>>,
 }
 
 fn default_interval() -> u64 {

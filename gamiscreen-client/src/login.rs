@@ -76,7 +76,6 @@ pub async fn login(
         device_id: reg.device_id,
         interval_secs: 60,
         warn_before_lock_secs: 10,
-        lock_cmd: None,
     };
     let path = crate::config::default_config_path()
         .ok_or_else(|| AppError::Config("could not determine config dir".into()))?;
