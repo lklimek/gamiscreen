@@ -225,7 +225,7 @@ impl Store {
         let pool = self.pool.clone();
         let child = child.to_string();
         let page = page.max(1);
-        let per_page = per_page.max(1).min(1000) as i64;
+        let per_page = per_page.clamp(1, 1000) as i64;
         let offset = ((page as i64) - 1) * per_page;
         tokio::task::spawn_blocking(
             move || -> Result<Vec<(models::Reward, Option<String>)>, String> {

@@ -110,7 +110,7 @@ pub async fn enforce_acl(
         if let Some((child, device)) = child_and_device_from_path(&path) {
             match (&auth.child_id, &auth.device_id) {
                 (Some(cid), Some(did)) if cid == &child && did == &device => {}
-                other => {
+                _ => {
                     return Err(AppError::forbidden());
                 }
             }

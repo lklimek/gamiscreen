@@ -1,8 +1,6 @@
 mod acl;
 pub mod auth;
 mod config;
-use std::collections::HashMap;
-use std::sync::Arc;
 
 use crate::server::auth::AuthCtx;
 use axum::http::{HeaderName, HeaderValue};
@@ -26,12 +24,15 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{Span, info_span};
 use uuid::Uuid;
 
+type ChildCacheMap =
+    std::sync::Arc<Mutex<std::collections::HashMap<String, std::sync::Arc<Mutex<Option<i32>>>>>>;
+
 #[derive(Clone)]
 pub struct AppState {
     pub config: AppConfig,
     pub store: crate::storage::Store,
     // Cache of remaining minutes per child. None => needs recompute
-    children_cache: Arc<Mutex<HashMap<String, std::sync::Arc<Mutex<Option<i32>>>>>>,
+    children_cache: ChildCacheMap,
 }
 
 impl AppState {
@@ -43,7 +44,7 @@ impl AppState {
         }
     }
 
-    async fn child_mutex(&self, child_id: &str) -> Arc<Mutex<Option<i32>>> {
+    async fn child_mutex(&self, child_id: &str) -> std::sync::Arc<Mutex<Option<i32>>> {
         let mut map = self.children_cache.lock().await;
         map.entry(child_id.to_string())
             .or_insert_with(Default::default)
@@ -264,7 +265,7 @@ async fn set_auth_span_fields(
 
 async fn api_list_children(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthCtx>,
+    Extension(_auth): Extension<AuthCtx>,
 ) -> Result<Json<Vec<ChildDto>>, AppError> {
     // ACL enforced by middleware
     let rows = state
@@ -284,7 +285,7 @@ async fn api_list_children(
 
 async fn api_list_tasks(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthCtx>,
+    Extension(_auth): Extension<AuthCtx>,
 ) -> Result<Json<Vec<api::TaskDto>>, AppError> {
     let rows = state.store.list_tasks().await.map_err(AppError::internal)?;
     let items = rows
@@ -326,7 +327,7 @@ async fn api_list_child_tasks(
 
 async fn api_remaining(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthCtx>,
+    Extension(_auth): Extension<AuthCtx>,
     Path(id): Path<String>,
 ) -> Result<Json<api::RemainingDto>, AppError> {
     // ACL enforced by middleware

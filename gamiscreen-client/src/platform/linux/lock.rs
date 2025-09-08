@@ -63,11 +63,9 @@ pub async fn lock_using_method(method: LockMethod) -> Result<(), AppError> {
         LockMethod::Fdo => lock_via_fdo_screensaver().await,
         LockMethod::Login1Manager => lock_via_login1_manager().await,
         LockMethod::Login1Session => lock_via_login1_session().await,
-        LockMethod::Loginctl => {
-            lock_via_command(&vec!["loginctl".into(), "lock-session".into()]).await
-        }
+        LockMethod::Loginctl => lock_via_command(&["loginctl".into(), "lock-session".into()]).await,
         LockMethod::XdgScreensaver => {
-            lock_via_command(&vec!["xdg-screensaver".into(), "lock".into()]).await
+            lock_via_command(&["xdg-screensaver".into(), "lock".into()]).await
         }
     }
 }
@@ -253,7 +251,7 @@ pub async fn lock_via_fdo_screensaver() -> Result<(), AppError> {
     Ok(())
 }
 
-async fn lock_via_command(cmd: &Vec<String>) -> Result<(), AppError> {
+async fn lock_via_command(cmd: &[String]) -> Result<(), AppError> {
     let (program, args) = cmd
         .split_first()
         .ok_or_else(|| AppError::Config("lock_cmd empty".into()))?;

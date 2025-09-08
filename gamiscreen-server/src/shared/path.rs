@@ -1,6 +1,6 @@
 /// Helpers for parsing REST-style paths used by the server.
 /// Not a full router; just tiny extractors for ACL and related middleware.
-
+///
 /// Extracts `{id}` from `/api/children/{id}/...`.
 /// Returns a percent-decoded owned String.
 pub fn child_id_from_path(path: &str) -> Option<String> {

@@ -40,7 +40,10 @@ async fn handle_json<T: for<'de> serde::Deserialize<'de>>(
     let status = res.status();
     if !status.is_success() {
         let body = res.text().await.unwrap_or_default();
-        return Err(RestError::Status { status: status.as_u16(), body });
+        return Err(RestError::Status {
+            status: status.as_u16(),
+            body,
+        });
     }
     res.json::<T>()
         .await
@@ -67,7 +70,10 @@ pub async fn child_register(
 ) -> Result<ClientRegisterResp, RestError> {
     let client = mk_client()?;
     let url = ep::child_register(base, child_id);
-    let body = ClientRegisterReq { child_id: None, device_id: device_id.to_string() };
+    let body = ClientRegisterReq {
+        child_id: None,
+        device_id: device_id.to_string(),
+    };
     let res = client
         .post(url)
         .bearer_auth(bearer)
@@ -87,7 +93,9 @@ pub async fn child_device_heartbeat_with_minutes(
 ) -> Result<HeartbeatResp, RestError> {
     let client = mk_client()?;
     let url = ep::child_device_heartbeat(base, child_id, device_id);
-    let body = HeartbeatReq { minutes: minutes.to_vec() };
+    let body = HeartbeatReq {
+        minutes: minutes.to_vec(),
+    };
     let res = client
         .post(url)
         .bearer_auth(bearer)
@@ -182,4 +190,3 @@ pub async fn update_manifest(base: &str) -> Result<UpdateManifestDto, RestError>
         .map_err(|e| RestError::Http(e.to_string()))?;
     handle_json(res).await
 }
-

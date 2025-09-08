@@ -13,10 +13,7 @@ fn render_default_config() -> String {
     let secret = generate_secret();
     // Replace the placeholder secret if present; otherwise append/patch minimally
     if EXAMPLE_CONFIG.contains("change-this-to-a-long-random-secret") {
-        EXAMPLE_CONFIG.replace(
-            "change-this-to-a-long-random-secret",
-            &secret,
-        )
+        EXAMPLE_CONFIG.replace("change-this-to-a-long-random-secret", &secret)
     } else {
         EXAMPLE_CONFIG.to_string()
     }
@@ -39,6 +36,7 @@ fn render_unit(ctx: &UnitCtx) -> Result<String, String> {
     tt.render("unit", ctx).map_err(|e| format!("render: {e}"))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn install_system(
     unit_path: &Path,
     config_path: &Path,
@@ -62,7 +60,10 @@ pub fn install_system(
 
     // Config
     if config_path.exists() && !force {
-        eprintln!("Config exists at {}; skipping (use --force to overwrite)", config_path.display());
+        eprintln!(
+            "Config exists at {}; skipping (use --force to overwrite)",
+            config_path.display()
+        );
     } else {
         let cfg = render_default_config();
         let mut f = fs::File::create(config_path)
@@ -79,7 +80,10 @@ pub fn install_system(
 
     // Unit
     if unit_path.exists() && !force {
-        eprintln!("Unit exists at {}; skipping (use --force to overwrite)", unit_path.display());
+        eprintln!(
+            "Unit exists at {}; skipping (use --force to overwrite)",
+            unit_path.display()
+        );
     } else {
         let ctx = UnitCtx {
             binary_path: &binary_path.display().to_string(),
@@ -97,14 +101,19 @@ pub fn install_system(
         println!("Wrote unit to {}", unit_path.display());
     }
 
-    println!("Done. Run: sudo systemctl daemon-reload && sudo systemctl enable --now gamiscreen-server");
+    println!(
+        "Done. Run: sudo systemctl daemon-reload && sudo systemctl enable --now gamiscreen-server"
+    );
     Ok(())
 }
 
-pub fn uninstall_system(unit_path: &Path, remove_config: bool, config_path: &Path) -> Result<(), String> {
+pub fn uninstall_system(
+    unit_path: &Path,
+    remove_config: bool,
+    config_path: &Path,
+) -> Result<(), String> {
     if unit_path.exists() {
-        fs::remove_file(unit_path)
-            .map_err(|e| format!("remove {}: {}", unit_path.display(), e))?;
+        fs::remove_file(unit_path).map_err(|e| format!("remove {}: {}", unit_path.display(), e))?;
         println!("Removed unit {}", unit_path.display());
     } else {
         println!("Unit {} not found; skipping", unit_path.display());

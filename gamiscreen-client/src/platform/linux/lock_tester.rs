@@ -1,5 +1,5 @@
-use tracing::{error, info};
 use crate::platform::linux::lock::{LockMethod, lock_using_method};
+use tracing::{error, info};
 
 pub async fn run_lock_cmd(method: LockMethod) {
     info!("lock tester starting");
@@ -27,7 +27,10 @@ async fn run_all_methods_interactive() {
         (M::Gnome, "GNOME ScreenSaver (session bus)"),
         (M::Fdo, "org.freedesktop.ScreenSaver (session bus)"),
         (M::Login1Manager, "login1 Manager.LockSessions (system bus)"),
-        (M::Login1Session, "login1 Session.Lock (system bus; current)"),
+        (
+            M::Login1Session,
+            "login1 Session.Lock (system bus; current)",
+        ),
         (M::Loginctl, "loginctl lock-session (command)"),
         (M::XdgScreensaver, "xdg-screensaver lock (command; X11)"),
     ];
@@ -61,47 +64,53 @@ fn prompt_yes_no(prompt: &str) -> bool {
     let _ = std::io::stdout().flush();
     let mut buf = String::new();
     let _ = std::io::stdin().read_line(&mut buf);
-    matches!(buf.chars().next().map(|c| c.to_ascii_lowercase()), Some('y'))
+    matches!(
+        buf.chars().next().map(|c| c.to_ascii_lowercase()),
+        Some('y')
+    )
 }
-
-
 
 async fn detect_backends() {
     // session bus: GNOME and org.freedesktop.ScreenSaver
     if let Ok(conn) = zbus::Connection::session().await
-        && let Ok(dbus) = zbus::fdo::DBusProxy::new(&conn).await {
-            let has_gnome = dbus
-                .name_has_owner(
-                    zbus_names::OwnedBusName::try_from("org.gnome.ScreenSaver")
-                        .unwrap()
-                        .into(),
-                )
-                .await
-                .unwrap_or(false);
-            let has_fdo = dbus
-                .name_has_owner(
-                    zbus_names::OwnedBusName::try_from("org.freedesktop.ScreenSaver")
-                        .unwrap()
-                        .into(),
-                )
-                .await
-                .unwrap_or(false);
-            info!(session_bus = true, has_gnome, has_fdo, "session bus screensaver services");
-        }
+        && let Ok(dbus) = zbus::fdo::DBusProxy::new(&conn).await
+    {
+        let has_gnome = dbus
+            .name_has_owner(
+                zbus_names::OwnedBusName::try_from("org.gnome.ScreenSaver")
+                    .unwrap()
+                    .into(),
+            )
+            .await
+            .unwrap_or(false);
+        let has_fdo = dbus
+            .name_has_owner(
+                zbus_names::OwnedBusName::try_from("org.freedesktop.ScreenSaver")
+                    .unwrap()
+                    .into(),
+            )
+            .await
+            .unwrap_or(false);
+        info!(
+            session_bus = true,
+            has_gnome, has_fdo, "session bus screensaver services"
+        );
+    }
 
     // system bus: login1
     if let Ok(conn) = zbus::Connection::system().await
-        && let Ok(dbus) = zbus::fdo::DBusProxy::new(&conn).await {
-            let has_login1 = dbus
-                .name_has_owner(
-                    zbus_names::OwnedBusName::try_from("org.freedesktop.login1")
-                        .unwrap()
-                        .into(),
-                )
-                .await
-                .unwrap_or(false);
-            info!(system_bus = true, has_login1, "system bus login1 service");
-        }
+        && let Ok(dbus) = zbus::fdo::DBusProxy::new(&conn).await
+    {
+        let has_login1 = dbus
+            .name_has_owner(
+                zbus_names::OwnedBusName::try_from("org.freedesktop.login1")
+                    .unwrap()
+                    .into(),
+            )
+            .await
+            .unwrap_or(false);
+        info!(system_bus = true, has_login1, "system bus login1 service");
+    }
 }
 
 async fn report_lock_status() {

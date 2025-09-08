@@ -115,8 +115,8 @@ fn main() {
     }
 }
 
-fn watch_dir_recursively(root: &PathBuf, ignore_dirs: &[&str]) {
-    let mut stack = vec![root.clone()];
+fn watch_dir_recursively(root: &Path, ignore_dirs: &[&str]) {
+    let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
         if let Ok(entries) = fs::read_dir(&dir) {
             for entry in entries.flatten() {
@@ -272,13 +272,15 @@ fn generate_update_manifest(out_dir: &Path) -> Result<(), String> {
         let mut sha256 = String::new();
         for b in &assets {
             if b.get("name").and_then(|v| v.as_str()) == Some(sha_name.as_str())
-                && let Some(url2) = b.get("browser_download_url").and_then(|v| v.as_str()) {
-                    // download sha256 file (small)
-                    if let Ok(r) = client.get(url2).send()
-                        && let Ok(text) = r.text() {
-                            sha256 = text.split_whitespace().next().unwrap_or("").to_string();
-                        }
+                && let Some(url2) = b.get("browser_download_url").and_then(|v| v.as_str())
+            {
+                // download sha256 file (small)
+                if let Ok(r) = client.get(url2).send()
+                    && let Ok(text) = r.text()
+                {
+                    sha256 = text.split_whitespace().next().unwrap_or("").to_string();
                 }
+            }
         }
         // Heuristically map filename to os/arch
         let mut os = String::new();

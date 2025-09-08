@@ -2,9 +2,9 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use crate::AppError;
+use tinytemplate::TinyTemplate;
 use tokio::process::Command;
 use tracing::{info, warn};
-use tinytemplate::TinyTemplate;
 
 // Include templates from files in the repo
 const POLKIT_RULE_PATH_DST: &str = "/etc/polkit-1/rules.d/49-gamiscreen-lock.rules";
@@ -18,7 +18,10 @@ pub async fn install_all(user_opt: Option<String>) -> Result<(), AppError> {
     info!("install: creating gamiscreen group and adding target user");
     ensure_group_and_membership("gamiscreen", &target_user).await?;
 
-    info!("install: installing polkit rule to {}", POLKIT_RULE_PATH_DST);
+    info!(
+        "install: installing polkit rule to {}",
+        POLKIT_RULE_PATH_DST
+    );
     install_polkit_rule().await?;
 
     info!(user=%target_user, "install: installing user systemd unit and enabling service");
@@ -45,7 +48,10 @@ pub async fn uninstall_all(user_opt: Option<String>) -> Result<(), AppError> {
     let stop_now = !is_root() && Some(target_user.clone()) == current_username();
     uninstall_user_unit(&target_user, stop_now).await?;
 
-    info!("uninstall: removing polkit rule from {}", POLKIT_RULE_PATH_DST);
+    info!(
+        "uninstall: removing polkit rule from {}",
+        POLKIT_RULE_PATH_DST
+    );
     uninstall_polkit_rule().await?;
 
     println!(
@@ -75,7 +81,13 @@ async fn install_polkit_rule() -> Result<(), AppError> {
     // sudo install -D -m 0644 <tmp> /etc/polkit-1/rules.d/49-gamiscreen-lock.rules
     run_root_cmd(
         "install",
-        &["-D", "-m", "0644", tmp_path.to_str().unwrap(), POLKIT_RULE_PATH_DST],
+        &[
+            "-D",
+            "-m",
+            "0644",
+            tmp_path.to_str().unwrap(),
+            POLKIT_RULE_PATH_DST,
+        ],
     )
     .await?;
     // best-effort cleanup
@@ -100,9 +112,19 @@ async fn install_user_unit(username: &str, start_now: bool) -> Result<(), AppErr
     // systemctl --user daemon-reload
     run_user_cmd(username, "systemctl", &["--user", "daemon-reload"]).await?;
     // enable; start now only when running as that user
-    run_user_cmd(username, "systemctl", &["--user", "enable", "gamiscreen-client"]).await?;
+    run_user_cmd(
+        username,
+        "systemctl",
+        &["--user", "enable", "gamiscreen-client"],
+    )
+    .await?;
     if start_now {
-        let _ = run_user_cmd(username, "systemctl", &["--user", "start", "gamiscreen-client"]).await;
+        let _ = run_user_cmd(
+            username,
+            "systemctl",
+            &["--user", "start", "gamiscreen-client"],
+        )
+        .await;
     }
     Ok(())
 }
@@ -110,9 +132,19 @@ async fn install_user_unit(username: &str, start_now: bool) -> Result<(), AppErr
 async fn uninstall_user_unit(username: &str, stop_now: bool) -> Result<(), AppError> {
     // systemctl --user disable --now gamiscreen-client (best-effort)
     if stop_now {
-        let _ = run_user_cmd(username, "systemctl", &["--user", "disable", "--now", "gamiscreen-client"]).await;
+        let _ = run_user_cmd(
+            username,
+            "systemctl",
+            &["--user", "disable", "--now", "gamiscreen-client"],
+        )
+        .await;
     } else {
-        let _ = run_user_cmd(username, "systemctl", &["--user", "disable", "gamiscreen-client"]).await;
+        let _ = run_user_cmd(
+            username,
+            "systemctl",
+            &["--user", "disable", "gamiscreen-client"],
+        )
+        .await;
     }
 
     let unit_dir = user_systemd_unit_dir(username)?;
@@ -126,7 +158,8 @@ async fn uninstall_user_unit(username: &str, stop_now: bool) -> Result<(), AppEr
 }
 
 fn user_systemd_unit_dir(username: &str) -> Result<PathBuf, AppError> {
-    let home = user_home_dir(username).ok_or_else(|| AppError::Config(format!("cannot find home for user {}", username)))?;
+    let home = user_home_dir(username)
+        .ok_or_else(|| AppError::Config(format!("cannot find home for user {}", username)))?;
     Ok(home.join(".config").join("systemd").join("user"))
 }
 
@@ -175,7 +208,11 @@ async fn run_root_cmd(prog: &str, args: &[&str]) -> Result<(), AppError> {
 }
 
 async fn run_cmd(prog: &str, args: &[&str]) -> Result<(), AppError> {
-    let status = Command::new(prog).args(args).status().await.map_err(AppError::Io)?;
+    let status = Command::new(prog)
+        .args(args)
+        .status()
+        .await
+        .map_err(AppError::Io)?;
     if !status.success() {
         warn!(program=%prog, ?args, %status, "command failed");
     }
@@ -213,8 +250,12 @@ fn is_root() -> bool {
     Uid::effective().is_root()
 }
 
-fn resolve_target_user(user_opt: Option<String>, prompt_if_missing: bool) -> Result<String, AppError> {
-    let cur = current_username().ok_or_else(|| AppError::Config("cannot determine current user".into()))?;
+fn resolve_target_user(
+    user_opt: Option<String>,
+    prompt_if_missing: bool,
+) -> Result<String, AppError> {
+    let cur = current_username()
+        .ok_or_else(|| AppError::Config("cannot determine current user".into()))?;
     if is_root() {
         if let Some(u) = user_opt {
             return Ok(u);
@@ -222,19 +263,24 @@ fn resolve_target_user(user_opt: Option<String>, prompt_if_missing: bool) -> Res
         if prompt_if_missing {
             let u = prompt("Target username for user-level install: ")?;
             if u.is_empty() {
-                return Err(AppError::Config("username is required when running as root".into()));
+                return Err(AppError::Config(
+                    "username is required when running as root".into(),
+                ));
             }
             return Ok(u);
         }
-        Err(AppError::Config("username is required when running as root".into()))
+        Err(AppError::Config(
+            "username is required when running as root".into(),
+        ))
     } else {
         if let Some(u) = user_opt
-            && u != cur {
-                return Err(AppError::Config(format!(
-                    "cannot install for user '{}' when running as '{}' (run as root)",
-                    u, cur
-                )));
-            }
+            && u != cur
+        {
+            return Err(AppError::Config(format!(
+                "cannot install for user '{}' when running as '{}' (run as root)",
+                u, cur
+            )));
+        }
         Ok(cur)
     }
 }
