@@ -115,13 +115,13 @@ export async function listChildTasks(childId: string) {
   return request<TaskWithStatusDto[]>(`/api/children/${encodeURIComponent(childId)}/tasks`)
 }
 
-export interface RewardHistoryItemDto { time: string; task_name?: string | null; minutes: number }
+export interface RewardHistoryItemDto { time: string; description?: string | null; minutes: number }
 export async function listChildRewards(childId: string, page = 1, per_page = 10) {
   const p = new URLSearchParams({ page: String(page), per_page: String(per_page) })
   return request<RewardHistoryItemDto[]>(`/api/children/${encodeURIComponent(childId)}/reward?${p.toString()}`)
 }
 
-export async function rewardMinutes(opts: { child_id: string; task_id?: string; minutes?: number }) {
+export async function rewardMinutes(opts: { child_id: string; task_id?: string; minutes?: number; description?: string | null }) {
   const path = `/api/children/${encodeURIComponent(opts.child_id)}/reward`
   return request<{ remaining_minutes: number }>(path, {
     method: 'POST',

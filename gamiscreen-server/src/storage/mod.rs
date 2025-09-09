@@ -221,35 +221,32 @@ impl Store {
         child: &str,
         page: usize,
         per_page: usize,
-    ) -> Result<Vec<(models::Reward, Option<String>)>, String> {
+    ) -> Result<Vec<models::Reward>, String> {
         let pool = self.pool.clone();
         let child = child.to_string();
         let page = page.max(1);
         let per_page = per_page.clamp(1, 1000) as i64;
         let offset = ((page as i64) - 1) * per_page;
         tokio::task::spawn_blocking(
-            move || -> Result<Vec<(models::Reward, Option<String>)>, String> {
+            move || -> Result<Vec<models::Reward>, String> {
                 let mut conn = pool.get().map_err(|e| e.to_string())?;
                 configure_sqlite_conn(&mut conn).map_err(|e| format!("pragma error: {e}"))?;
-                use crate::storage::schema::{rewards, tasks};
-                // LEFT JOIN tasks to get task name when present
+                use crate::storage::schema::rewards;
+                // Only read from rewards; description is stored at creation time
                 let rows = rewards::table
-                    .left_join(tasks::table.on(tasks::id.nullable().eq(rewards::task_id)))
                     .filter(rewards::child_id.eq(&child))
                     .order(rewards::created_at.desc())
                     .offset(offset)
                     .limit(per_page)
                     .select((
-                        (
-                            rewards::id,
-                            rewards::child_id,
-                            rewards::task_id,
-                            rewards::minutes,
-                            rewards::created_at,
-                        ),
-                        tasks::name.nullable(),
+                        rewards::id,
+                        rewards::child_id,
+                        rewards::task_id,
+                        rewards::minutes,
+                        rewards::description,
+                        rewards::created_at,
                     ))
-                    .load::<(models::Reward, Option<String>)>(&mut conn)
+                    .load::<models::Reward>(&mut conn)
                     .map_err(|e| e.to_string())?;
                 Ok(rows)
             },
@@ -281,11 +278,13 @@ impl Store {
         child_id: &str,
         mins: i32,
         task: Option<&str>,
+        description: Option<&str>,
     ) -> Result<(), String> {
         use schema::rewards;
         let pool = self.pool.clone();
         let child = child_id.to_string();
         let task_opt = task.map(|s| s.to_string());
+        let description_opt = description.map(|s| s.to_string());
         tokio::task::spawn_blocking(move || -> Result<(), String> {
             let mut conn = pool.get().map_err(|e| e.to_string())?;
             configure_sqlite_conn(&mut conn).map_err(|e| format!("pragma error: {e}"))?;
@@ -294,6 +293,7 @@ impl Store {
                 child_id: &child,
                 task_id: task_opt.as_deref(),
                 minutes: mins,
+                description: description_opt.as_deref(),
             };
             diesel::insert_into(rewards::table)
                 .values(&new_reward)

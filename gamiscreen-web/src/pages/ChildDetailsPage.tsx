@@ -12,6 +12,7 @@ export function ChildDetailsPage(props: { childId: string }) {
   const [tasks, setTasks] = useState<TaskWithStatusDto[]>([])
   const [confirm, setConfirm] = useState<null | { mode: 'task', task: TaskWithStatusDto } | { mode: 'custom', minutes: number }>(null)
   const [customMinutes, setCustomMinutes] = useState('')
+  const [customLabel, setCustomLabel] = useState('')
   const [rewards, setRewards] = useState<RewardHistoryItemDto[]>([])
   const [page, setPage] = useState(1)
   const perPage = 10
@@ -76,11 +77,13 @@ export function ChildDetailsPage(props: { childId: string }) {
         setTasks(prev => prev.map(t => t.id === confirm.task.id ? { ...t, last_done: nowIso } : t))
       } else {
         const mins = confirm.minutes
-        const resp = await rewardMinutes({ child_id: childId, minutes: mins })
+        const description = customLabel.trim() || undefined
+        const resp = await rewardMinutes({ child_id: childId, minutes: mins, description })
         setRemaining(resp.remaining_minutes)
       }
       setConfirm(null)
       setCustomMinutes('')
+      setCustomLabel('')
       // Refresh reward history (show newest on first page)
       setPage(1)
       await loadRewards(1)
@@ -147,8 +150,9 @@ export function ChildDetailsPage(props: { childId: string }) {
       {isParent && (
         <div className="card" style={{ padding: '12px' }}>
           <h3 className="title" style={{ fontSize: 16, marginBottom: 8 }}>Custom</h3>
-          <form onSubmit={(e) => { e.preventDefault(); const n = parseInt(customMinutes, 10); if (Number.isFinite(n) && n > 0) { setConfirm({ mode: 'custom', minutes: n }) } }} className="row" style={{ gap: 8, alignItems: 'center' }}>
+          <form onSubmit={(e) => { e.preventDefault(); const n = parseInt(customMinutes, 10); if (Number.isFinite(n) && n > 0) { setConfirm({ mode: 'custom', minutes: n }) } }} className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <input type="number" min={1} step={1} placeholder="e.g., 15" value={customMinutes} onChange={e => setCustomMinutes(e.target.value)} />
+            <input type="text" placeholder="Optional reason/label" value={customLabel} onChange={e => setCustomLabel(e.target.value)} />
             <button type="submit">Accept</button>
           </form>
         </div>
@@ -181,13 +185,13 @@ export function ChildDetailsPage(props: { childId: string }) {
           <div id="reward-history" className="col" style={{ gap: 8, marginTop: 8 }}>
             <table role="grid">
               <thead>
-                <tr><th>Time</th><th>Task</th><th>Minutes</th></tr>
+                <tr><th>Time</th><th>Description</th><th>Minutes</th></tr>
               </thead>
               <tbody>
                 {rewards.map((r, idx) => (
                   <tr key={idx}>
                     <td>{new Date(r.time).toLocaleString()}</td>
-                    <td>{r.task_name ?? 'Additional time'}</td>
+                    <td>{r.description ?? 'Additional time'}</td>
                     <td>+{r.minutes}</td>
                   </tr>
                 ))}

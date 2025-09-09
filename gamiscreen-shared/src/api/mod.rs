@@ -51,6 +51,7 @@ pub struct RewardReq {
     pub child_id: String,
     pub task_id: Option<String>,
     pub minutes: Option<i32>,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -86,7 +87,7 @@ pub struct ClientRegisterResp {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RewardHistoryItemDto {
     pub time: String, // RFC3339 UTC
-    pub task_name: Option<String>,
+    pub description: Option<String>,
     pub minutes: i32,
 }
 

@@ -358,18 +358,27 @@ async fn api_child_reward(
     let mut child_guard = child_mutex.lock().await;
     state.reset_remaining_minutes(&mut child_guard).await;
 
-    let mins = if let Some(m) = body.minutes {
-        m
-    } else if let Some(tid) = &body.task_id {
+    // Determine minutes and description rules:
+    // - If task_id is provided, copy task name into description and use task.minutes
+    // - Else custom minutes must be provided; description defaults to 'Additional time' when missing/blank
+    let (mins, desc_to_store): (i32, String) = if let Some(tid) = &body.task_id {
         match state
             .store
             .get_task_by_id(tid)
             .await
             .map_err(AppError::internal)?
         {
-            Some(t) => t.minutes,
+            Some(t) => (t.minutes, t.name),
             None => return Err(AppError::bad_request(format!("unknown task_id: {}", tid))),
         }
+    } else if let Some(m) = body.minutes {
+        let provided = body.description.as_deref().unwrap_or("").trim();
+        let desc = if provided.is_empty() {
+            "Additional time".to_string()
+        } else {
+            provided.to_string()
+        };
+        (m, desc)
     } else {
         return Err(AppError::bad_request("minutes or task_id required"));
     };
@@ -379,7 +388,7 @@ async fn api_child_reward(
 
     state
         .store
-        .add_reward_minutes(&p.id, mins, body.task_id.as_deref())
+        .add_reward_minutes(&p.id, mins, body.task_id.as_deref(), Some(desc_to_store.as_str()))
         .await
         .map_err(AppError::internal)?;
     if let Some(tid) = body.task_id.as_deref() {
@@ -416,13 +425,13 @@ async fn api_list_child_rewards(
         .map_err(AppError::internal)?;
     let items = rows
         .into_iter()
-        .map(|(r, name)| api::RewardHistoryItemDto {
+        .map(|r| api::RewardHistoryItemDto {
             time: chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(
                 r.created_at,
                 chrono::Utc,
             )
             .to_rfc3339(),
-            task_name: name,
+            description: r.description,
             minutes: r.minutes,
         })
         .collect();

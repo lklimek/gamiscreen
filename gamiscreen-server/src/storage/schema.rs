@@ -20,6 +20,7 @@ diesel::table! {
         child_id -> Text,
         task_id -> Nullable<Text>,
         minutes -> Integer,
+        description -> Nullable<Text>,
         created_at -> Timestamp,
     }
 }

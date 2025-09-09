@@ -41,6 +41,7 @@ pub struct Reward {
     pub child_id: String,
     pub task_id: Option<String>,
     pub minutes: i32,
+    pub description: Option<String>,
     pub created_at: NaiveDateTime,
 }
 
@@ -50,6 +51,7 @@ pub struct NewReward<'a> {
     pub child_id: &'a str,
     pub task_id: Option<&'a str>,
     pub minutes: i32,
+    pub description: Option<&'a str>,
 }
 
 use crate::storage::schema::sessions;
