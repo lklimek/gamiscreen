@@ -75,6 +75,20 @@ export function App() {
     tick()
     return () => { if (timer) clearTimeout(timer) }
   }, [token])
+  // Immediate refresh when notifications change (approve/discard)
+  useEffect(() => {
+    const refresh = async () => {
+      try {
+        if (getAuthClaims()?.role === 'parent') {
+          const { count } = await notificationsCount()
+          setNotifCount(count)
+        }
+      } catch { }
+    }
+    const handler = () => { refresh() }
+    window.addEventListener('gamiscreen:notif-refresh', handler as EventListener)
+    return () => window.removeEventListener('gamiscreen:notif-refresh', handler as EventListener)
+  }, [token])
 
   useEffect(() => {
     if (!loggedIn && route !== 'login') nav('login')

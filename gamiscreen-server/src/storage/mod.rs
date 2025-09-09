@@ -287,13 +287,14 @@ impl Store {
         .map_err(|e| e.to_string())?
     }
 
-    pub async fn approve_submission(&self, submission_id: i32, approver: &str) -> Result<(), String> {
+    pub async fn approve_submission(&self, submission_id: i32, approver: &str) -> Result<Option<String>, String> {
         let pool = self.pool.clone();
         let approver = approver.to_string();
-        tokio::task::spawn_blocking(move || -> Result<(), String> {
+        tokio::task::spawn_blocking(move || -> Result<Option<String>, String> {
             use crate::storage::schema::{rewards, task_completions, task_submissions, tasks};
             let mut conn = pool.get().map_err(|e| e.to_string())?;
             configure_sqlite_conn(&mut conn).map_err(|e| format!("pragma error: {e}"))?;
+            let mut approved_child: Option<String> = None;
             conn.immediate_transaction(|conn| {
                 // Fetch submission with task info
                 let rec: Option<(String, String, i32, String)> = task_submissions::table
@@ -311,6 +312,8 @@ impl Store {
                     // Treat missing submission as success (idempotent)
                     return Ok(());
                 };
+                // remember child for cache invalidation by caller
+                approved_child = Some(child_id.clone());
                 // Insert reward with description = task name
                 let new_reward = NewReward {
                     child_id: &child_id,
@@ -326,7 +329,7 @@ impl Store {
                 diesel::delete(task_submissions::table.filter(task_submissions::id.eq(submission_id))).execute(conn)?;
                 Ok(())
             }).map_err(|e: diesel::result::Error| e.to_string())?;
-            Ok(())
+            Ok(approved_child)
         })
         .await
         .map_err(|e| e.to_string())?

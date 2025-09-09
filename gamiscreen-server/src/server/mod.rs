@@ -535,11 +535,17 @@ async fn api_approve_submission(
     if auth.role != Role::Parent {
         return Err(AppError::forbidden());
     }
-    state
+    let child_opt = state
         .store
         .approve_submission(id, &auth.username)
         .await
         .map_err(AppError::internal)?;
+    // Invalidate remaining cache for that child so subsequent reads reflect new reward
+    if let Some(child_id) = child_opt {
+        let child_mutex = state.child_mutex(&child_id).await;
+        let mut child_guard = child_mutex.lock().await;
+        state.reset_remaining_minutes(&mut child_guard).await;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

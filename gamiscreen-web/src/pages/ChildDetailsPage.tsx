@@ -19,6 +19,8 @@ export function ChildDetailsPage(props: { childId: string }) {
   const perPage = 10
   const [rewardsOpen, setRewardsOpen] = useState(true)
   const [rewardsLoading, setRewardsLoading] = useState(false)
+  // Track locally submitted tasks to avoid duplicate submissions until page reload or approval
+  const [submitted, setSubmitted] = useState<Set<string>>(new Set())
 
   async function load() {
     setLoading(true)
@@ -127,7 +129,8 @@ export function ChildDetailsPage(props: { childId: string }) {
             const last = t.last_done ? new Date(t.last_done) : null
             const todayStr = new Date().toISOString().slice(0, 10)
             const isDoneToday = last ? last.toISOString().slice(0, 10) === todayStr : false
-            const canClick = isParent || isChild
+            const wasSubmitted = submitted.has(t.id)
+            const canClick = isParent || (isChild && !wasSubmitted && !isDoneToday)
             return (
               <div className="row" key={t.id} style={{ justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
@@ -138,11 +141,28 @@ export function ChildDetailsPage(props: { childId: string }) {
                 </div>
                 <div className="row" style={{ gap: 8, alignItems: 'center' }}>
                   <span className="subtitle">+{t.minutes} min</span>
-                  {canClick && (
-                    isParent ? (
-                      <button className={isDoneToday ? 'contrast' : undefined} onClick={() => setConfirm({ mode: 'task', task: t })}>Accept</button>
+                  {isParent && (
+                    <button className={isDoneToday ? 'contrast' : undefined} onClick={() => setConfirm({ mode: 'task', task: t })}>Accept</button>
+                  )}
+                  {isChild && (
+                    wasSubmitted || isDoneToday ? (
+                      <button className="secondary" disabled title={isDoneToday ? 'Already done today' : 'Submitted for approval'}>
+                        {isDoneToday ? 'Done' : 'Submitted'}
+                      </button>
                     ) : (
-                      <button onClick={async () => { try { await submitTask(childId, t.id); setError(null) } catch (e: any) { setError(e.message || 'Failed to submit task') } }}>Submit</button>
+                      <button onClick={async () => {
+                        try {
+                          await submitTask(childId, t.id)
+                          setError(null)
+                          setSubmitted(prev => {
+                            const next = new Set(prev)
+                            next.add(t.id)
+                            return next
+                          })
+                        } catch (e: any) {
+                          setError(e.message || 'Failed to submit task')
+                        }
+                      }}>Submit</button>
                     )
                   )}
                 </div>

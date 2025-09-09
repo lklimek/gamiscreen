@@ -21,17 +21,24 @@ export function NotificationsPage() {
 
   useEffect(() => { load() }, [])
 
-  async function onApprove(id: number) {
+  async function onApprove(item: NotificationItemDto) {
     try {
-      await approveSubmission(id)
-      setItems(prev => prev.filter(x => x.id !== id))
-    } catch {}
+      await approveSubmission(item.id)
+      // Remove from local list immediately
+      setItems(prev => prev.filter(x => x.id !== item.id))
+      // Refresh header badge count
+      window.dispatchEvent(new Event('gamiscreen:notif-refresh'))
+      // Navigate to the child's page so the parent can see reward history updated
+      window.location.hash = `child/${encodeURIComponent(item.child_id)}`
+    } catch { }
   }
   async function onDiscard(id: number) {
     try {
       await discardSubmission(id)
       setItems(prev => prev.filter(x => x.id !== id))
-    } catch {}
+      // Refresh header badge count
+      window.dispatchEvent(new Event('gamiscreen:notif-refresh'))
+    } catch { }
   }
 
   return (
@@ -54,7 +61,7 @@ export function NotificationsPage() {
                   <div className="subtitle">{new Date(item.submitted_at).toLocaleString()}</div>
                 </div>
                 <div className="row" style={{ gap: 8 }}>
-                  <button onClick={() => onApprove(item.id)} title="Approve" aria-label="Approve">✔️</button>
+                  <button onClick={() => onApprove(item)} title="Approve" aria-label="Approve">✔️</button>
                   <button className="secondary" onClick={() => onDiscard(item.id)} title="Discard" aria-label="Discard">✖️</button>
                 </div>
               </div>
@@ -68,4 +75,3 @@ export function NotificationsPage() {
     </section>
   )
 }
-
