@@ -91,11 +91,20 @@ pub struct RewardHistoryItemDto {
 }
 
 // Update manifest (public)
+// schema_version 2: manifest contains multiple items, each for a
+// specific package and semantic version. Clients should select the
+// newest compatible version by comparing semvers.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UpdateManifestDto {
     pub schema_version: u32,
     pub generated_at: String,
-    pub latest_version: String,
+    pub items: Vec<UpdateItemDto>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct UpdateItemDto {
+    pub package: String, // e.g. "gamiscreen-client"
+    pub version: String, // semantic version, e.g. "1.2.3"
     pub artifacts: Vec<UpdateArtifactDto>,
 }
 
@@ -105,4 +114,10 @@ pub struct UpdateArtifactDto {
     pub arch: String,
     pub url: String,
     pub sha256: String,
+}
+
+// Server version
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct VersionInfoDto {
+    pub version: String, // semantic version (e.g. "1.2.3")
 }

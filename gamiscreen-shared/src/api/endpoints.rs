@@ -42,6 +42,6 @@ pub fn child_device_heartbeat(base: &str, child_id: &str, device_id: &str) -> St
     )
 }
 
-pub fn update_manifest(base: &str) -> String {
-    base_join(base, "/api/update/manifest")
+pub fn version(base: &str) -> String {
+    base_join(base, "/api/version")
 }

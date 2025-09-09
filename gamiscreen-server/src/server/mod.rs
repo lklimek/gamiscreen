@@ -125,7 +125,7 @@ pub fn router(state: AppState) -> Router {
 
     let app = Router::new()
         .route("/healthz", get(health))
-        .route("/api/update/manifest", get(api_update_manifest))
+        .route("/api/version", get(api_version))
         .route("/api/auth/login", post(api_auth_login))
         .merge(private)
         .fallback(get(serve_embedded))
@@ -153,15 +153,9 @@ async fn health() -> &'static str {
     "ok"
 }
 
-async fn api_update_manifest() -> Result<axum::response::Response, AppError> {
-    // Serve the embedded JSON from OUT_DIR produced by build.rs
-    static DATA: &str = include_str!(concat!(env!("OUT_DIR"), "/update_manifest.json"));
-    let mut resp = axum::response::Response::new(axum::body::Body::from(DATA.to_string()));
-    resp.headers_mut().insert(
-        header::CONTENT_TYPE,
-        header::HeaderValue::from_static("application/json"),
-    );
-    Ok(resp)
+async fn api_version() -> Result<Json<api::VersionInfoDto>, AppError> {
+    let v = env!("CARGO_PKG_VERSION").to_string();
+    Ok(Json(api::VersionInfoDto { version: v }))
 }
 
 async fn add_request_id(
@@ -602,6 +596,10 @@ async fn serve_embedded(
     uri: axum::http::Uri,
 ) -> Result<axum::response::Response, (StatusCode, String)> {
     let path = uri.path().trim_start_matches('/');
+    // Do not serve frontend for API paths; return 404 so clients don't misinterpret as success.
+    if path == "api" || path.starts_with("api/") {
+        return Err((StatusCode::NOT_FOUND, "not found".to_string()));
+    }
     let candidate = if path.is_empty() { "index.html" } else { path };
     let asset = WebAssets::get(candidate)
         .or_else(|| WebAssets::get("index.html"))

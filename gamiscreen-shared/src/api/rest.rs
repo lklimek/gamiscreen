@@ -180,9 +180,9 @@ pub async fn child_tasks(
     handle_json(res).await
 }
 
-pub async fn update_manifest(base: &str) -> Result<UpdateManifestDto, RestError> {
+pub async fn server_version(base: &str) -> Result<VersionInfoDto, RestError> {
     let client = mk_client()?;
-    let url = ep::update_manifest(base);
+    let url = ep::version(base);
     let res = client
         .get(url)
         .send()

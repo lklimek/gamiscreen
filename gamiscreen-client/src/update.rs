@@ -11,44 +11,125 @@ use crate::{AppError, ClientConfig};
 
 pub async fn maybe_self_update(cfg: &ClientConfig) -> Result<(), AppError> {
     let base = crate::config::normalize_server_url(&cfg.server_url);
-    // Fetch manifest (public)
-    let manifest = match gamiscreen_shared::api::rest::update_manifest(&base).await {
-        Ok(m) => m,
+    // Get server version (for compatibility checks)
+    let server_version = match gamiscreen_shared::api::rest::server_version(&base).await {
+        Ok(v) => v.version,
         Err(e) => {
-            warn!(error=%e, "update: failed to fetch manifest; continuing with current binary");
+            warn!(error=%e, "update: failed to fetch server version; skipping update");
+            return Ok(());
+        }
+    };
+    let server_version = match Version::parse(&server_version) {
+        Ok(v) => v,
+        Err(_) => {
+            warn!("update: server version is not a valid semver; skipping update");
             return Ok(());
         }
     };
 
     let current_version =
         Version::parse(env!("CARGO_PKG_VERSION")).unwrap_or_else(|_| Version::new(0, 0, 0));
-    let latest_version = match Version::parse(&manifest.latest_version) {
-        Ok(v) => v,
-        Err(_) => return Ok(()),
-    };
-    if latest_version <= current_version {
-        info!(%current_version, %latest_version, "update: current version is up to date");
+    // Find newest compatible client release on GitHub
+    let repo = "lklimek/gamiscreen";
+    let gh = reqwest::Client::builder()
+        .user_agent("gamiscreen-client-updater")
+        .build()
+        .map_err(|e| AppError::Http(e.to_string()))?;
+    let url = format!("https://api.github.com/repos/{}/releases", repo);
+    let releases: Vec<serde_json::Value> = gh
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| AppError::Http(e.to_string()))?
+        .json()
+        .await
+        .map_err(|e| AppError::Http(e.to_string()))?;
+
+    // Collect candidate versions with assets
+    let mut candidates: Vec<(Version, Vec<Asset>)> = Vec::new();
+    for rel in releases.into_iter() {
+        let tag = rel.get("tag_name").and_then(|v| v.as_str()).unwrap_or("");
+        let ver_str = tag.trim_start_matches('v');
+        let Ok(ver) = Version::parse(ver_str) else {
+            continue;
+        };
+        // Compatibility rule:
+        // - Stable (>=1): same major as server, and not newer than server
+        // - Pre-1.0 (0.y.z): same 0.minor as server, and not newer than server
+        if !is_compatible(&ver, &server_version) || ver <= current_version {
+            continue;
+        }
+        let assets = rel
+            .get("assets")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let mut out_assets: Vec<Asset> = Vec::new();
+        for a in assets.iter() {
+            let name = a.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            if !name.starts_with("gamiscreen-client") || name.ends_with(".sha256") {
+                continue;
+            }
+            let url = a
+                .get("browser_download_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if url.is_empty() {
+                continue;
+            }
+
+            // Expect sibling sha256 asset
+            let sha_name = format!("{}.sha256", name);
+            let mut sha256 = String::new();
+            for b in assets.iter() {
+                if b.get("name").and_then(|v| v.as_str()) == Some(sha_name.as_str())
+                    && let Some(url2) = b.get("browser_download_url").and_then(|v| v.as_str())
+                {
+                    if let Ok(resp) = gh.get(url2).send().await {
+                        if let Ok(text) = resp.text().await {
+                            sha256 = text.split_whitespace().next().unwrap_or("").to_string();
+                        }
+                    }
+                }
+            }
+            if sha256.is_empty() {
+                continue;
+            }
+
+            // Map name to os/arch
+            let (os, arch) = map_os_arch(name);
+            if os.is_empty() || arch.is_empty() {
+                continue;
+            }
+            out_assets.push(Asset {
+                os,
+                arch,
+                url,
+                sha256,
+            });
+        }
+        if !out_assets.is_empty() {
+            candidates.push((ver, out_assets));
+        }
+    }
+    if candidates.is_empty() {
+        info!(%current_version, %server_version, "update: no compatible releases found");
         return Ok(());
     }
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    let (target_version, assets) = candidates.remove(0);
 
     // Choose artifact by OS/arch
     let os = std::env::consts::OS.to_string();
     let arch = std::env::consts::ARCH.to_string();
-    let art = match manifest
-        .artifacts
-        .into_iter()
-        .find(|a| a.os == os && a.arch == arch)
-    {
+    let art = match assets.into_iter().find(|a| a.os == os && a.arch == arch) {
         Some(a) => a,
         None => {
-            warn!(%os, %arch, "update: no artifact for this platform");
+            warn!(%os, %arch, %target_version, "update: no artifact for this platform");
             return Ok(());
         }
     };
-    if art.sha256.is_empty() {
-        warn!("update: manifest missing sha256 for selected artifact; skipping update");
-        return Ok(());
-    }
 
     // Download to a temporary path next to the current executable
     let exe = std::env::current_exe().map_err(AppError::Io)?;
@@ -105,6 +186,43 @@ pub async fn maybe_self_update(cfg: &ClientConfig) -> Result<(), AppError> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let _ = Command::new(&exe).args(args).spawn();
     std::process::exit(0);
+}
+
+#[derive(Clone)]
+struct Asset {
+    os: String,
+    arch: String,
+    url: String,
+    sha256: String,
+}
+
+fn map_os_arch(name: &str) -> (String, String) {
+    let lname = name.to_lowercase();
+    let mut os = String::new();
+    let mut arch = String::new();
+    if lname.contains("linux") {
+        os = "linux".into();
+    } else if lname.contains("windows") || lname.contains("win32") || lname.ends_with(".exe") {
+        os = "windows".into();
+    } else if lname.contains("darwin") || lname.contains("macos") || lname.contains("apple") {
+        os = "macos".into();
+    }
+    if lname.contains("x86_64") || lname.contains("amd64") {
+        arch = "x86_64".into();
+    } else if lname.contains("aarch64") || lname.contains("arm64") {
+        arch = "aarch64".into();
+    } else if lname.contains("armv7") || lname.contains("armv7l") {
+        arch = "armv7".into();
+    }
+    (os, arch)
+}
+
+fn is_compatible(client: &Version, server: &Version) -> bool {
+    if server.major == 0 {
+        client.major == 0 && client.minor == server.minor && client <= server
+    } else {
+        client.major == server.major && client <= server
+    }
 }
 
 async fn download_to_file(url: &str, path: &PathBuf) -> Result<(), AppError> {

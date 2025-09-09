@@ -833,7 +833,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2dff15bf788c671c1934e366d07e30c1814a8ef514e1af724a602e8a2fbe1b10"
 dependencies = [
  "futures-core",
- "futures-sink",
 ]
 
 [[package]]
@@ -891,11 +890,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9fa08315bb612088cc391249efdc3bc77536f16c91f6cf495e6fbe85b20a4a81"
 dependencies = [
  "futures-core",
- "futures-io",
  "futures-macro",
  "futures-sink",
  "futures-task",
- "memchr",
  "pin-project-lite",
  "pin-utils",
  "slab",
@@ -903,7 +900,7 @@ dependencies = [
 
 [[package]]
 name = "gamiscreen-client"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "async-trait",
  "base64",
@@ -934,7 +931,7 @@ dependencies = [
 
 [[package]]
 name = "gamiscreen-server"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "axum",
  "bcrypt",
@@ -965,7 +962,7 @@ dependencies = [
 
 [[package]]
 name = "gamiscreen-shared"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "once_cell",
  "percent-encoding",
@@ -2110,9 +2107,7 @@ checksum = "d429f34c8092b2d42c7c93cec323bb4adeb7c67698f70839adec842ec10c7ceb"
 dependencies = [
  "base64",
  "bytes",
- "futures-channel",
  "futures-core",
- "futures-util",
  "http",
  "http-body",
  "http-body-util",
