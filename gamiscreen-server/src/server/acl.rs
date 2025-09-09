@@ -1,5 +1,5 @@
-use super::{AppError, Role, auth::AuthCtx};
-use crate::shared::path::{child_and_device_from_path, child_id_from_path};
+use super::{auth::AuthCtx, AppError, Role};
+use percent_encoding::percent_decode_str;
 use axum::response::Response;
 use axum::{
     extract::State,
@@ -19,11 +19,23 @@ pub async fn enforce_acl(
         return Err(AppError::unauthorized());
     };
 
+    // Helper to split the path into normalized segments (without leading/trailing empty parts)
+    fn segments(p: &str) -> Vec<&str> {
+        p.split('/')
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<&str>>()
+    }
+    // Helper to percent-decode a single segment
+    fn decode(seg: &str) -> String {
+        percent_decode_str(seg).decode_utf8_lossy().to_string()
+    }
+    let segs = segments(&path);
+
     // Default deny: mark allowed when a rule applies
     let mut allowed = false;
 
     // Parent-only endpoints
-    if path == "/api/children" && method == Method::GET {
+    if segs.as_slice() == ["api", "children"] && method == Method::GET {
         if auth.role != Role::Parent {
             return Err(AppError::forbidden());
         }
@@ -31,16 +43,14 @@ pub async fn enforce_acl(
     }
 
     // Tasks (global list): allow both roles
-    if path == "/api/tasks" && method == Method::GET {
+    if segs.as_slice() == ["api", "tasks"] && method == Method::GET {
         allowed = true;
     }
 
     // Remaining: allow parent for any id; children only for self
-    if method == Method::GET && path.starts_with("/api/children/") && path.ends_with("/remaining") {
+    if method == Method::GET && segs.len() == 4 && segs[0] == "api" && segs[1] == "children" && segs[3] == "remaining" {
         if auth.role != Role::Parent {
-            let Some(child) = child_id_from_path(&path) else {
-                return Err(AppError::forbidden());
-            };
+            let child = decode(segs[2]);
             match &auth.child_id {
                 Some(id) if id == &child => {}
                 _ => return Err(AppError::forbidden()),
@@ -50,11 +60,9 @@ pub async fn enforce_acl(
     }
 
     // Child tasks listing: allow parent for any id; children only for self
-    if method == Method::GET && path.starts_with("/api/children/") && path.ends_with("/tasks") {
+    if method == Method::GET && segs.len() == 4 && segs[0] == "api" && segs[1] == "children" && segs[3] == "tasks" {
         if auth.role != Role::Parent {
-            let Some(child) = child_id_from_path(&path) else {
-                return Err(AppError::forbidden());
-            };
+            let child = decode(segs[2]);
             match &auth.child_id {
                 Some(id) if id == &child => {}
                 _ => return Err(AppError::forbidden()),
@@ -64,11 +72,9 @@ pub async fn enforce_acl(
     }
 
     // Child rewards listing: allow parent for any id; children only for self
-    if method == Method::GET && path.starts_with("/api/children/") && path.ends_with("/reward") {
+    if method == Method::GET && segs.len() == 4 && segs[0] == "api" && segs[1] == "children" && segs[3] == "reward" {
         if auth.role != Role::Parent {
-            let Some(child) = child_id_from_path(&path) else {
-                return Err(AppError::forbidden());
-            };
+            let child = decode(segs[2]);
             match &auth.child_id {
                 Some(id) if id == &child => {}
                 _ => return Err(AppError::forbidden()),
@@ -78,7 +84,7 @@ pub async fn enforce_acl(
     }
 
     // Rewards (new REST path): parent-only on any child id
-    if method == Method::POST && path.starts_with("/api/children/") && path.ends_with("/reward") {
+    if method == Method::POST && segs.len() == 4 && segs[0] == "api" && segs[1] == "children" && segs[3] == "reward" {
         if auth.role != Role::Parent {
             return Err(AppError::forbidden());
         }
@@ -86,45 +92,46 @@ pub async fn enforce_acl(
     }
 
     // Notifications: parent-only
-    if path == "/api/notifications" && method == Method::GET {
+    if segs.as_slice() == ["api", "notifications"] && method == Method::GET {
         if auth.role != Role::Parent { return Err(AppError::forbidden()); }
         allowed = true;
     }
-    if path == "/api/notifications/count" && method == Method::GET {
+    if segs.as_slice() == ["api", "notifications", "count"] && method == Method::GET {
         if auth.role != Role::Parent { return Err(AppError::forbidden()); }
         allowed = true;
     }
-    if method == Method::POST && path.starts_with("/api/notifications/task-submissions/") && (path.ends_with("/approve") || path.ends_with("/discard")) {
+    if method == Method::POST
+        && segs.len() == 5
+        && segs[0] == "api"
+        && segs[1] == "notifications"
+        && segs[2] == "task-submissions"
+        && (segs[4] == "approve" || segs[4] == "discard")
+        && segs[3].parse::<i32>().is_ok()
+    {
         if auth.role != Role::Parent { return Err(AppError::forbidden()); }
         allowed = true;
     }
 
     // Child task submit: child-only for own id
     if method == Method::POST
-        && path.starts_with("/api/children/")
-        && path.contains("/tasks/")
-        && path.ends_with("/submit")
+        && segs.len() == 6
+        && segs[0] == "api"
+        && segs[1] == "children"
+        && segs[3] == "tasks"
+        && segs[5] == "submit"
     {
-        if auth.role != Role::Child {
-            return Err(AppError::forbidden());
-        }
-        let Some(child) = child_id_from_path(&path) else {
-            return Err(AppError::forbidden());
-        };
+        if auth.role != Role::Child { return Err(AppError::forbidden()); }
+        let child = decode(segs[2]);
         match &auth.child_id {
-            Some(id) if id == &child => {
-                allowed = true;
-            }
+            Some(id) if id == &child => allowed = true,
             _ => return Err(AppError::forbidden()),
         }
     }
 
     // Register device (new REST path): parent any id; child only for own id
-    if method == Method::POST && path.starts_with("/api/children/") && path.ends_with("/register") {
+    if method == Method::POST && segs.len() == 4 && segs[0] == "api" && segs[1] == "children" && segs[3] == "register" {
         if auth.role != Role::Parent {
-            let Some(child) = child_id_from_path(&path) else {
-                return Err(AppError::forbidden());
-            };
+            let child = decode(segs[2]);
             match &auth.child_id {
                 Some(id) if id == &child => {}
                 _ => return Err(AppError::forbidden()),
@@ -134,24 +141,22 @@ pub async fn enforce_acl(
     }
 
     // Heartbeat (new REST path): child only and must match both child_id and device_id
-    if method == Method::POST && path.starts_with("/api/children/") && path.ends_with("/heartbeat")
+    if method == Method::POST
+        && segs.len() == 6
+        && segs[0] == "api"
+        && segs[1] == "children"
+        && segs[3] == "device"
+        && segs[5] == "heartbeat"
     {
         if auth.role != Role::Child {
             tracing::warn!(role=?auth.role, "ACL heartbeat: non-child role");
             return Err(AppError::forbidden());
         }
-        // expected: /api/children/{id}/device/{device_id}/heartbeat
-        if let Some((child, device)) = child_and_device_from_path(&path) {
-            match (&auth.child_id, &auth.device_id) {
-                (Some(cid), Some(did)) if cid == &child && did == &device => {}
-                _ => {
-                    return Err(AppError::forbidden());
-                }
-            }
-            allowed = true;
-        } else {
-            tracing::warn!(%path, "ACL heartbeat: cannot parse child/device from path");
-            return Err(AppError::forbidden());
+        let child = decode(segs[2]);
+        let device = decode(segs[4]);
+        match (&auth.child_id, &auth.device_id) {
+            (Some(cid), Some(did)) if cid == &child && did == &device => allowed = true,
+            _ => return Err(AppError::forbidden()),
         }
     }
 

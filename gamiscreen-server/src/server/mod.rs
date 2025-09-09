@@ -108,6 +108,8 @@ pub fn router(state: AppState) -> Router {
             post(api_submit_task),
         )
         .with_state(state.clone())
+        // IMPORTANT: Last-added layer runs first on request. We want:
+        // require_bearer -> enforce_acl -> set_auth_span_fields -> handler
         .layer(middleware::from_fn_with_state(
             state.clone(),
             acl::enforce_acl,
@@ -529,7 +531,7 @@ async fn api_approve_submission(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthCtx>,
     Path(id): Path<i32>,
-) -> Result<(), AppError> {
+) -> Result<StatusCode, AppError> {
     if auth.role != Role::Parent {
         return Err(AppError::forbidden());
     }
@@ -538,27 +540,27 @@ async fn api_approve_submission(
         .approve_submission(id, &auth.username)
         .await
         .map_err(AppError::internal)?;
-    Ok(())
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn api_discard_submission(
     State(state): State<AppState>,
     Extension(_auth): Extension<AuthCtx>,
     Path(id): Path<i32>,
-) -> Result<(), AppError> {
+) -> Result<StatusCode, AppError> {
     state
         .store
         .discard_submission(id)
         .await
         .map_err(AppError::internal)?;
-    Ok(())
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn api_submit_task(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthCtx>,
     Path(p): Path<ChildTaskPath>,
-) -> Result<(), AppError> {
+) -> Result<StatusCode, AppError> {
     // child can submit only for own id
     if auth.role != Role::Child {
         return Err(AppError::forbidden());
@@ -582,7 +584,7 @@ async fn api_submit_task(
         .submit_task(&p.id, &p.task_id)
         .await
         .map_err(AppError::internal)?;
-    Ok(())
+    Ok(StatusCode::NO_CONTENT)
 }
 
 type MinutesGuard<'a> = MutexGuard<'a, Option<i32>>;
