@@ -150,10 +150,40 @@ export function ChildDetailsPage(props: { childId: string }) {
       {isParent && (
         <div className="card" style={{ padding: '12px' }}>
           <h3 className="title" style={{ fontSize: 16, marginBottom: 8 }}>Custom</h3>
-          <form onSubmit={(e) => { e.preventDefault(); const n = parseInt(customMinutes, 10); if (Number.isFinite(n) && n > 0) { setConfirm({ mode: 'custom', minutes: n }) } }} className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <input type="number" min={1} step={1} placeholder="e.g., 15" value={customMinutes} onChange={e => setCustomMinutes(e.target.value)} />
-            <input type="text" placeholder="Optional reason/label" value={customLabel} onChange={e => setCustomLabel(e.target.value)} />
-            <button type="submit">Accept</button>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const n = parseInt(customMinutes, 10);
+              if (Number.isFinite(n) && n > 0) {
+                setConfirm({ mode: 'custom', minutes: n });
+              }
+            }}
+            className="col"
+            style={{ gap: 8 }}
+          >
+            <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                placeholder="15"
+                aria-label="Minutes"
+                value={customMinutes}
+                onChange={e => setCustomMinutes(e.target.value)}
+                style={{ width: '7ch', textAlign: 'right' }}
+              />
+              <span className="subtitle" style={{ whiteSpace: 'nowrap' }}>minutes</span>
+              <button type="submit">Accept</button>
+            </div>
+            <label className="col">
+              <span>Description</span>
+              <input
+                type="text"
+                placeholder="Optional description"
+                value={customLabel}
+                onChange={e => setCustomLabel(e.target.value)}
+              />
+            </label>
           </form>
         </div>
       )}
