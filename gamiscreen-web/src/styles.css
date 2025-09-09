@@ -111,3 +111,14 @@ dialog::-webkit-scrollbar {
   width: 0;
   height: 0;
 }
+
+/* Accept button responsive behavior */
+.acceptButton {
+  align-self: flex-end;
+}
+
+@media (max-width: 640px) {
+  .acceptButton {
+    width: 100%;
+  }
+}

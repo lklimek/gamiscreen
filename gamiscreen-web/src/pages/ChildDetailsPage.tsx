@@ -170,10 +170,9 @@ export function ChildDetailsPage(props: { childId: string }) {
                 aria-label="Minutes"
                 value={customMinutes}
                 onChange={e => setCustomMinutes(e.target.value)}
-                style={{ width: '7ch', textAlign: 'right' }}
+                style={{ width: '14ch', textAlign: 'right' }}
               />
-              <span className="subtitle" style={{ whiteSpace: 'nowrap' }}>minutes</span>
-              <button type="submit">Accept</button>
+              <span className="subtitle" style={{ whiteSpace: 'nowrap', alignSelf: 'center' }}>minutes</span>
             </div>
             <label className="col">
               <span>Description</span>
@@ -184,6 +183,7 @@ export function ChildDetailsPage(props: { childId: string }) {
                 onChange={e => setCustomLabel(e.target.value)}
               />
             </label>
+            <button type="submit" className="acceptButton">Accept</button>
           </form>
         </div>
       )}
