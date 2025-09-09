@@ -4,7 +4,7 @@ members = ["gamiscreen-client", "gamiscreen-server", "gamiscreen-shared"]
 
 [workspace.package]
 name = "gamiscreen"
-version = "0.1.3"
+version = "0.2.0"
 edition = "2024"
 authors = ["Lukasz Klimek"]
 license = "GPL-3.0"
