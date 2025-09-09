@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { getAuthClaims, getToken, setToken } from './api'
+import { getAuthClaims, getToken, notificationsCount, setToken } from './api'
 import { ChildDetailsPage } from './pages/ChildDetailsPage'
 import { LoginPage } from './pages/LoginPage'
+import { NotificationsPage } from './pages/NotificationsPage'
 import { StatusPage } from './pages/StatusPage'
 
-type Route = 'status' | 'login' | 'child'
+type Route = 'status' | 'login' | 'child' | 'notifications'
 
 function useHashRoute(): [Route, (r: Route, opts?: { childId?: string }) => void, { childId?: string }] {
   const parse = () => {
@@ -56,6 +57,25 @@ export function App() {
     nav('login')
   }
 
+  // Notifications polling (parent)
+  const [notifCount, setNotifCount] = useState<number>(0)
+  useEffect(() => {
+    let timer: any
+    const tick = async () => {
+      try {
+        if (getAuthClaims()?.role === 'parent') {
+          const { count } = await notificationsCount()
+          setNotifCount(count)
+        } else {
+          setNotifCount(0)
+        }
+      } catch { }
+      timer = setTimeout(tick, 30000)
+    }
+    tick()
+    return () => { if (timer) clearTimeout(timer) }
+  }, [token])
+
   useEffect(() => {
     if (!loggedIn && route !== 'login') nav('login')
     // If child is logged in but URL is not child route, redirect.
@@ -96,7 +116,17 @@ export function App() {
             <p className="subtitle" style={{ margin: 0 }}>Reward earned screen time</p>
           </div>
           {loggedIn && (
-            <button className="secondary outline" onClick={logout}>Logout</button>
+            <div className="row" style={{ alignItems: 'center', gap: 8 }}>
+              {claims?.role === 'parent' && (
+                <button className="secondary outline" onClick={() => nav('notifications')} aria-label={`Notifications (${notifCount})`} title={`Notifications (${notifCount})`} style={{ position: 'relative' }}>
+                  🔔
+                  {notifCount > 0 && (
+                    <span style={{ position: 'absolute', top: -6, right: -6, background: '#d00', color: '#fff', borderRadius: 12, fontSize: 10, padding: '1px 6px' }}>{notifCount}</span>
+                  )}
+                </button>
+              )}
+              <button className="secondary outline" onClick={logout}>Logout</button>
+            </div>
           )}
         </header>
         {/* Navigation removed per new workflow */}
@@ -119,11 +149,14 @@ export function App() {
           {loggedIn && !isChild && route === 'child' && params.childId && (
             <ChildDetailsPage childId={params.childId} />
           )}
+          {loggedIn && !isChild && route === 'notifications' && (
+            <NotificationsPage />
+          )}
         </section>
       </article>
       {!installed && installEvt && (
         <footer style={{ textAlign: 'center', fontSize: 12, marginTop: 12 }}>
-          <a href="#install" onClick={async (e) => { e.preventDefault(); const ev = installEvt; try { await ev.prompt(); } catch {} }}>Install app</a>
+          <a href="#install" onClick={async (e) => { e.preventDefault(); const ev = installEvt; try { await ev.prompt(); } catch { } }}>Install app</a>
         </footer>
       )}
     </main>

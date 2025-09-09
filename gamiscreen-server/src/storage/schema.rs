@@ -52,6 +52,15 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    task_submissions (id) {
+        id -> Integer,
+        child_id -> Text,
+        task_id -> Text,
+        submitted_at -> Timestamp,
+    }
+}
+
 diesel::joinable!(rewards -> children (child_id));
 diesel::joinable!(rewards -> tasks (task_id));
 
@@ -61,5 +70,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     tasks,
     sessions,
     task_completions,
+    task_submissions,
     usage_minutes,
 );

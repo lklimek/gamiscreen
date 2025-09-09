@@ -91,6 +91,29 @@ pub struct RewardHistoryItemDto {
     pub minutes: i32,
 }
 
+// Submissions / Notifications
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SubmitTaskReq {
+    pub child_id: String,
+    pub task_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NotificationsCountDto {
+    pub count: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NotificationItemDto {
+    pub id: i32,
+    pub kind: String,
+    pub child_id: String,
+    pub child_display_name: String,
+    pub task_id: String,
+    pub task_name: String,
+    pub submitted_at: String, // RFC3339 UTC
+}
+
 // Update manifest (public)
 // schema_version 2: manifest contains multiple items, each for a
 // specific package and semantic version. Clients should select the

@@ -3,6 +3,8 @@ export interface ChildDto { id: string; display_name: string }
 export interface TaskDto { id: string; name: string; minutes: number }
 export interface TaskWithStatusDto { id: string; name: string; minutes: number; last_done?: string | null }
 export interface RemainingDto { child_id: string; remaining_minutes: number }
+export interface NotificationsCountDto { count: number }
+export interface NotificationItemDto { id: number; kind: string; child_id: string; child_display_name: string; task_id: string; task_name: string; submitted_at: string }
 
 const TOKEN_KEY = 'gamiscreen.token'
 const SERVER_BASE_KEY = 'gamiscreen.server_base'
@@ -127,4 +129,27 @@ export async function rewardMinutes(opts: { child_id: string; task_id?: string; 
     method: 'POST',
     body: JSON.stringify(opts)
   })
+}
+
+// Child task submission
+export async function submitTask(childId: string, taskId: string) {
+  const path = `/api/children/${encodeURIComponent(childId)}/tasks/${encodeURIComponent(taskId)}/submit`
+  return request<void>(path, { method: 'POST' })
+}
+
+// Notifications
+export async function notificationsCount() {
+  return request<NotificationsCountDto>('/api/notifications/count')
+}
+
+export async function listNotifications() {
+  return request<NotificationItemDto[]>('/api/notifications')
+}
+
+export async function approveSubmission(id: number) {
+  return request<void>(`/api/notifications/task-submissions/${id}/approve`, { method: 'POST' })
+}
+
+export async function discardSubmission(id: number) {
+  return request<void>(`/api/notifications/task-submissions/${id}/discard`, { method: 'POST' })
 }

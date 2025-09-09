@@ -216,6 +216,137 @@ impl Store {
         .map_err(|e| e.to_string())?
     }
 
+    // Task submissions (pending approvals)
+    pub async fn submit_task(&self, child: &str, task: &str) -> Result<(), String> {
+        use models::NewTaskSubmission;
+        use schema::task_submissions;
+        let pool = self.pool.clone();
+        let c = child.to_string();
+        let t = task.to_string();
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let mut conn = pool.get().map_err(|e| e.to_string())?;
+            configure_sqlite_conn(&mut conn).map_err(|e| format!("pragma error: {e}"))?;
+            let rec = NewTaskSubmission { child_id: &c, task_id: &t };
+            diesel::insert_into(task_submissions::table)
+                .values(&rec)
+                .execute(&mut conn)
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    pub async fn list_pending_submissions(
+        &self,
+    ) -> Result<Vec<(models::TaskSubmission, Child, Task)>, String> {
+        let pool = self.pool.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<(models::TaskSubmission, Child, Task)>, String> {
+            let mut conn = pool.get().map_err(|e| e.to_string())?;
+            configure_sqlite_conn(&mut conn).map_err(|e| format!("pragma error: {e}"))?;
+            use crate::storage::schema::{children, task_submissions, tasks};
+            let rows = task_submissions::table
+                .inner_join(children::table.on(children::id.eq(task_submissions::child_id)))
+                .inner_join(tasks::table.on(tasks::id.eq(task_submissions::task_id)))
+                .order(task_submissions::submitted_at.desc())
+                .select((
+                    (
+                        task_submissions::id,
+                        task_submissions::child_id,
+                        task_submissions::task_id,
+                        task_submissions::submitted_at,
+                    ),
+                    (
+                        children::id,
+                        children::display_name,
+                    ),
+                    (
+                        tasks::id,
+                        tasks::name,
+                        tasks::minutes,
+                    ),
+                ))
+                .load::<(models::TaskSubmission, Child, Task)>(&mut conn)
+                .map_err(|e| e.to_string())?;
+            Ok(rows)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    pub async fn pending_submissions_count(&self) -> Result<i64, String> {
+        use schema::task_submissions::dsl as ts;
+        let pool = self.pool.clone();
+        tokio::task::spawn_blocking(move || -> Result<i64, String> {
+            let mut conn = pool.get().map_err(|e| e.to_string())?;
+            configure_sqlite_conn(&mut conn).map_err(|e| format!("pragma error: {e}"))?;
+            let c: i64 = ts::task_submissions.count().get_result(&mut conn).map_err(|e| e.to_string())?;
+            Ok(c)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    pub async fn approve_submission(&self, submission_id: i32, approver: &str) -> Result<(), String> {
+        let pool = self.pool.clone();
+        let approver = approver.to_string();
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            use crate::storage::schema::{rewards, task_completions, task_submissions, tasks};
+            let mut conn = pool.get().map_err(|e| e.to_string())?;
+            configure_sqlite_conn(&mut conn).map_err(|e| format!("pragma error: {e}"))?;
+            conn.immediate_transaction(|conn| {
+                // Fetch submission with task info
+                let rec: Option<(String, String, i32, String)> = task_submissions::table
+                    .inner_join(tasks::table.on(tasks::id.eq(task_submissions::task_id)))
+                    .filter(task_submissions::id.eq(submission_id))
+                    .select((
+                        task_submissions::child_id,
+                        task_submissions::task_id,
+                        tasks::minutes,
+                        tasks::name,
+                    ))
+                    .first::<(String, String, i32, String)>(conn)
+                    .optional()?;
+                let Some((child_id, task_id, mins, task_name)) = rec else {
+                    // Treat missing submission as success (idempotent)
+                    return Ok(());
+                };
+                // Insert reward with description = task name
+                let new_reward = NewReward {
+                    child_id: &child_id,
+                    task_id: Some(&task_id),
+                    minutes: mins,
+                    description: Some(&task_name),
+                };
+                diesel::insert_into(rewards::table).values(&new_reward).execute(conn)?;
+                // Record task completion
+                let tc = models::NewTaskCompletion { child_id: &child_id, task_id: &task_id, by_username: &approver };
+                diesel::insert_into(task_completions::table).values(&tc).execute(conn)?;
+                // Delete submission
+                diesel::delete(task_submissions::table.filter(task_submissions::id.eq(submission_id))).execute(conn)?;
+                Ok(())
+            }).map_err(|e: diesel::result::Error| e.to_string())?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    pub async fn discard_submission(&self, submission_id: i32) -> Result<(), String> {
+        use schema::task_submissions::dsl as ts;
+        let pool = self.pool.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let mut conn = pool.get().map_err(|e| e.to_string())?;
+            configure_sqlite_conn(&mut conn).map_err(|e| format!("pragma error: {e}"))?;
+            let _ = diesel::delete(ts::task_submissions.filter(ts::id.eq(submission_id)))
+                .execute(&mut conn)
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
     pub async fn list_rewards_for_child(
         &self,
         child: &str,

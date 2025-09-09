@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getAuthClaims, getRemaining, listChildren, listChildRewards, listChildTasks, RewardHistoryItemDto, rewardMinutes, TaskWithStatusDto } from '../api'
+import { getAuthClaims, getRemaining, listChildren, listChildRewards, listChildTasks, RewardHistoryItemDto, rewardMinutes, TaskWithStatusDto, submitTask } from '../api'
 
 export function ChildDetailsPage(props: { childId: string }) {
   const { childId } = props
@@ -9,6 +9,7 @@ export function ChildDetailsPage(props: { childId: string }) {
   const [error, setError] = useState<string | null>(null)
   const claims = getAuthClaims()
   const isParent = claims?.role === 'parent'
+  const isChild = claims?.role === 'child'
   const [tasks, setTasks] = useState<TaskWithStatusDto[]>([])
   const [confirm, setConfirm] = useState<null | { mode: 'task', task: TaskWithStatusDto } | { mode: 'custom', minutes: number }>(null)
   const [customMinutes, setCustomMinutes] = useState('')
@@ -126,7 +127,7 @@ export function ChildDetailsPage(props: { childId: string }) {
             const last = t.last_done ? new Date(t.last_done) : null
             const todayStr = new Date().toISOString().slice(0, 10)
             const isDoneToday = last ? last.toISOString().slice(0, 10) === todayStr : false
-            const canClick = isParent
+            const canClick = isParent || isChild
             return (
               <div className="row" key={t.id} style={{ justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
@@ -138,7 +139,11 @@ export function ChildDetailsPage(props: { childId: string }) {
                 <div className="row" style={{ gap: 8, alignItems: 'center' }}>
                   <span className="subtitle">+{t.minutes} min</span>
                   {canClick && (
-                    <button className={isDoneToday ? 'contrast' : undefined} onClick={() => setConfirm({ mode: 'task', task: t })}>Accept</button>
+                    isParent ? (
+                      <button className={isDoneToday ? 'contrast' : undefined} onClick={() => setConfirm({ mode: 'task', task: t })}>Accept</button>
+                    ) : (
+                      <button onClick={async () => { try { await submitTask(childId, t.id); setError(null) } catch (e: any) { setError(e.message || 'Failed to submit task') } }}>Submit</button>
+                    )
                   )}
                 </div>
               </div>

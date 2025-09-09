@@ -84,6 +84,16 @@ pub fn router(state: AppState) -> Router {
     let private = Router::new()
         .route("/api/children", get(api_list_children))
         .route("/api/tasks", get(api_list_tasks))
+        .route("/api/notifications", get(api_list_notifications))
+        .route("/api/notifications/count", get(api_notifications_count))
+        .route(
+            "/api/notifications/task-submissions/{id}/approve",
+            post(api_approve_submission),
+        )
+        .route(
+            "/api/notifications/task-submissions/{id}/discard",
+            post(api_discard_submission),
+        )
         .route("/api/children/{id}/remaining", get(api_remaining))
         .route("/api/children/{id}/reward", post(api_child_reward))
         .route("/api/children/{id}/reward", get(api_list_child_rewards))
@@ -93,6 +103,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/children/{id}/register", post(api_child_register))
         .route("/api/children/{id}/tasks", get(api_list_child_tasks))
+        .route(
+            "/api/children/{id}/tasks/{task_id}/submit",
+            post(api_submit_task),
+        )
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -347,6 +361,12 @@ struct ChildDevicePath {
     device_id: String,
 }
 
+#[derive(Deserialize)]
+struct ChildTaskPath {
+    id: String,
+    task_id: String,
+}
+
 async fn api_child_reward(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthCtx>,
@@ -388,7 +408,12 @@ async fn api_child_reward(
 
     state
         .store
-        .add_reward_minutes(&p.id, mins, body.task_id.as_deref(), Some(desc_to_store.as_str()))
+        .add_reward_minutes(
+            &p.id,
+            mins,
+            body.task_id.as_deref(),
+            Some(desc_to_store.as_str()),
+        )
         .await
         .map_err(AppError::internal)?;
     if let Some(tid) = body.task_id.as_deref() {
@@ -436,6 +461,128 @@ async fn api_list_child_rewards(
         })
         .collect();
     Ok(Json(items))
+}
+
+#[derive(Serialize)]
+struct NotificationsCountDto {
+    count: u32,
+}
+
+#[derive(Serialize)]
+struct NotificationItemDto {
+    id: i32,
+    kind: String,
+    child_id: String,
+    child_display_name: String,
+    task_id: String,
+    task_name: String,
+    submitted_at: String,
+}
+
+async fn api_notifications_count(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthCtx>,
+) -> Result<Json<NotificationsCountDto>, AppError> {
+    if auth.role != Role::Parent {
+        return Err(AppError::forbidden());
+    }
+    let c = state
+        .store
+        .pending_submissions_count()
+        .await
+        .map_err(AppError::internal)?;
+    Ok(Json(NotificationsCountDto { count: c as u32 }))
+}
+
+async fn api_list_notifications(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthCtx>,
+) -> Result<Json<Vec<NotificationItemDto>>, AppError> {
+    if auth.role != Role::Parent {
+        return Err(AppError::forbidden());
+    }
+    let rows = state
+        .store
+        .list_pending_submissions()
+        .await
+        .map_err(AppError::internal)?;
+    let items = rows
+        .into_iter()
+        .map(|(s, c, t)| NotificationItemDto {
+            id: s.id,
+            kind: "task_submission".to_string(),
+            child_id: c.id,
+            child_display_name: c.display_name,
+            task_id: t.id,
+            task_name: t.name,
+            submitted_at: chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(
+                s.submitted_at,
+                chrono::Utc,
+            )
+            .to_rfc3339(),
+        })
+        .collect();
+    Ok(Json(items))
+}
+
+async fn api_approve_submission(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthCtx>,
+    Path(id): Path<i32>,
+) -> Result<(), AppError> {
+    if auth.role != Role::Parent {
+        return Err(AppError::forbidden());
+    }
+    state
+        .store
+        .approve_submission(id, &auth.username)
+        .await
+        .map_err(AppError::internal)?;
+    Ok(())
+}
+
+async fn api_discard_submission(
+    State(state): State<AppState>,
+    Extension(_auth): Extension<AuthCtx>,
+    Path(id): Path<i32>,
+) -> Result<(), AppError> {
+    state
+        .store
+        .discard_submission(id)
+        .await
+        .map_err(AppError::internal)?;
+    Ok(())
+}
+
+async fn api_submit_task(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthCtx>,
+    Path(p): Path<ChildTaskPath>,
+) -> Result<(), AppError> {
+    // child can submit only for own id
+    if auth.role != Role::Child {
+        return Err(AppError::forbidden());
+    }
+    match &auth.child_id {
+        Some(cid) if cid == &p.id => {}
+        _ => return Err(AppError::forbidden()),
+    }
+    // Ensure task exists
+    match state
+        .store
+        .get_task_by_id(&p.task_id)
+        .await
+        .map_err(AppError::internal)?
+    {
+        Some(_) => {}
+        None => return Err(AppError::bad_request("unknown task_id")),
+    }
+    state
+        .store
+        .submit_task(&p.id, &p.task_id)
+        .await
+        .map_err(AppError::internal)?;
+    Ok(())
 }
 
 type MinutesGuard<'a> = MutexGuard<'a, Option<i32>>;

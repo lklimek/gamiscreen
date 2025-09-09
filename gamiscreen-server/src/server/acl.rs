@@ -85,6 +85,40 @@ pub async fn enforce_acl(
         allowed = true;
     }
 
+    // Notifications: parent-only
+    if path == "/api/notifications" && method == Method::GET {
+        if auth.role != Role::Parent { return Err(AppError::forbidden()); }
+        allowed = true;
+    }
+    if path == "/api/notifications/count" && method == Method::GET {
+        if auth.role != Role::Parent { return Err(AppError::forbidden()); }
+        allowed = true;
+    }
+    if method == Method::POST && path.starts_with("/api/notifications/task-submissions/") && (path.ends_with("/approve") || path.ends_with("/discard")) {
+        if auth.role != Role::Parent { return Err(AppError::forbidden()); }
+        allowed = true;
+    }
+
+    // Child task submit: child-only for own id
+    if method == Method::POST
+        && path.starts_with("/api/children/")
+        && path.contains("/tasks/")
+        && path.ends_with("/submit")
+    {
+        if auth.role != Role::Child {
+            return Err(AppError::forbidden());
+        }
+        let Some(child) = child_id_from_path(&path) else {
+            return Err(AppError::forbidden());
+        };
+        match &auth.child_id {
+            Some(id) if id == &child => {
+                allowed = true;
+            }
+            _ => return Err(AppError::forbidden()),
+        }
+    }
+
     // Register device (new REST path): parent any id; child only for own id
     if method == Method::POST && path.starts_with("/api/children/") && path.ends_with("/register") {
         if auth.role != Role::Parent {
