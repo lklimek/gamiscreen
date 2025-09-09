@@ -48,11 +48,26 @@ pub async fn maybe_self_update(cfg: &ClientConfig) -> Result<(), AppError> {
     // Collect candidate versions with assets
     let mut candidates: Vec<(Version, Vec<Asset>)> = Vec::new();
     for rel in releases.into_iter() {
+        // Exclude GitHub prerelease and draft entries outright
+        if rel
+            .get("prerelease")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        if rel.get("draft").and_then(|v| v.as_bool()).unwrap_or(false) {
+            continue;
+        }
         let tag = rel.get("tag_name").and_then(|v| v.as_str()).unwrap_or("");
         let ver_str = tag.trim_start_matches('v');
         let Ok(ver) = Version::parse(ver_str) else {
             continue;
         };
+        // Also exclude semantic pre-release tags like 1.2.3-beta.1
+        if !ver.pre.is_empty() {
+            continue;
+        }
         // Compatibility rule:
         // - Stable (>=1): same major as server, and not newer than server
         // - Pre-1.0 (0.y.z): same 0.minor as server, and not newer than server
