@@ -28,6 +28,10 @@ async fn run_all_methods_interactive() {
         (M::Fdo, "org.freedesktop.ScreenSaver (session bus)"),
         (M::Login1Manager, "login1 Manager.LockSessions (system bus)"),
         (
+            M::Login1UserSessions,
+            "login1 Session.Lock for all GUI sessions (system bus)",
+        ),
+        (
             M::Login1Session,
             "login1 Session.Lock (system bus; current)",
         ),

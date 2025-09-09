@@ -1,8 +1,11 @@
+// Allow members of the 'gamiscreen' group to lock sessions via systemd-logind.
+// - Preferred path: per-session lock (org.freedesktop.login1.Session.Lock) which
+//   maps to the 'org.freedesktop.login1.lock-session' action id.
+// - Legacy/fallback: Manager.LockSessions which maps to 'org.freedesktop.login1.lock-sessions'.
 polkit.addRule(function(action, subject) {
-  if ((action.id == "org.freedesktop.login1.lock-sessions" ||
-       action.id == "org.freedesktop.login1.lock-session") &&
+  if ((action.id == "org.freedesktop.login1.lock-session" ||
+       action.id == "org.freedesktop.login1.lock-sessions") &&
       subject.isInGroup("gamiscreen")) {
     return polkit.Result.YES;
   }
 });
-
