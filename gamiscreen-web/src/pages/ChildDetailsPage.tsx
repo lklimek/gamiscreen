@@ -111,7 +111,9 @@ export function ChildDetailsPage(props: { childId: string }) {
       <div className="card" style={{ padding: '12px' }}>
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <div>Remaining</div>
-          <div>{remaining ?? '—'} min</div>
+          <div style={{ color: (typeof remaining === 'number' && remaining < 0) ? '#d00' as const : undefined }}>
+            {remaining ?? '—'} min
+          </div>
         </div>
       </div>
       <div className="card" style={{ padding: '12px' }}>

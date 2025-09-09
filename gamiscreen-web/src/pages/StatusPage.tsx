@@ -60,7 +60,15 @@ export function StatusPage() {
             <div className="spacer" />
             <div className="col" style={{ gap: 4 }}>
               <span className="subtitle">Remaining</span>
-              <div style={{ fontSize: '1.25rem', fontWeight: 700 }}>{remaining} min</div>
+              <div
+                style={{
+                  fontSize: '1.25rem',
+                  fontWeight: 700,
+                  color: remaining < 0 ? '#d00' : undefined,
+                }}
+              >
+                {remaining} min
+              </div>
             </div>
           </div>
         ))}

@@ -363,7 +363,8 @@ impl Store {
                 .select(count_distinct(schema::usage_minutes::dsl::minute_ts))
                 .first::<i64>(&mut conn)
                 .map_err(|e| e.to_string())?;
-            let remaining = (rewards_sum.unwrap_or(0) - used).max(0) as i32;
+            // Allow remaining time to go negative when usage exceeds rewards
+            let remaining = (rewards_sum.unwrap_or(0) - used) as i32;
             Ok(remaining)
         })
         .await
