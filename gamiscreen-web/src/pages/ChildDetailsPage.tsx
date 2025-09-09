@@ -52,6 +52,16 @@ export function ChildDetailsPage(props: { childId: string }) {
   }
 
   useEffect(() => { load() }, [childId])
+  // Live update remaining via websocket events
+  useEffect(() => {
+    const handler = (e: any) => {
+      if (e?.detail?.child_id === childId && typeof e.detail.remaining_minutes === 'number') {
+        setRemaining(e.detail.remaining_minutes)
+      }
+    }
+    window.addEventListener('gamiscreen:remaining-updated', handler as EventListener)
+    return () => window.removeEventListener('gamiscreen:remaining-updated', handler as EventListener)
+  }, [childId])
   async function loadRewards(nextPage = page) {
     try {
       setRewardsLoading(true)

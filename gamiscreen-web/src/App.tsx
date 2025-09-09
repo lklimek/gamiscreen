@@ -75,6 +75,54 @@ export function App() {
     tick()
     return () => { if (timer) clearTimeout(timer) }
   }, [token])
+  // WebSocket push for notifications and child remaining updates
+  useEffect(() => {
+    const cl = getAuthClaims()
+    if (!token) return
+    const serverBase = (window as any).gamiscreenApiBase || (window.location.origin)
+    const base = (() => {
+      const ls = localStorage.getItem('gamiscreen.server_base') || ''
+      if (ls) return ls
+      return serverBase
+    })()
+    const wsUrl = (() => {
+      try {
+        const u = new URL(base)
+        u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'
+        u.pathname = (u.pathname.replace(/\/+$/, '')) + '/api/ws'
+        u.search = '?token=' + encodeURIComponent(token)
+        return u.toString()
+      } catch {
+        const loc = window.location
+        const proto = loc.protocol === 'https:' ? 'wss' : 'ws'
+        return `${proto}://${loc.host}/api/ws?token=${encodeURIComponent(token)}`
+      }
+    })()
+    let ws: WebSocket | null = null
+    let retryT: any
+    const connect = () => {
+      ws = new WebSocket(wsUrl)
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data)
+          if (msg && msg.type === 'pending_count' && typeof msg.count === 'number') {
+            setNotifCount(msg.count)
+          } else if (msg && msg.type === 'remaining_updated' && msg.child_id && typeof msg.remaining_minutes === 'number') {
+            // Broadcast to any listeners (e.g., child page) to update remaining
+            window.dispatchEvent(new CustomEvent('gamiscreen:remaining-updated', { detail: { child_id: msg.child_id, remaining_minutes: msg.remaining_minutes } }))
+          }
+        } catch { }
+      }
+      ws.onclose = () => {
+        retryT = setTimeout(connect, 5000)
+      }
+      ws.onerror = () => {
+        try { ws && ws.close() } catch { }
+      }
+    }
+    connect()
+    return () => { if (ws) { try { ws.close() } catch { } } if (retryT) clearTimeout(retryT) }
+  }, [token])
   // Immediate refresh when notifications change (approve/discard)
   useEffect(() => {
     const refresh = async () => {

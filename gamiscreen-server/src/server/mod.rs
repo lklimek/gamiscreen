@@ -3,6 +3,7 @@ pub mod auth;
 mod config;
 
 use crate::server::auth::AuthCtx;
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderName, HeaderValue};
 use axum::middleware;
 use axum::response::Response as AxumResponse;
@@ -19,7 +20,7 @@ use gamiscreen_shared::api::ChildDto;
 use mime_guess::from_path;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, MutexGuard};
+use tokio::sync::{Mutex, MutexGuard, broadcast};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{Span, info_span};
 use uuid::Uuid;
@@ -33,14 +34,18 @@ pub struct AppState {
     pub store: crate::storage::Store,
     // Cache of remaining minutes per child. None => needs recompute
     children_cache: ChildCacheMap,
+    // Broadcast notifications to connected websocket clients
+    notif_tx: broadcast::Sender<ServerEvent>,
 }
 
 impl AppState {
     pub fn new(config: AppConfig, store: crate::storage::Store) -> Self {
+        let (notif_tx, _rx) = broadcast::channel(64);
         Self {
             config,
             store,
             children_cache: Default::default(),
+            notif_tx,
         }
     }
 
@@ -51,8 +56,25 @@ impl AppState {
             .clone()
     }
 
-    pub async fn reset_remaining_minutes(&self, guard: &mut MinutesGuard<'_>) {
-        guard.take();
+    /// Invalidate and recompute remaining minutes for child, broadcasting update.
+    pub async fn reset_remaining_minutes(
+        &self,
+        child_id: &str,
+        guard: &mut MinutesGuard<'_>,
+    ) -> Result<i32, AppError> {
+        let prev = guard.take().unwrap_or_default();
+        // now we have None in cache, so remaining_minutes will recompute
+        let current = self.remaining_minutes(child_id, guard).await?;
+
+        if current != prev {
+            // Broadcast remaining update to interested websocket clients
+            let _ = self.notif_tx.send(ServerEvent::RemainingUpdated {
+                child_id: child_id.to_string(),
+                remaining_minutes: current,
+            });
+        }
+
+        Ok(current)
     }
 
     pub async fn remaining_minutes(
@@ -75,6 +97,18 @@ impl AppState {
         **guard = Some(v);
         Ok(v)
     }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "type")]
+enum ServerEvent {
+    #[serde(rename = "pending_count")]
+    PendingCount { count: u32 },
+    #[serde(rename = "remaining_updated")]
+    RemainingUpdated {
+        child_id: String,
+        remaining_minutes: i32,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -139,10 +173,16 @@ pub fn router(state: AppState) -> Router {
         )
     });
 
+    // Public (no Authorization header in WS) route for websocket notifications
+    let ws = Router::new()
+        .route("/api/ws", get(ws_notifications))
+        .with_state(state.clone());
+
     let app = Router::new()
         .route("/healthz", get(health))
         .route("/api/version", get(api_version))
         .route("/api/auth/login", post(api_auth_login))
+        .merge(ws)
         .merge(private)
         .fallback(get(serve_embedded))
         .with_state(state.clone())
@@ -378,7 +418,6 @@ async fn api_child_reward(
     // Invalidate cache for this child; compute after DB update
     let child_mutex = state.child_mutex(&p.id).await;
     let mut child_guard = child_mutex.lock().await;
-    state.reset_remaining_minutes(&mut child_guard).await;
 
     // Determine minutes and description rules:
     // - If task_id is provided, copy task name into description and use task.minutes
@@ -425,7 +464,10 @@ async fn api_child_reward(
             .await
             .map_err(AppError::internal)?;
     }
-    let remaining = state.remaining_minutes(&p.id, &mut child_guard).await?;
+    let remaining = state
+        .reset_remaining_minutes(&p.id, &mut child_guard)
+        .await?;
+
     Ok(Json(api::RewardResp {
         remaining_minutes: remaining,
     }))
@@ -496,6 +538,90 @@ async fn api_notifications_count(
     Ok(Json(NotificationsCountDto { count: c as u32 }))
 }
 
+#[derive(Deserialize)]
+struct WsQuery {
+    token: String,
+}
+
+async fn ws_notifications(
+    State(state): State<AppState>,
+    Query(q): Query<WsQuery>,
+    ws: WebSocketUpgrade,
+) -> Result<AxumResponse, AppError> {
+    // Validate token from query
+    let decoding = jsonwebtoken::DecodingKey::from_secret(state.config.jwt_secret.as_bytes());
+    let validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
+    let data = jsonwebtoken::decode::<auth::JwtClaims>(&q.token, &decoding, &validation)
+        .map_err(|_| AppError::unauthorized())?;
+    let claims = data.claims;
+    // Delegate WS access control to ACL module
+    crate::server::acl::validate_ws_access_from_claims(&claims)?;
+    Ok(ws.on_upgrade(move |socket| ws_notifications_stream(socket, state, claims)))
+}
+
+async fn ws_notifications_stream(mut socket: WebSocket, state: AppState, claims: auth::JwtClaims) {
+    // Send initial snapshot
+    if claims.role == Role::Parent {
+        if let Ok(c) = state.store.pending_submissions_count().await {
+            let _ = socket
+                .send(Message::Text(
+                    serde_json::to_string(&ServerEvent::PendingCount { count: c as u32 })
+                        .unwrap()
+                        .into(),
+                ))
+                .await;
+        }
+    } else if claims.role == Role::Child {
+        if let Some(cid) = &claims.child_id {
+            // Compute remaining for this child
+            let child_mutex = state.child_mutex(cid).await;
+            let mut guard = child_mutex.lock().await;
+            // Do not reset cache here; send cached value or compute if empty
+            if let Ok(rem) = state.remaining_minutes(cid, &mut guard).await {
+                let _ = socket
+                    .send(Message::Text(
+                        serde_json::to_string(&ServerEvent::RemainingUpdated {
+                            child_id: cid.clone(),
+                            remaining_minutes: rem,
+                        })
+                        .unwrap()
+                        .into(),
+                    ))
+                    .await;
+            }
+        }
+    }
+
+    // Subscribe to updates
+    let mut rx = state.notif_tx.subscribe();
+    loop {
+        match rx.recv().await {
+            Ok(ev) => {
+                // Filter events by role
+                match (&claims.role, &ev) {
+                    (Role::Parent, _) => {
+                        let _ = socket
+                            .send(Message::Text(serde_json::to_string(&ev).unwrap().into()))
+                            .await;
+                    }
+                    (Role::Child, ServerEvent::RemainingUpdated { child_id, .. }) => {
+                        if let Some(cid) = &claims.child_id {
+                            if cid == child_id {
+                                let _ = socket
+                                    .send(Message::Text(serde_json::to_string(&ev).unwrap().into()))
+                                    .await;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(broadcast::error::RecvError::Closed) => break,
+        }
+    }
+}
+
 async fn api_list_notifications(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthCtx>,
@@ -544,7 +670,15 @@ async fn api_approve_submission(
     if let Some(child_id) = child_opt {
         let child_mutex = state.child_mutex(&child_id).await;
         let mut child_guard = child_mutex.lock().await;
-        state.reset_remaining_minutes(&mut child_guard).await;
+        state
+            .reset_remaining_minutes(&child_id, &mut child_guard)
+            .await?;
+        // Notify parents about updated count
+        if let Ok(c) = state.store.pending_submissions_count().await {
+            let _ = state
+                .notif_tx
+                .send(ServerEvent::PendingCount { count: c as u32 });
+        }
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -559,6 +693,11 @@ async fn api_discard_submission(
         .discard_submission(id)
         .await
         .map_err(AppError::internal)?;
+    if let Ok(c) = state.store.pending_submissions_count().await {
+        let _ = state
+            .notif_tx
+            .send(ServerEvent::PendingCount { count: c as u32 });
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -590,6 +729,11 @@ async fn api_submit_task(
         .submit_task(&p.id, &p.task_id)
         .await
         .map_err(AppError::internal)?;
+    if let Ok(c) = state.store.pending_submissions_count().await {
+        let _ = state
+            .notif_tx
+            .send(ServerEvent::PendingCount { count: c as u32 });
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -606,14 +750,15 @@ async fn api_device_heartbeat(
     let mut child_guard = child_mutex.lock().await;
 
     // Invalidate cache for this child; compute after DB update
-    state.reset_remaining_minutes(&mut child_guard).await;
     state
         .store
         .process_usage_minutes(&p.id, &p.device_id, &body.minutes)
         .await
         .map_err(AppError::internal)?;
     // Update cache and return
-    let remaining = state.remaining_minutes(&p.id, &mut child_guard).await?;
+    let remaining = state
+        .reset_remaining_minutes(&p.id, &mut child_guard)
+        .await?;
     Ok(Json(api::HeartbeatResp {
         remaining_minutes: remaining,
     }))

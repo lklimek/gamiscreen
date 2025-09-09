@@ -1,4 +1,5 @@
 use super::{auth::AuthCtx, AppError, Role};
+use super::auth;
 use percent_encoding::percent_decode_str;
 use axum::response::Response;
 use axum::{
@@ -175,4 +176,19 @@ pub async fn enforce_acl(
         return Err(AppError::forbidden());
     }
     Ok(next.run(req).await)
+}
+
+/// Validate WebSocket access based on JWT claims.
+/// Parents are allowed. Children are allowed if a child_id is present.
+pub fn validate_ws_access_from_claims(claims: &auth::JwtClaims) -> Result<(), AppError> {
+    match claims.role {
+        Role::Parent => Ok(()),
+        Role::Child => {
+            if claims.child_id.is_some() {
+                Ok(())
+            } else {
+                Err(AppError::forbidden())
+            }
+        }
+    }
 }
