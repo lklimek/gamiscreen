@@ -19,6 +19,8 @@ pub use platform::linux::lock::{
     LockBackend, detect_lock_backend, enforce_lock_backend, is_session_locked,
 };
 
+const RELOCK_INTERVAL: Duration = Duration::from_secs(10);
+
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     #[error("config error: {0}")]
@@ -83,6 +85,9 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
     let backend = detect_lock_backend(&cfg).await?;
     info!(?backend, "lock backend selected");
 
+    // Background re-locker: when time is exhausted, keep re-locking with short delays
+    let relocker = ReLocker::new(backend.clone());
+
     // Load token from keyring using normalized server_url as the account key
     let key = crate::config::normalize_server_url(&cfg.server_url);
     let token = read_token_from_keyring(&key)?;
@@ -120,15 +125,16 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
                 failures = 0;
                 if rem >= 1 {
                     countdown_task.tick(rem as u64).await;
+                    // time granted, ensure relocker is disabled
+                    relocker.disable().await;
                 } else {
                     // ensure any pending notification is closed if we are at/past zero
                     countdown_task.cancel().await;
                 }
                 if rem <= 0 {
-                    warn!("minutes exhausted; enforcing screen lock");
-                    if let Err(e) = enforce_lock_backend(&backend).await {
-                        error!(error=%e, "failed to enforce lock");
-                    }
+                    warn!("minutes exhausted; enabling re-lock loop");
+                    // Start re-lock loop to handle user unlocking while still disallowed
+                    relocker.enable().await;
                 }
             }
             Ok(None) => { /* nothing to send */ }
@@ -138,11 +144,10 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
                 let elapsed_fail_secs = cfg.interval_secs.saturating_mul(failures as u64);
                 if elapsed_fail_secs >= fail_fuse_secs {
                     warn!(
-                        "server unreachable threshold exceeded; enforcing screen lock as failsafe"
+                        "server unreachable threshold exceeded; enabling re-lock loop as failsafe"
                     );
-                    if let Err(e2) = enforce_lock_backend(&backend).await {
-                        error!(error=%e2, "failed to enforce lock");
-                    }
+                    // Keep re-locking while offline fuse condition holds until time is restored
+                    relocker.enable().await;
                     failures = 0;
                 }
             }
@@ -255,5 +260,56 @@ impl CountdownTask {
         // Send far-future deadline to ensure any visible notification is closed
         let when = Instant::now() + Duration::from_secs(self.interval_secs * 1000);
         let _ = self.when_tx.send(when).await;
+    }
+}
+
+/// Re-locker task: spawns a background loop that re-locks every second until disabled.
+struct ReLocker {
+    backend: LockBackend,
+    handle: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+impl ReLocker {
+    fn new(backend: LockBackend) -> Self {
+        Self {
+            backend,
+            handle: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    async fn enable(&self) {
+        let mut h = self.handle.lock().await;
+        if h.is_some() {
+            return;
+        }
+        let backend = self.backend.clone();
+        let handle = tokio::spawn(async move {
+            // Immediate lock attempt
+            if let Err(e) = enforce_lock_backend(&backend).await {
+                tracing::error!(error=%e, "initial re-lock attempt failed");
+            }
+            loop {
+                match is_session_locked().await {
+                    Ok(false) => {
+                        if let Err(e) = enforce_lock_backend(&backend).await {
+                            tracing::error!(error=%e, "re-lock attempt failed");
+                        }
+                    }
+                    Ok(true) => { /* already locked */ }
+                    Err(e) => {
+                        tracing::warn!(error=%e, "re-lock: failed to query lock state");
+                    }
+                }
+                tokio::time::sleep(RELOCK_INTERVAL).await;
+            }
+        });
+        *h = Some(handle);
+    }
+
+    async fn disable(&self) {
+        let mut h = self.handle.lock().await;
+        if let Some(handle) = h.take() {
+            handle.abort();
+        }
     }
 }

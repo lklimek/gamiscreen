@@ -75,7 +75,7 @@ pub async fn lock_using_method(method: LockMethod) -> Result<(), AppError> {
 }
 
 /// Detect if the current user session is locked.
-/// Tries GNOME ScreenSaver first, then falls back to login1's LockedHint.
+/// Tries GNOME ScreenSaver first, then freedesktop.org ScreenSaver, then falls back to login1's LockedHint.
 pub async fn is_session_locked() -> Result<bool, AppError> {
     tracing::debug!("checking if session is locked");
     // Try via GNOME ScreenSaver on the session bus
@@ -109,6 +109,39 @@ pub async fn is_session_locked() -> Result<bool, AppError> {
             return Ok(active);
         }
         warn!("org.gnome.ScreenSaver GetActive returned unexpected body; assuming unlocked");
+        return Ok(false);
+    }
+
+    // Try via freedesktop.org ScreenSaver on the session bus
+    if let Ok(conn) = zbus::Connection::session().await
+        && let Ok(proxy) = zbus::fdo::DBusProxy::new(&conn).await
+        && proxy
+            .name_has_owner(
+                OwnedBusName::try_from("org.freedesktop.ScreenSaver")
+                    .unwrap()
+                    .into(),
+            )
+            .await
+            .unwrap_or(false)
+    {
+        let proxy = Proxy::new(
+            &conn,
+            "org.freedesktop.ScreenSaver",
+            "/org/freedesktop/ScreenSaver",
+            "org.freedesktop.ScreenSaver",
+        )
+        .await
+        .map_err(|e| AppError::Dbus(e.to_string()))?;
+        let msg = proxy
+            .call_method("GetActive", &())
+            .await
+            .map_err(|e| AppError::Dbus(e.to_string()))?;
+        let body = msg.body();
+        if let Ok(active) = body.deserialize::<bool>() {
+            tracing::debug!(active, "org.freedesktop.ScreenSaver GetActive returned");
+            return Ok(active);
+        }
+        warn!("org.freedesktop.ScreenSaver GetActive returned unexpected body; assuming unlocked");
         return Ok(false);
     }
 

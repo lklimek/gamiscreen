@@ -40,3 +40,8 @@ Gamiscreen is a self-hosted parental control tool that turns good habits into sc
   - Public update manifest at `/api/update/manifest` (embedded at build time from GitHub Releases).
 - `gamiscreen-web/`: React + TypeScript SPA. See `gamiscreen-web/README.md` for dev details.
 - `gamiscreen-client/`: Linux agent and CLI (Timekpr‑Next integration).
+
+## Credits
+
+- Screen lock strategy on Linux is adapted from Timekpr‑nExT by its author(s).
+- 
