@@ -145,3 +145,13 @@ pub struct UpdateArtifactDto {
 pub struct VersionInfoDto {
     pub version: String, // semantic version (e.g. "1.2.3")
 }
+
+// Server-sent events over WebSocket
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(tag = "type")]
+pub enum ServerEvent {
+    #[serde(rename = "pending_count")]
+    PendingCount { count: u32 },
+    #[serde(rename = "remaining_updated")]
+    RemainingUpdated { child_id: String, remaining_minutes: i32 },
+}

@@ -99,17 +99,7 @@ impl AppState {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
-#[serde(tag = "type")]
-enum ServerEvent {
-    #[serde(rename = "pending_count")]
-    PendingCount { count: u32 },
-    #[serde(rename = "remaining_updated")]
-    RemainingUpdated {
-        child_id: String,
-        remaining_minutes: i32,
-    },
-}
+use gamiscreen_shared::api::ServerEvent;
 
 #[derive(Clone, Debug)]
 struct ReqId(pub String);

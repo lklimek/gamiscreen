@@ -11,6 +11,7 @@ pub mod login;
 pub mod notify;
 pub mod platform;
 pub mod update;
+pub mod ws;
 
 pub use cli::{Cli, Command};
 pub use config::{ClientConfig, load_config, resolve_config_path};
@@ -19,7 +20,7 @@ pub use platform::linux::lock::{
     LockBackend, detect_lock_backend, enforce_lock_backend, is_session_locked,
 };
 
-const RELOCK_INTERVAL: Duration = Duration::from_secs(10);
+const RELOCK_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -91,6 +92,9 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
     // Load token from keyring using normalized server_url as the account key
     let key = crate::config::normalize_server_url(&cfg.server_url);
     let token = read_token_from_keyring(&key)?;
+
+    // WebSocket listener to stop relocking when remaining becomes positive
+    ws::spawn_ws_listener(&cfg.server_url, &token, relocker.clone());
 
     let mut failures: u32 = 0;
     let mut unsent_minutes: BTreeSet<i64> = BTreeSet::new();
@@ -264,17 +268,15 @@ impl CountdownTask {
 }
 
 /// Re-locker task: spawns a background loop that re-locks every second until disabled.
+#[derive(Clone)]
 struct ReLocker {
     backend: LockBackend,
-    handle: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    handle: std::sync::Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl ReLocker {
     fn new(backend: LockBackend) -> Self {
-        Self {
-            backend,
-            handle: tokio::sync::Mutex::new(None),
-        }
+        Self { backend, handle: std::sync::Arc::new(tokio::sync::Mutex::new(None)) }
     }
 
     async fn enable(&self) {

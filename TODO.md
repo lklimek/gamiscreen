@@ -50,6 +50,7 @@ MVP will be shipped in three parts, in order: Server → Web App → Linux Clien
   - [x] Minimal styling; mobile-friendly for parent phone
   - [x] Handle auth token (simple input stored in `localStorage`)
   - [ ] Manual test checklist documented in `README.md`
+  - [ ] Tasks can also have negative time. In web, such tasks should be visually marked (like, it's a punishment not reward).
 
 ## Linux Client (MVP)
 
@@ -57,8 +58,8 @@ MVP will be shipped in three parts, in order: Server → Web App → Linux Clien
  - [x] Config: server URL, `child_id`, `device_id`, heartbeat interval (default 60s)
  - [x] Token stored in keyring; auto-read by agent
  - [x] `login` command writes config after server registration
-- [x ] Every minute: `POST /api/heartbeat` → get remaining minutes
-- [ ] Enforcement
+- [x] Every minute: `POST /api/heartbeat` → get remaining minutes
+- [x] Enforcement
   - [x] If remaining <= 0 → trigger screen lock
   - [x] If server unreachable for >5 minutes → trigger screen lock (failsafe)
 
