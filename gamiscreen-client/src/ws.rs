@@ -36,6 +36,10 @@ pub(crate) fn spawn_ws_listener(server_base: &str, token: &str, relocker: super:
                                         remaining_minutes, ..
                                     } = ev
                                     {
+                                        tracing::debug!(
+                                            remaining_minutes,
+                                            "WS: Remaining minutes updated"
+                                        );
                                         if remaining_minutes > 0 {
                                             relocker.disable().await;
                                         }

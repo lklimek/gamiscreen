@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getAuthClaims, getRemaining, listChildren, listChildRewards, listChildTasks, RewardHistoryItemDto, rewardMinutes, TaskWithStatusDto, submitTask } from '../api'
+import { getAuthClaims, getRemaining, listChildren, listChildRewards, listChildTasks, RewardHistoryItemDto, rewardMinutes, submitTask, TaskWithStatusDto } from '../api'
 
 export function ChildDetailsPage(props: { childId: string }) {
   const { childId } = props
@@ -199,11 +199,14 @@ export function ChildDetailsPage(props: { childId: string }) {
             <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <input
                 type="number"
+                min={-100000}
                 step={1}
                 placeholder="15 or -15"
                 aria-label="Minutes"
                 value={customMinutes}
                 onChange={e => setCustomMinutes(e.target.value)}
+                inputMode="numeric"
+                pattern="-?[0-9]*"
                 style={{ width: '14ch', textAlign: 'right' }}
               />
               <span className="subtitle" style={{ whiteSpace: 'nowrap', alignSelf: 'center' }}>minutes</span>
