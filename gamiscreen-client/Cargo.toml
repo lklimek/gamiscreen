@@ -27,11 +27,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 zbus = { version = "5.10", default-features = false, features = ["tokio"] }
 zbus_names = "4.2"
-tokio-tungstenite = { version = "0.27.0", default-features = false, features = [
-    "connect",
-    "rustls-tls-webpki-roots",
-    "tokio-rustls",
-] }
 futures-util = { version = "0.3", default-features = false, features = [
     "sink",
     "std",
@@ -53,6 +48,7 @@ reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "rustls-tls",
 ] }
+reqwest-eventsource = "0.6"
 gamiscreen-shared = { path = "../gamiscreen-shared", features = [
     "rest-client",
 ] }

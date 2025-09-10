@@ -75,7 +75,7 @@ export function App() {
     tick()
     return () => { if (timer) clearTimeout(timer) }
   }, [token])
-  // WebSocket push for notifications and child remaining updates
+  // Server-Sent Events push for notifications and child remaining updates
   useEffect(() => {
     const cl = getAuthClaims()
     if (!token) return
@@ -85,43 +85,42 @@ export function App() {
       if (ls) return ls
       return serverBase
     })()
-    const wsUrl = (() => {
+    const sseUrl = (() => {
       try {
         const u = new URL(base)
-        u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:'
-        u.pathname = (u.pathname.replace(/\/+$/, '')) + '/api/ws'
+        // keep http/https, use /api/sse
+        u.pathname = (u.pathname.replace(/\/+$/, '')) + '/api/sse'
         u.search = '?token=' + encodeURIComponent(token)
         return u.toString()
       } catch {
         const loc = window.location
-        const proto = loc.protocol === 'https:' ? 'wss' : 'ws'
-        return `${proto}://${loc.host}/api/ws?token=${encodeURIComponent(token)}`
+        return `${loc.protocol}//${loc.host}/api/sse?token=${encodeURIComponent(token)}`
       }
     })()
-    let ws: WebSocket | null = null
-    let retryT: any
+    let es: EventSource | null = null
     const connect = () => {
-      ws = new WebSocket(wsUrl)
-      ws.onmessage = (ev) => {
+      try {
+        es = new EventSource(sseUrl, { withCredentials: false })
+      } catch {
+        es = null
+        return
+      }
+      es.onmessage = (ev) => {
         try {
           const msg = JSON.parse(ev.data)
           if (msg && msg.type === 'pending_count' && typeof msg.count === 'number') {
             setNotifCount(msg.count)
           } else if (msg && msg.type === 'remaining_updated' && msg.child_id && typeof msg.remaining_minutes === 'number') {
-            // Broadcast to any listeners (e.g., child page) to update remaining
             window.dispatchEvent(new CustomEvent('gamiscreen:remaining-updated', { detail: { child_id: msg.child_id, remaining_minutes: msg.remaining_minutes } }))
           }
         } catch { }
       }
-      ws.onclose = () => {
-        retryT = setTimeout(connect, 5000)
-      }
-      ws.onerror = () => {
-        try { ws && ws.close() } catch { }
+      es.onerror = () => {
+        // Browser will auto-reconnect SSE; nothing to do.
       }
     }
     connect()
-    return () => { if (ws) { try { ws.close() } catch { } } if (retryT) clearTimeout(retryT) }
+    return () => { if (es) { try { es.close() } catch {} } }
   }, [token])
   // Immediate refresh when notifications change (approve/discard)
   useEffect(() => {

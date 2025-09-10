@@ -11,7 +11,7 @@ pub mod login;
 pub mod notify;
 pub mod platform;
 pub mod update;
-pub mod ws;
+pub mod sse;
 
 pub use cli::{Cli, Command};
 pub use config::{ClientConfig, load_config, resolve_config_path};
@@ -93,8 +93,8 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
     let key = crate::config::normalize_server_url(&cfg.server_url);
     let token = read_token_from_keyring(&key)?;
 
-    // WebSocket listener to stop relocking when remaining becomes positive
-    ws::spawn_ws_listener(&cfg.server_url, &token, relocker.clone());
+    // SSE listener to stop relocking when remaining becomes positive
+    sse::spawn_sse_listener(&cfg.server_url, &token, relocker.clone());
 
     let mut failures: u32 = 0;
     let mut unsent_minutes: BTreeSet<i64> = BTreeSet::new();

@@ -52,7 +52,7 @@ export function ChildDetailsPage(props: { childId: string }) {
   }
 
   useEffect(() => { load() }, [childId])
-  // Live update remaining via websocket events
+  // Live update remaining via SSE events (relayed by App via window event)
   useEffect(() => {
     const handler = (e: any) => {
       if (e?.detail?.child_id === childId && typeof e.detail.remaining_minutes === 'number') {

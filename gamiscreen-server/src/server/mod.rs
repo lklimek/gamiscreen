@@ -3,10 +3,10 @@ pub mod auth;
 mod config;
 
 use crate::server::auth::AuthCtx;
-use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderName, HeaderValue};
 use axum::middleware;
 use axum::response::Response as AxumResponse;
+use axum::response::sse::{Event, Sse};
 use axum::{
     Json, Router,
     extract::{Extension, Path, Query, State},
@@ -163,16 +163,16 @@ pub fn router(state: AppState) -> Router {
         )
     });
 
-    // Public (no Authorization header in WS) route for websocket notifications
-    let ws = Router::new()
-        .route("/api/ws", get(ws_notifications))
+    // Public SSE route for push notifications (token passed via query)
+    let sse = Router::new()
+        .route("/api/sse", get(sse_notifications))
         .with_state(state.clone());
 
     let app = Router::new()
         .route("/healthz", get(health))
         .route("/api/version", get(api_version))
         .route("/api/auth/login", post(api_auth_login))
-        .merge(ws)
+        .merge(sse)
         .merge(private)
         .fallback(get(serve_embedded))
         .with_state(state.clone())
@@ -499,21 +499,8 @@ async fn api_list_child_rewards(
     Ok(Json(items))
 }
 
-#[derive(Serialize)]
-struct NotificationsCountDto {
-    count: u32,
-}
-
-#[derive(Serialize)]
-struct NotificationItemDto {
-    id: i32,
-    kind: String,
-    child_id: String,
-    child_display_name: String,
-    task_id: String,
-    task_name: String,
-    submitted_at: String,
-}
+// Use shared DTOs
+use gamiscreen_shared::api::{NotificationItemDto, NotificationsCountDto};
 
 async fn api_notifications_count(
     State(state): State<AppState>,
@@ -531,87 +518,74 @@ async fn api_notifications_count(
 }
 
 #[derive(Deserialize)]
-struct WsQuery {
+struct SseQuery {
     token: String,
 }
 
-async fn ws_notifications(
+async fn sse_notifications(
     State(state): State<AppState>,
-    Query(q): Query<WsQuery>,
-    ws: WebSocketUpgrade,
-) -> Result<AxumResponse, AppError> {
+    Query(q): Query<SseQuery>,
+) -> Result<Sse<impl futures::Stream<Item = Result<Event, std::convert::Infallible>>>, AppError> {
     // Validate token from query
     let decoding = jsonwebtoken::DecodingKey::from_secret(state.config.jwt_secret.as_bytes());
     let validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
     let data = jsonwebtoken::decode::<auth::JwtClaims>(&q.token, &decoding, &validation)
         .map_err(|_| AppError::unauthorized())?;
     let claims = data.claims;
-    // Delegate WS access control to ACL module
+    // Access control
     crate::server::acl::validate_ws_access_from_claims(&claims)?;
-    Ok(ws.on_upgrade(move |socket| ws_notifications_stream(socket, state, claims)))
-}
 
-async fn ws_notifications_stream(mut socket: WebSocket, state: AppState, claims: auth::JwtClaims) {
-    // Send initial snapshot
+    use futures::StreamExt;
+    use tokio_stream::wrappers::BroadcastStream;
+
+    // Prepare a stream that first sends initial snapshot, then relays broadcasted events
+    // Prepare initial snapshot
+    let mut init_items: Vec<ServerEvent> = Vec::new();
     if claims.role == Role::Parent {
         if let Ok(c) = state.store.pending_submissions_count().await {
-            let _ = socket
-                .send(Message::Text(
-                    serde_json::to_string(&ServerEvent::PendingCount { count: c as u32 })
-                        .unwrap()
-                        .into(),
-                ))
-                .await;
+            init_items.push(ServerEvent::PendingCount { count: c as u32 });
         }
     } else if claims.role == Role::Child {
-        if let Some(cid) = &claims.child_id {
-            // Compute remaining for this child
-            let child_mutex = state.child_mutex(cid).await;
+        if let Some(cid) = claims.child_id.clone() {
+            let child_mutex = state.child_mutex(&cid).await;
             let mut guard = child_mutex.lock().await;
-            // Do not reset cache here; send cached value or compute if empty
-            if let Ok(rem) = state.remaining_minutes(cid, &mut guard).await {
-                let _ = socket
-                    .send(Message::Text(
-                        serde_json::to_string(&ServerEvent::RemainingUpdated {
-                            child_id: cid.clone(),
-                            remaining_minutes: rem,
-                        })
-                        .unwrap()
-                        .into(),
-                    ))
-                    .await;
+            if let Ok(rem) = state.remaining_minutes(&cid, &mut guard).await {
+                init_items.push(ServerEvent::RemainingUpdated {
+                    child_id: cid.clone(),
+                    remaining_minutes: rem,
+                });
             }
         }
     }
 
-    // Subscribe to updates
-    let mut rx = state.notif_tx.subscribe();
-    loop {
-        match rx.recv().await {
-            Ok(ev) => {
-                // Filter events by role
-                match (&claims.role, &ev) {
-                    (Role::Parent, _) => {
-                        let _ = socket
-                            .send(Message::Text(serde_json::to_string(&ev).unwrap().into()))
-                            .await;
-                    }
+    let rx = state.notif_tx.subscribe();
+    let bstream = BroadcastStream::new(rx)
+        .filter_map(move |msg| {
+            let claims2 = claims.clone();
+            futures::future::ready(match msg {
+                Ok(ev) => match (&claims.role, &ev) {
+                    (Role::Parent, _) => Some(ev),
                     (Role::Child, ServerEvent::RemainingUpdated { child_id, .. }) => {
-                        if let Some(cid) = &claims.child_id {
-                            if cid == child_id {
-                                let _ = socket
-                                    .send(Message::Text(serde_json::to_string(&ev).unwrap().into()))
-                                    .await;
-                            }
+                        if let Some(cid) = &claims2.child_id {
+                            if cid == child_id { Some(ev) } else { None }
+                        } else {
+                            None
                         }
                     }
-                    _ => {}
-                }
-            }
-            Err(broadcast::error::RecvError::Lagged(_)) => continue,
-            Err(broadcast::error::RecvError::Closed) => break,
-        }
-    }
+                    (Role::Child, ServerEvent::PendingCount { .. }) => None,
+                },
+                Err(_) => None,
+            })
+        })
+        .map(|ev| Ok(Event::default().data(serde_json::to_string(&ev).unwrap())));
+
+    let init_stream = futures::stream::iter(
+        init_items
+            .into_iter()
+            .map(|ev| Ok(Event::default().data(serde_json::to_string(&ev).unwrap()))),
+    );
+    let stream = init_stream.chain(bstream);
+    Ok(Sse::new(stream))
 }
 
 async fn api_list_notifications(
