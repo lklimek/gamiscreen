@@ -422,6 +422,8 @@ async fn api_child_reward(
     // Determine minutes and description rules:
     // - If task_id is provided, copy task name into description and use task.minutes
     // - Else custom minutes must be provided; description defaults to 'Additional time' when missing/blank
+    // Track whether minutes come from a predefined task (must be positive) or custom (can be negative)
+    let mut from_task = false;
     let (mins, desc_to_store): (i32, String) = if let Some(tid) = &body.task_id {
         match state
             .store
@@ -429,7 +431,10 @@ async fn api_child_reward(
             .await
             .map_err(AppError::internal)?
         {
-            Some(t) => (t.minutes, t.name),
+            Some(t) => {
+                from_task = true;
+                (t.minutes, t.name)
+            },
             None => return Err(AppError::bad_request(format!("unknown task_id: {}", tid))),
         }
     } else if let Some(m) = body.minutes {
@@ -443,8 +448,13 @@ async fn api_child_reward(
     } else {
         return Err(AppError::bad_request("minutes or task_id required"));
     };
-    if mins <= 0 {
-        return Err(AppError::bad_request("minutes must be positive"));
+    // Validation: tasks must add positive minutes; custom minutes may be negative, but not zero
+    if from_task {
+        if mins <= 0 {
+            return Err(AppError::bad_request("task minutes must be positive"));
+        }
+    } else if mins == 0 {
+        return Err(AppError::bad_request("minutes must be non-zero"));
     }
 
     state

@@ -189,7 +189,7 @@ export function ChildDetailsPage(props: { childId: string }) {
             onSubmit={(e) => {
               e.preventDefault();
               const n = parseInt(customMinutes, 10);
-              if (Number.isFinite(n) && n > 0) {
+              if (Number.isFinite(n) && n !== 0) {
                 setConfirm({ mode: 'custom', minutes: n });
               }
             }}
@@ -199,9 +199,8 @@ export function ChildDetailsPage(props: { childId: string }) {
             <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <input
                 type="number"
-                min={1}
                 step={1}
-                placeholder="15"
+                placeholder="15 or -15"
                 aria-label="Minutes"
                 value={customMinutes}
                 onChange={e => setCustomMinutes(e.target.value)}
@@ -257,7 +256,7 @@ export function ChildDetailsPage(props: { childId: string }) {
                   <tr key={idx}>
                     <td>{new Date(r.time).toLocaleString()}</td>
                     <td>{r.description ?? 'Additional time'}</td>
-                    <td>+{r.minutes}</td>
+                    <td>{r.minutes > 0 ? '+' : ''}{r.minutes}</td>
                   </tr>
                 ))}
                 {rewards.length === 0 && (
