@@ -62,7 +62,6 @@ MVP will be shipped in three parts, in order: Server → Web App → Linux Clien
 - [x] Enforcement
   - [x] If remaining <= 0 → trigger screen lock
   - [x] If server unreachable for >5 minutes → trigger screen lock (failsafe)
-
 - [x] Observability: minimal logs; backoff/jitter on network failure
 - [x] Packaging notes: systemd unit file example, installation steps
 

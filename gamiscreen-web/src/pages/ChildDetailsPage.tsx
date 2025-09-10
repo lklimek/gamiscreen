@@ -141,6 +141,7 @@ export function ChildDetailsPage(props: { childId: string }) {
             const isDoneToday = last ? last.toISOString().slice(0, 10) === todayStr : false
             const wasSubmitted = submitted.has(t.id)
             const canClick = isParent || (isChild && !wasSubmitted && !isDoneToday)
+            const isNegative = t.minutes < 0
             return (
               <div className="row" key={t.id} style={{ justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
@@ -150,7 +151,7 @@ export function ChildDetailsPage(props: { childId: string }) {
                   )}
                 </div>
                 <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-                  <span className="subtitle">+{t.minutes} min</span>
+                  <span className="subtitle" style={{ color: isNegative ? '#d00' : undefined }}>{t.minutes > 0 ? '+' : ''}{t.minutes} min</span>
                   {isParent && (
                     <button className={isDoneToday ? 'contrast' : undefined} onClick={() => setConfirm({ mode: 'task', task: t })}>Accept</button>
                   )}
@@ -282,12 +283,24 @@ export function ChildDetailsPage(props: { childId: string }) {
             </header>
             <p className="subtitle">
               {confirm.mode === 'task'
-                ? (<>
-                  Add <strong>{confirm.task.minutes}</strong> minutes for <strong>{displayName}</strong> by task "{confirm.task.name}"?
-                </>)
-                : (<>
-                  Add <strong>{confirm.minutes}</strong> custom minutes for <strong>{displayName}</strong>?
-                </>)}
+                ? (() => {
+                  const m = confirm.task.minutes
+                  const isNegative = m < 0
+                  return (
+                    <>
+                      {isNegative ? 'Apply ' : 'Add '}<strong>{m > 0 ? '+' : ''}{m}</strong> minutes for <strong>{displayName}</strong> by task "{confirm.task.name}"?
+                    </>
+                  )
+                })()
+                : (() => {
+                  const m = confirm.minutes
+                  const isNegative = m < 0
+                  return (
+                    <>
+                      {isNegative ? 'Apply ' : 'Add '}<strong>{m > 0 ? '+' : ''}{m}</strong> custom minutes for <strong>{displayName}</strong>?
+                    </>
+                  )
+                })()}
             </p>
             <footer className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
               <button onClick={doConfirm} disabled={loading}>Accept</button>
