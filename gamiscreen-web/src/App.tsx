@@ -43,6 +43,7 @@ export function App() {
   const loggedIn = !!token
   const claims = getAuthClaims()
   const isChild = claims?.role === 'child'
+  const [menuOpen, setMenuOpen] = useState(false)
   // PWA install prompt handling
   const [installEvt, setInstallEvt] = useState<null | (Event & { prompt: () => Promise<void> })>(null)
   const [installed, setInstalled] = useState<boolean>(() => {
@@ -177,7 +178,7 @@ export function App() {
             <p className="subtitle" style={{ margin: 0 }}>Reward earned screen time</p>
           </div>
           {loggedIn && (
-            <div className="row" style={{ alignItems: 'center', gap: 8 }}>
+            <div className="row" style={{ alignItems: 'center', gap: 8, position: 'relative' }}>
               {claims?.role === 'parent' && (
                 <button className="secondary outline" onClick={() => nav('notifications')} aria-label={`Notifications (${notifCount})`} title={`Notifications (${notifCount})`} style={{ position: 'relative' }}>
                   🔔
@@ -186,7 +187,15 @@ export function App() {
                   )}
                 </button>
               )}
-              <button className="secondary outline" onClick={logout}>Logout</button>
+              <button className="secondary outline" aria-label="Menu" title="Menu" onClick={() => setMenuOpen(v => !v)} style={{ width: 40, height: 40, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                ☰
+              </button>
+              {menuOpen && (
+                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 8, minWidth: 140, background: 'var(--card-background-color, #fff)', border: '1px solid var(--muted-border-color, #ddd)', borderRadius: 6, boxShadow: '0 6px 24px rgba(0,0,0,0.15)', zIndex: 10 }}>
+                  <a href="#status" onClick={() => setMenuOpen(false)} style={{ display: 'block', padding: '8px 12px', textDecoration: 'none' }}>Status</a>
+                  <button onClick={() => { setMenuOpen(false); logout() }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', background: 'transparent', border: 'none' }}>Logout</button>
+                </div>
+              )}
             </div>
           )}
         </header>
