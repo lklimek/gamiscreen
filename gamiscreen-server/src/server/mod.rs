@@ -184,7 +184,7 @@ pub fn router(state: AppState) -> Router {
 
     if let Some(origin) = &state.config.dev_cors_origin {
         let hv = header::HeaderValue::from_str(origin)
-            .unwrap_or(header::HeaderValue::from_static("http://localhost:5173"));
+            .unwrap_or(header::HeaderValue::from_static("http://localhost:5151"));
         let cors = CorsLayer::new()
             .allow_origin(hv)
             .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
