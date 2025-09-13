@@ -103,6 +103,8 @@ async fn main() {
         .unwrap_or(5151);
 
     let state = server::AppState::new(config, store);
+    let shutdown_token = state.shutdown_token();
+    let shutdown_token_for_server = shutdown_token.clone();
 
     let app = server::router(state);
 
@@ -113,12 +115,28 @@ async fn main() {
         .await
         .expect("bind listener");
 
-    // Graceful shutdown on SIGINT/SIGTERM (Docker/systemd friendly)
-    if let Err(err) = axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-    {
-        tracing::error!(%err, "server error");
+    // Graceful shutdown on SIGINT/SIGTERM with fallback timeout to force-close long-lived connections (e.g., SSE)
+    let mut server_task = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(shutdown_token_for_server.cancelled_owned())
+            .await
+    });
+
+    // Wait for OS signal; then trigger graceful, and if it hangs beyond timeout, force abort.
+    shutdown_signal().await;
+    tracing::info!("shutdown: initiating graceful stop");
+    // Cancel any long-lived streams (e.g., SSE) and signal server to shut down
+    shutdown_token.cancel();
+    match tokio::time::timeout(std::time::Duration::from_secs(3), &mut server_task).await {
+        Ok(join_res) => match join_res {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => tracing::error!(%err, "server error"),
+            Err(e) => tracing::error!(error=%e, "server task join error"),
+        },
+        Err(_) => {
+            tracing::warn!("shutdown: forcing server abort due to timeout");
+            server_task.abort();
+        }
     }
 }
 

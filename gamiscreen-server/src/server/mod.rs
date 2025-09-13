@@ -21,6 +21,7 @@ use mime_guess::from_path;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, MutexGuard, broadcast};
+use tokio_util::sync::CancellationToken;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{Span, info_span};
 use uuid::Uuid;
@@ -36,6 +37,8 @@ pub struct AppState {
     children_cache: ChildCacheMap,
     // Broadcast notifications to connected websocket clients
     notif_tx: broadcast::Sender<ServerEvent>,
+    // Global shutdown token to allow canceling long-lived streams (e.g., SSE)
+    pub shutdown: CancellationToken,
 }
 
 impl AppState {
@@ -46,7 +49,12 @@ impl AppState {
             store,
             children_cache: Default::default(),
             notif_tx,
+            shutdown: CancellationToken::new(),
         }
+    }
+
+    pub fn shutdown_token(&self) -> CancellationToken {
+        self.shutdown.clone()
     }
 
     async fn child_mutex(&self, child_id: &str) -> std::sync::Arc<Mutex<Option<i32>>> {
@@ -584,7 +592,9 @@ async fn sse_notifications(
             .into_iter()
             .map(|ev| Ok(Event::default().data(serde_json::to_string(&ev).unwrap()))),
     );
-    let stream = init_stream.chain(bstream);
+    let stream = init_stream
+        .chain(bstream)
+        .take_until(state.shutdown.clone().cancelled_owned());
     Ok(Sse::new(stream))
 }
 
