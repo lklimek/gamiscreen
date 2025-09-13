@@ -93,8 +93,15 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
     let key = crate::config::normalize_server_url(&cfg.server_url);
     let token = read_token_from_keyring(&key)?;
 
-    // SSE listener to stop relocking when remaining becomes positive
-    sse::spawn_sse_listener(&cfg.server_url, &token, relocker.clone());
+    // SSE hub: subscribe re-locker to server events
+    match sse::SseHub::new(&cfg.server_url, &token) {
+        Ok(hub) => {
+            relocker.attach_sse(&hub).await;
+        }
+        Err(e) => {
+            warn!(error=%e, "SSE hub init failed; continuing without SSE");
+        }
+    }
 
     let mut failures: u32 = 0;
     let mut unsent_minutes: BTreeSet<i64> = BTreeSet::new();
@@ -271,6 +278,7 @@ impl CountdownTask {
 struct ReLocker {
     backend: LockBackend,
     handle: std::sync::Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    sse_task: std::sync::Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl ReLocker {
@@ -278,6 +286,7 @@ impl ReLocker {
         Self {
             backend,
             handle: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+            sse_task: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
@@ -315,5 +324,40 @@ impl ReLocker {
         if let Some(handle) = h.take() {
             handle.abort();
         }
+    }
+
+    /// Subscribe to SSE hub and enable/disable locking based on `RemainingUpdated` events.
+    async fn attach_sse(&self, hub: &crate::sse::SseHub) {
+        let mut guard = self.sse_task.lock().await;
+        if guard.is_some() {
+            return;
+        }
+        let mut rx = hub.subscribe();
+        let relocker = self.clone();
+        let handle = tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(gamiscreen_shared::api::ServerEvent::RemainingUpdated {
+                        remaining_minutes,
+                        ..
+                    }) => {
+                        if remaining_minutes > 0 {
+                            relocker.disable().await;
+                        } else {
+                            relocker.enable().await;
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!(missed=%n, "SSE relocker subscriber lagged; resyncing");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            tracing::warn!(
+                "SSE relocker subscriber exiting; no longer responding to server events"
+            );
+        });
+        *guard = Some(handle);
     }
 }
