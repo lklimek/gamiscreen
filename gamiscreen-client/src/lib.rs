@@ -10,8 +10,8 @@ pub mod config;
 pub mod login;
 pub mod notify;
 pub mod platform;
-pub mod update;
 pub mod sse;
+pub mod update;
 
 pub use cli::{Cli, Command};
 pub use config::{ClientConfig, load_config, resolve_config_path};
@@ -208,7 +208,7 @@ impl CountdownTask {
     fn new(interval_secs: u64, warn_before_lock_secs: u64) -> Self {
         let far_in_future = Instant::now() + Duration::from_secs(interval_secs * 1000);
 
-        let (tx, mut rx) = tokio::sync::mpsc::channel(5);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(10);
         tokio::spawn(async move {
             let mut notifier = default_backend();
 
@@ -254,10 +254,9 @@ impl CountdownTask {
 
         let when =
             tokio::time::Instant::now() + Duration::from_secs(left_mins * 60 - self.notify_secs);
-        self.when_tx
-            .send(when)
-            .await
-            .expect("countdown task receiver dropped; this should not happen");
+        if let Err(e) = self.when_tx.send(when).await {
+            tracing::warn!(error=%e, "countdown task: failed to send new deadline");
+        }
     }
 
     async fn cancel(&self) {
@@ -276,7 +275,10 @@ struct ReLocker {
 
 impl ReLocker {
     fn new(backend: LockBackend) -> Self {
-        Self { backend, handle: std::sync::Arc::new(tokio::sync::Mutex::new(None)) }
+        Self {
+            backend,
+            handle: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+        }
     }
 
     async fn enable(&self) {

@@ -116,9 +116,27 @@ impl Notifier {
     }
 
     async fn close_inner(&mut self) {
-        if let Some(h) = self.handle.take() {
-            debug!("close: closing active notification");
-            h.close();
+        match self.kind {
+            NotifierKind::NotifyRust => {
+                if self.handle.take().is_some() {
+                    debug!("close: replacing with short-timeout notification (async hack)");
+                    let replace_id = self.replace_id;
+                    let mut n = notify_rust::Notification::new();
+                    // Replace current notification with an empty, near-immediate timeout one.
+                    let _ = n
+                        .appname("GamiScreen")
+                        .summary("Koniec czasu")
+                        .body("Czas dobiegł końca.")
+                        .id(replace_id)
+                        .urgency(notify_rust::Urgency::Low)
+                        .timeout(notify_rust::Timeout::Milliseconds(1))
+                        .show_async()
+                        .await;
+                }
+            }
+            NotifierKind::LogOnly => {
+                // Nothing to do; nothing was shown via notify backend.
+            }
         }
     }
 }

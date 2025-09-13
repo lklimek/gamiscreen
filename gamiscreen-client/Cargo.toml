@@ -25,7 +25,7 @@ directories = "6"
 clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-zbus = { version = "5.10", default-features = false, features = ["tokio"] }
+zbus = { version = "5.11.0", default-features = false, features = ["tokio"] }
 zbus_names = "4.2"
 futures-util = { version = "0.3", default-features = false, features = [
     "sink",
@@ -38,7 +38,7 @@ nix = "0.30"
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-notify-rust = { version = "4" }
+notify-rust = { version = "4.11.7" }
 async-trait = "0.1"
 tinytemplate = "1.2"
 semver = "1"
