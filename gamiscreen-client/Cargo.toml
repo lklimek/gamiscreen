@@ -12,6 +12,7 @@ tokio = { version = "1", features = [
     "macros",
     "time",
     "process",
+    "signal",
 ] }
 # reqwest = { version = "0.12", default-features = false, features = [
 #     "json",
@@ -52,6 +53,7 @@ reqwest-eventsource = "0.6"
 gamiscreen-shared = { path = "../gamiscreen-shared", features = [
     "rest-client",
 ] }
+tokio-util = { version = "0.7" }
 
 [[bin]]
 name = "gamiscreen-client"

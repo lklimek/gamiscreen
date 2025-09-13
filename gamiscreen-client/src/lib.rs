@@ -94,23 +94,72 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
     let token = read_token_from_keyring(&key)?;
 
     // SSE hub: subscribe re-locker to server events
-    match sse::SseHub::new(&cfg.server_url, &token) {
-        Ok(hub) => {
-            relocker.attach_sse(&hub).await;
-        }
+    let hub = match sse::SseHub::new(&cfg.server_url, &token) {
+        Ok(h) => Some(h),
         Err(e) => {
             warn!(error=%e, "SSE hub init failed; continuing without SSE");
+            None
+        }
+    };
+    if let Some(h) = &hub {
+        relocker.attach_sse(h).await;
+    }
+
+    // Countdown task controller
+    let countdown_task = CountdownTask::new(cfg.interval_secs, cfg.warn_before_lock_secs);
+
+    // Create cancellation token and spawn main loop task
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let cfg_cloned = cfg.clone();
+    let token_cloned = token.clone();
+    let relocker_cloned = relocker.clone();
+    let cancel_child = cancel.child_token();
+    let mut handle = tokio::spawn(async move {
+        let _ = main_loop(
+            cancel_child,
+            cfg_cloned,
+            token_cloned,
+            relocker_cloned,
+            countdown_task,
+        )
+        .await;
+    });
+
+    // Race signal vs. main loop termination
+    tokio::select! {
+        _ = shutdown_signal() => {
+            info!("shutdown signal received; requesting main loop to stop");
+            cancel.cancel();
+        }
+        _ = &mut handle => {
+            info!("main loop finished");
         }
     }
 
+    // Give main loop some time to finish gracefully; then ensure background tasks stop.
+    if !handle.is_finished() {
+        let _ = tokio::time::timeout(Duration::from_secs(3), handle).await;
+    }
+    relocker.shutdown().await;
+    Ok(())
+}
+
+async fn main_loop(
+    cancel: tokio_util::sync::CancellationToken,
+    cfg: ClientConfig,
+    token: String,
+    relocker: ReLocker,
+    countdown_task: CountdownTask,
+) -> Result<(), AppError> {
     let mut failures: u32 = 0;
     let mut unsent_minutes: BTreeSet<i64> = BTreeSet::new();
     let fail_fuse_secs = 300u64; // 5 minutes
 
-    // Countdown task controller (graceful cancel via signal)
-    let countdown_task = CountdownTask::new(cfg.interval_secs, cfg.warn_before_lock_secs);
-
     loop {
+        if cancel.is_cancelled() {
+            break;
+        }
+
         let start = std::time::Instant::now();
         // If the session is locked, skip accounting and heartbeats for this loop.
         let session_locked = is_session_locked().await;
@@ -122,7 +171,10 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
             let elapsed = start.elapsed();
             let interval = Duration::from_secs(cfg.interval_secs);
             if elapsed < interval {
-                sleep(interval - elapsed).await;
+                tokio::select! {
+                    _ = cancel.cancelled() => { break; }
+                    _ = sleep(interval - elapsed) => {}
+                }
             }
             continue;
         }
@@ -167,9 +219,17 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
         let elapsed = start.elapsed();
         let interval = Duration::from_secs(cfg.interval_secs);
         if elapsed < interval {
-            sleep(interval - elapsed).await;
+            tokio::select! {
+                _ = cancel.cancelled() => { break; }
+                _ = sleep(interval - elapsed) => {}
+            }
         }
     }
+
+    // Graceful cleanup
+    countdown_task.cancel().await;
+    relocker.shutdown().await;
+    Ok(())
 }
 
 async fn send_pending(
@@ -359,5 +419,35 @@ impl ReLocker {
             );
         });
         *guard = Some(handle);
+    }
+
+    async fn shutdown(&self) {
+        self.disable().await;
+        let mut s = self.sse_task.lock().await;
+        if let Some(h) = s.take() {
+            h.abort();
+        }
+    }
+}
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut sigint = signal(SignalKind::interrupt()).expect("listen SIGINT");
+        let mut sigterm = signal(SignalKind::terminate()).expect("listen SIGTERM");
+        tokio::select! {
+            _ = sigint.recv() => {
+                info!("shutdown: received SIGINT");
+            }
+            _ = sigterm.recv() => {
+                info!("shutdown: received SIGTERM");
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+        info!("shutdown: received Ctrl+C");
     }
 }
