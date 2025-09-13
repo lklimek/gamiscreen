@@ -113,7 +113,33 @@ async fn main() {
         .await
         .expect("bind listener");
 
-    if let Err(err) = axum::serve(listener, app).await {
+    // Graceful shutdown on SIGINT/SIGTERM (Docker/systemd friendly)
+    if let Err(err) = axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+    {
         tracing::error!(%err, "server error");
+    }
+}
+
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut sigint = signal(SignalKind::interrupt()).expect("listen SIGINT");
+        let mut sigterm = signal(SignalKind::terminate()).expect("listen SIGTERM");
+        tokio::select! {
+            _ = sigint.recv() => {
+                tracing::info!("shutdown: received SIGINT");
+            }
+            _ = sigterm.recv() => {
+                tracing::info!("shutdown: received SIGTERM");
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = tokio::signal::ctrl_c().await;
+        tracing::info!("shutdown: received Ctrl+C");
     }
 }
