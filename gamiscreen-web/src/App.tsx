@@ -121,7 +121,7 @@ export function App() {
       }
     }
     connect()
-    return () => { if (es) { try { es.close() } catch {} } }
+    return () => { if (es) { try { es.close() } catch { } } }
   }, [token])
   // Immediate refresh when notifications change (approve/discard)
   useEffect(() => {
@@ -180,20 +180,32 @@ export function App() {
           {loggedIn && (
             <div className="row" style={{ alignItems: 'center', gap: 8, position: 'relative' }}>
               {claims?.role === 'parent' && (
-                <button className="secondary outline" onClick={() => nav('notifications')} aria-label={`Notifications (${notifCount})`} title={`Notifications (${notifCount})`} style={{ position: 'relative' }}>
+                <button
+                  className="secondary outline iconButton"
+                  onClick={() => nav('notifications')}
+                  aria-label={`Notifications (${notifCount})`}
+                  title={`Notifications (${notifCount})`}
+                  style={{ position: 'relative' }}
+                >
                   🔔
                   {notifCount > 0 && (
                     <span style={{ position: 'absolute', top: -6, right: -6, background: '#d00', color: '#fff', borderRadius: 12, fontSize: 10, padding: '1px 6px' }}>{notifCount}</span>
                   )}
                 </button>
               )}
-              <button className="secondary outline" aria-label="Menu" title="Menu" onClick={() => setMenuOpen(v => !v)} style={{ width: 40, height: 40, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+              <button className="secondary outline iconButton" aria-label="Menu" title="Menu" onClick={() => setMenuOpen(v => !v)}>
                 ☰
               </button>
               {menuOpen && (
-                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 8, minWidth: 140, background: 'var(--card-background-color, #fff)', border: '1px solid var(--muted-border-color, #ddd)', borderRadius: 6, boxShadow: '0 6px 24px rgba(0,0,0,0.15)', zIndex: 10 }}>
-                  <a href="#status" onClick={() => setMenuOpen(false)} style={{ display: 'block', padding: '8px 12px', textDecoration: 'none' }}>Status</a>
-                  <button onClick={() => { setMenuOpen(false); logout() }} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px', background: 'transparent', border: 'none' }}>Logout</button>
+                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 8, minWidth: 160, background: 'var(--card-background-color, #fff)', border: '1px solid var(--muted-border-color, #ddd)', borderRadius: 6, boxShadow: '0 6px 24px rgba(0,0,0,0.15)', zIndex: 10 }}>
+                  <a href="#status" onClick={() => setMenuOpen(false)} style={{ display: 'block', padding: '8px 12px', textDecoration: 'none' }}>
+                    <span aria-hidden="true" style={{ marginRight: 8 }}>📊</span>
+                    Status
+                  </a>
+                  <a href="#logout" onClick={(e) => { e.preventDefault(); setMenuOpen(false); logout(); }} style={{ display: 'block', padding: '8px 12px', textDecoration: 'none' }}>
+                    <span aria-hidden="true" style={{ marginRight: 8 }}>🚪</span>
+                    Logout
+                  </a>
                 </div>
               )}
             </div>

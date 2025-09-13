@@ -46,7 +46,7 @@ export function NotificationsPage() {
       <header className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
         <h2 className="title" style={{ margin: 0 }}>Notifications</h2>
         <div className="row" style={{ gap: 8 }}>
-          <button className="secondary outline" onClick={load} disabled={loading} title={loading ? 'Refreshing…' : 'Refresh'} aria-label="Refresh">↻</button>
+          <button className="secondary outline iconButton" onClick={load} disabled={loading} title={loading ? 'Refreshing…' : 'Refresh'} aria-label="Refresh">↻</button>
         </div>
       </header>
       {error && <p className="error">{error}</p>}
@@ -61,8 +61,8 @@ export function NotificationsPage() {
                   <div className="subtitle">{new Date(item.submitted_at).toLocaleString()}</div>
                 </div>
                 <div className="row" style={{ gap: 8 }}>
-                  <button onClick={() => onApprove(item)} title="Approve" aria-label="Approve">✔️</button>
-                  <button className="secondary" onClick={() => onDiscard(item.id)} title="Discard" aria-label="Discard">✖️</button>
+                  <button className="secondary outline iconButton" onClick={() => onApprove(item)} title="Approve" aria-label="Approve">✔️</button>
+                  <button className="secondary outline iconButton" onClick={() => onDiscard(item.id)} title="Discard" aria-label="Discard">✖️</button>
                 </div>
               </div>
             ))}

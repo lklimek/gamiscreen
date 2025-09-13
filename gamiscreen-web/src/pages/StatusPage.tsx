@@ -39,7 +39,7 @@ export function StatusPage() {
         <h2 className="title" style={{ margin: 0 }}>Remaining Minutes</h2>
         <div className="row" style={{ gap: 8 }}>
           <button
-            className="secondary outline"
+            className="secondary outline iconButton"
             onClick={load}
             disabled={loading}
             aria-label="Refresh"

@@ -92,6 +92,17 @@ textarea::placeholder {
   color: #065f46;
 }
 
+/* Icon-only buttons: consistent square size and centering */
+.iconButton {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  line-height: 1;
+}
+
 /* Dialog tweaks: smaller, centered, hide scrollbars */
 dialog {
   max-width: 480px;

@@ -113,7 +113,7 @@ export function ChildDetailsPage(props: { childId: string }) {
         <h2 className="title" style={{ margin: 0 }}>{displayName}</h2>
         <div className="row" style={{ gap: 8 }}>
           <button
-            className="secondary outline"
+            className="secondary outline iconButton"
             onClick={load}
             disabled={loading}
             aria-label="Refresh"
@@ -230,7 +230,7 @@ export function ChildDetailsPage(props: { childId: string }) {
           <h3 className="title" style={{ fontSize: 16, margin: 0 }}>Reward History</h3>
           <div className="row" style={{ gap: 8 }}>
             <button
-              className="secondary outline"
+              className="secondary outline iconButton"
               onClick={() => loadRewards(page)}
               disabled={rewardsLoading}
               aria-label="Refresh reward history"
@@ -239,7 +239,7 @@ export function ChildDetailsPage(props: { childId: string }) {
               ↻
             </button>
             <button
-              className="secondary"
+              className="secondary outline iconButton"
               aria-expanded={rewardsOpen}
               aria-controls="reward-history"
               onClick={() => setRewardsOpen(v => !v)}
