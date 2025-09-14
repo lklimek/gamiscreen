@@ -31,7 +31,6 @@ futures-util = { version = "0.3", default-features = false, features = [
     "std",
 ] }
 url = "2"
-keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 rpassword = "7"
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
@@ -50,6 +49,10 @@ gamiscreen-shared = { path = "../gamiscreen-shared", features = [
     "rest-client",
 ] }
 tokio-util = { version = "0.7" }
+zip = { version = "5.1.1", default-features = false, features = ["deflate"] }
+tempfile = "3.22.0"
+
+[target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61.0", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_System_StationsAndDesktops",
@@ -60,14 +63,14 @@ windows-sys = { version = "0.61.0", features = [
     "Win32_System_Memory",
     "Win32_Foundation",
 ] }
-zip = { version = "5.1.1", default-features = false, features = ["deflate"] }
-tempfile = "3.22.0"
+keyring = { version = "3", features = ["windows-native"] }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 zbus = { version = "5.11.0", default-features = false, features = ["tokio"] }
 zbus_names = "4.2"
 nix = "0.30"
 notify-rust = { version = "4.11.7" }
+keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 
 [[bin]]
 name = "gamiscreen-client"

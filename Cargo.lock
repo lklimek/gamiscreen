@@ -987,7 +987,7 @@ dependencies = [
 
 [[package]]
 name = "gamiscreen-client"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -1025,7 +1025,7 @@ dependencies = [
 
 [[package]]
 name = "gamiscreen-server"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "axum",
  "bcrypt",
@@ -1059,7 +1059,7 @@ dependencies = [
 
 [[package]]
 name = "gamiscreen-shared"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "once_cell",
  "percent-encoding",
@@ -1496,9 +1496,11 @@ version = "3.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eebcc3aff044e5944a8fbaf69eb277d11986064cba30c468730e8b9909fb551c"
 dependencies = [
+ "byteorder",
  "dbus-secret-service",
  "log",
  "secret-service",
+ "windows-sys 0.60.2",
  "zeroize",
 ]
 
