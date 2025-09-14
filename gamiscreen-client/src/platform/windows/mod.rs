@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
@@ -64,6 +65,56 @@ impl Platform for WindowsPlatform {
         format!("win-{}-{}", computer, username)
     }
 
+    fn replace_and_restart(&self, staged_src: &Path, current_exe: &Path, args: &[String]) -> ! {
+        // Prepare a .new file next to the current exe
+        let parent = current_exe.parent().unwrap_or_else(|| Path::new("."));
+        let fname = current_exe
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("gamiscreen-client.exe");
+        let new_path = parent.join(format!("{}.new", fname));
+        // Copy staged to new_path (overwrite if exists)
+        if let Err(e) = std::fs::copy(staged_src, &new_path) {
+            tracing::warn!(error=%e, "Windows: failed to copy staged update");
+            std::process::exit(0);
+        }
+        // Create a small .bat script to swap files after this process exits.
+        // Assume we always run as a Windows Service; control via SCM.
+        let bat_path = parent.join(format!("update-runner-{}.bat", std::process::id()));
+        let svc = install::TASK_NAME; // assume service name equals install task name
+        // Service-aware update: stop service, wait for STOPPED, move new, start service
+        let script = format!(
+            "@echo off\r\n"
+                + "sc stop \"{}\" > NUL\r\n"
+                + ":waitstopped\r\n"
+                + "for /f \"tokens=3\" %%A in ('sc query \"{}\" ^| findstr STATE') do set state=%%A\r\n"
+                + "if /I not \"%state%\"==\"STOPPED\" (timeout /t 1 /nobreak > NUL & goto waitstopped)\r\n"
+                + "move /y \"{}\" \"{}\" > NUL\r\n"
+                + "sc start \"{}\" > NUL\r\n"
+                + "del \"%~f0\"\r\n",
+            svc,
+            svc,
+            new_path.display(),
+            current_exe.display(),
+            svc
+        );
+        if let Err(e) = std::fs::write(&bat_path, script) {
+            tracing::warn!(error=%e, "Windows: failed to write update script");
+            std::process::exit(0);
+        }
+        // Launch the script detached and exit
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+        const DETACHED_PROCESS: u32 = 0x00000008;
+        let flags = CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS;
+        let _ = std::process::Command::new("cmd.exe")
+            .arg("/C")
+            .arg(&bat_path)
+            .creation_flags(flags)
+            .spawn();
+        std::process::exit(0);
+    }
+
     async fn install(&self, user: Option<String>) -> Result<(), AppError> {
         // Ignore provided user on Windows and install for current user
         if let Some(u) = user {
@@ -85,6 +136,8 @@ impl Platform for WindowsPlatform {
         install::uninstall_for_current_user().await
     }
 }
+
+// No arg escaping required for service start; SCM does not accept args here.
 
 /// Returns the current user's SID as a string (e.g., "S-1-5-21-...")
 fn current_user_sid_string() -> Option<String> {

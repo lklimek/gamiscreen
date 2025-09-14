@@ -9,6 +9,47 @@ permissions:
   contents: write
 
 jobs:
+  build-client-windows-x86_64:
+    name: Build gamiscreen-client (windows x86_64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build client
+        env:
+          SKIP_WEB_BUILD: "1"
+        shell: pwsh
+        run: |
+          cargo build --release -p gamiscreen-client
+          Copy-Item "target/release/gamiscreen-client.exe" "gamiscreen-client-windows-x86_64.exe"
+          if (Test-Path "gamiscreen-client-windows-x86_64.zip") { Remove-Item "gamiscreen-client-windows-x86_64.zip" -Force }
+          Compress-Archive -Path "gamiscreen-client-windows-x86_64.exe" -DestinationPath "gamiscreen-client-windows-x86_64.zip"
+          Get-FileHash "gamiscreen-client-windows-x86_64.zip" -Algorithm SHA256 | Select-Object -ExpandProperty Hash | Out-File -NoNewline "gamiscreen-client-windows-x86_64.zip.sha256"
+
+      - name: Upload release assets
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            gamiscreen-client-windows-x86_64.zip
+            gamiscreen-client-windows-x86_64.zip.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload build artifacts (manual runs)
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamiscreen-client-windows-x86_64
+          path: |
+            gamiscreen-client-windows-x86_64.zip
+            gamiscreen-client-windows-x86_64.zip.sha256
+
   build-client-linux-x86_64:
     name: Build gamiscreen-client (linux x86_64)
     runs-on: ubuntu-latest
@@ -22,7 +63,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libdbus-1-dev libsqlite3-dev
+          sudo apt-get install -y pkg-config libdbus-1-dev libsqlite3-dev zip
 
       - name: Build client
         env:
@@ -30,7 +71,8 @@ jobs:
         run: |
           cargo build --release -p gamiscreen-client
           cp target/release/gamiscreen-client gamiscreen-client-linux-x86_64
-          sha256sum gamiscreen-client-linux-x86_64 | awk '{print $1}' > gamiscreen-client-linux-x86_64.sha256
+          zip -j gamiscreen-client-linux-x86_64.zip gamiscreen-client-linux-x86_64
+          sha256sum gamiscreen-client-linux-x86_64.zip | awk '{print $1}' > gamiscreen-client-linux-x86_64.zip.sha256
 
       - name: Upload release assets
         if: github.event_name == 'release'
@@ -38,8 +80,8 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           files: |
-            gamiscreen-client-linux-x86_64
-            gamiscreen-client-linux-x86_64.sha256
+            gamiscreen-client-linux-x86_64.zip
+            gamiscreen-client-linux-x86_64.zip.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -49,8 +91,8 @@ jobs:
         with:
           name: gamiscreen-client-linux-x86_64
           path: |
-            gamiscreen-client-linux-x86_64
-            gamiscreen-client-linux-x86_64.sha256
+            gamiscreen-client-linux-x86_64.zip
+            gamiscreen-client-linux-x86_64.zip.sha256
 
   build-server-linux-x86_64:
     name: Build gamiscreen-server (linux x86_64)
@@ -73,7 +115,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libsqlite3-dev
+          sudo apt-get install -y pkg-config libsqlite3-dev zip
 
       - name: Build server
         env:
@@ -82,7 +124,8 @@ jobs:
         run: |
           cargo build --release -p gamiscreen-server
           cp target/release/gamiscreen-server gamiscreen-server-linux-x86_64
-          sha256sum gamiscreen-server-linux-x86_64 | awk '{print $1}' > gamiscreen-server-linux-x86_64.sha256
+          zip -j gamiscreen-server-linux-x86_64.zip gamiscreen-server-linux-x86_64
+          sha256sum gamiscreen-server-linux-x86_64.zip | awk '{print $1}' > gamiscreen-server-linux-x86_64.zip.sha256
 
       - name: Upload release assets
         if: github.event_name == 'release'
@@ -90,8 +133,8 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           files: |
-            gamiscreen-server-linux-x86_64
-            gamiscreen-server-linux-x86_64.sha256
+            gamiscreen-server-linux-x86_64.zip
+            gamiscreen-server-linux-x86_64.zip.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -101,5 +144,5 @@ jobs:
         with:
           name: gamiscreen-server-linux-x86_64
           path: |
-            gamiscreen-server-linux-x86_64
-            gamiscreen-server-linux-x86_64.sha256
+            gamiscreen-server-linux-x86_64.zip
+            gamiscreen-server-linux-x86_64.zip.sha256

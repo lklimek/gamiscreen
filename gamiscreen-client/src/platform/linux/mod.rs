@@ -3,6 +3,7 @@ pub mod lock;
 pub mod lock_tester;
 pub mod notify;
 
+use std::path::Path;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
@@ -60,6 +61,18 @@ impl Platform for LinuxPlatform {
 
     async fn uninstall(&self, user: Option<String>) -> Result<(), AppError> {
         install::uninstall_all(user).await
+    }
+
+    fn replace_and_restart(&self, staged_src: &Path, current_exe: &Path, args: &[String]) -> ! {
+        // Move the staged binary into place atomically, then exec into it
+        if let Err(e) = std::fs::rename(staged_src, current_exe) {
+            tracing::warn!(error=%e, "Linux: failed to replace binary");
+            std::process::exit(0);
+        }
+        use std::os::unix::process::CommandExt;
+        let err = std::process::Command::new(current_exe).args(args).exec();
+        tracing::warn!(error=?err, "Linux: exec failed after update; exiting");
+        std::process::exit(0);
     }
 }
 

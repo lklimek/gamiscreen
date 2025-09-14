@@ -25,6 +25,21 @@ pub trait Platform: Send + Sync {
     async fn install(&self, user: Option<String>) -> Result<(), AppError>;
     /// Uninstall background service/agent for this platform.
     async fn uninstall(&self, user: Option<String>) -> Result<(), AppError>;
+    /// Install a prepared update and restart the application.
+    ///
+    /// `staged_src` points to a complete, executable binary staged on disk
+    /// next to the current executable. Implementations should atomically
+    /// replace the current binary at `current_exe` with `staged_src` using
+    /// OS-appropriate mechanisms, then restart the process with `args`.
+    ///
+    /// This function does not return on success; it terminates the current
+    /// process image (either via `exec` on Unix or exiting after spawning on Windows).
+    fn replace_and_restart(
+        &self,
+        staged_src: &std::path::Path,
+        current_exe: &std::path::Path,
+        args: &[String],
+    ) -> !;
 }
 
 /// Detect the current platform and return an implementation.
