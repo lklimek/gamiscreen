@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+#[cfg(not(target_os = "windows"))]
 use crate::platform::linux::lock::LockMethod;
 use clap::{Parser, Subcommand};
 
@@ -37,6 +38,7 @@ pub enum Command {
         #[arg(long)]
         username: Option<String>,
     },
+    #[cfg(not(target_os = "windows"))]
     /// Install helper: polkit rule + user systemd service
     ///
     /// When run as root, you must provide --user (or you will be prompted).
@@ -45,6 +47,7 @@ pub enum Command {
         #[arg(long)]
         user: Option<String>,
     },
+    #[cfg(not(target_os = "windows"))]
     /// Uninstall helper: remove polkit rule and user systemd service
     ///
     /// When run as root, you must provide --user (or you will be prompted).
@@ -53,6 +56,7 @@ pub enum Command {
         #[arg(long)]
         user: Option<String>,
     },
+    #[cfg(not(target_os = "windows"))]
     /// Try lock methods and report status
     Lock {
         /// Method to use (default: all)

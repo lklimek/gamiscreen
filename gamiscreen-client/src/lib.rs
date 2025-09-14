@@ -57,12 +57,15 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
             Command::Login { server, username } => {
                 return login::login(server.clone(), username.clone(), cli.config.clone()).await;
             }
+            #[cfg(not(target_os = "windows"))]
             Command::Install { user } => {
                 return platform::linux::install::install_all(user.clone()).await;
             }
+            #[cfg(not(target_os = "windows"))]
             Command::Uninstall { user } => {
                 return platform::linux::install::uninstall_all(user.clone()).await;
             }
+            #[cfg(not(target_os = "windows"))]
             Command::Lock { method } => {
                 platform::linux::lock_tester::run_lock_cmd(*method).await;
                 return Ok(());
@@ -81,6 +84,9 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
 
     // Detect platform implementation
     let plat = platform::detect(&cfg).await?;
+    #[cfg(target_os = "windows")]
+    info!("platform selected: windows");
+    #[cfg(not(target_os = "windows"))]
     info!("platform selected: linux");
 
     // Background re-locker: when time is exhausted, keep re-locking with short delays

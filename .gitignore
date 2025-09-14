@@ -5,3 +5,4 @@ gamiscreen-server/data
 gamiscreen-web/node_modules
 gamiscreen-web/dist
 logs/
+dist/

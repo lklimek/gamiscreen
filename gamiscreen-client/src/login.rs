@@ -5,7 +5,6 @@ use crate::AppError;
 use crate::config::{load_config, resolve_config_path};
 use base64::Engine;
 use gamiscreen_shared::api::{self};
-use nix::unistd::getuid;
 
 pub async fn login(
     server_arg: Option<String>,
@@ -60,7 +59,14 @@ pub async fn login(
     };
 
     // Register client to obtain device-scoped token, then write config
-    let device_id = generate_device_id();
+    let device_id = {
+        let plat = crate::platform::detect_default().await.map_err(|e| {
+            AppError::Io(std::io::Error::other(format!(
+                "platform detect failed: {e}"
+            )))
+        })?;
+        plat.device_id()
+    };
     let reg = register_client(&server_url, &body.token, &target_child_id, &device_id).await?;
     // Save device token in keyring under the server_url only (single-user support)
     let entry = keyring_entry_for_login(&server_url)?;
@@ -108,25 +114,6 @@ async fn register_client(
     api::rest::child_register(server_url, child_id, device_id, login_token)
         .await
         .map_err(|e| AppError::Http(format!("registration failed: {e}")))
-}
-
-fn generate_device_id() -> String {
-    let uid = getuid().as_raw();
-    let machine_id = read_machine_id().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    format!("uid{}-{}", uid, machine_id)
-}
-
-fn read_machine_id() -> Option<String> {
-    let paths = ["/etc/machine-id", "/var/lib/dbus/machine-id"];
-    for p in paths {
-        if let Ok(s) = std::fs::read_to_string(p) {
-            let trimmed = s.trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
-            }
-        }
-    }
-    None
 }
 
 fn keyring_entry_for_login(server_url: &str) -> Result<keyring::Entry, AppError> {

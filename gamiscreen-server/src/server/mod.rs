@@ -553,16 +553,16 @@ async fn sse_notifications(
         if let Ok(c) = state.store.pending_submissions_count().await {
             init_items.push(ServerEvent::PendingCount { count: c as u32 });
         }
-    } else if claims.role == Role::Child {
-        if let Some(cid) = claims.child_id.clone() {
-            let child_mutex = state.child_mutex(&cid).await;
-            let mut guard = child_mutex.lock().await;
-            if let Ok(rem) = state.remaining_minutes(&cid, &mut guard).await {
-                init_items.push(ServerEvent::RemainingUpdated {
-                    child_id: cid.clone(),
-                    remaining_minutes: rem,
-                });
-            }
+    } else if claims.role == Role::Child
+        && let Some(cid) = claims.child_id.clone()
+    {
+        let child_mutex = state.child_mutex(&cid).await;
+        let mut guard = child_mutex.lock().await;
+        if let Ok(rem) = state.remaining_minutes(&cid, &mut guard).await {
+            init_items.push(ServerEvent::RemainingUpdated {
+                child_id: cid.clone(),
+                remaining_minutes: rem,
+            });
         }
     }
 

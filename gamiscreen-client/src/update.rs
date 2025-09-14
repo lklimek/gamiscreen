@@ -100,12 +100,10 @@ pub async fn maybe_self_update(cfg: &ClientConfig) -> Result<(), AppError> {
             for b in assets.iter() {
                 if b.get("name").and_then(|v| v.as_str()) == Some(sha_name.as_str())
                     && let Some(url2) = b.get("browser_download_url").and_then(|v| v.as_str())
+                    && let Ok(resp) = gh.get(url2).send().await
+                    && let Ok(text) = resp.text().await
                 {
-                    if let Ok(resp) = gh.get(url2).send().await {
-                        if let Ok(text) = resp.text().await {
-                            sha256 = text.split_whitespace().next().unwrap_or("").to_string();
-                        }
-                    }
+                    sha256 = text.split_whitespace().next().unwrap_or("").to_string();
                 }
             }
             if sha256.is_empty() {

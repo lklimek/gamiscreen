@@ -1,4 +1,7 @@
+#[cfg(not(target_os = "windows"))]
 pub mod linux;
+#[cfg(target_os = "windows")]
+pub mod windows;
 
 use crate::{AppError, config::ClientConfig};
 
@@ -14,11 +17,42 @@ pub trait Platform: Send + Sync {
     async fn notify(&self, total_secs: u64);
     async fn update_notification(&self, seconds_left: u64);
     async fn hide_notification(&self);
+    /// Generate a stable device identifier for this OS
+    fn device_id(&self) -> String;
 }
 
 /// Detect the current platform and return an implementation.
+#[allow(unused_variables)]
 pub async fn detect(cfg: &ClientConfig) -> Result<Arc<dyn Platform>, AppError> {
-    // For now we only implement Linux. Windows support will be added next.
-    let backend = linux::lock::detect_lock_backend(cfg).await?;
-    Ok(Arc::new(linux::LinuxPlatform::new(backend)))
+    #[cfg(target_os = "windows")]
+    {
+        Ok(Arc::new(windows::WindowsPlatform::new()))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let backend = linux::lock::detect_lock_backend(cfg).await?;
+        Ok(Arc::new(linux::LinuxPlatform::new(backend)))
+    }
+}
+
+/// Detect platform without requiring a config (used early in CLI flows).
+pub async fn detect_default() -> Result<Arc<dyn Platform>, AppError> {
+    #[cfg(target_os = "windows")]
+    {
+        Ok(Arc::new(windows::WindowsPlatform::new()))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let dummy_cfg = ClientConfig {
+            server_url: String::new(),
+            child_id: String::new(),
+            device_id: String::new(),
+            interval_secs: 60,
+            warn_before_lock_secs: 10,
+        };
+        let backend = linux::lock::detect_lock_backend(&dummy_cfg).await?;
+        Ok(Arc::new(linux::LinuxPlatform::new(backend)))
+    }
 }

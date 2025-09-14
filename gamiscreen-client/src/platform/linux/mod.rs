@@ -19,7 +19,10 @@ pub struct LinuxPlatform {
 
 impl LinuxPlatform {
     pub fn new(lock_backend: lock::LockBackend) -> Self {
-        Self { lock_backend, notifier: Arc::new(Mutex::new(notify::Notifier::new())) }
+        Self {
+            lock_backend,
+            notifier: Arc::new(Mutex::new(notify::Notifier::new())),
+        }
     }
 }
 
@@ -49,4 +52,23 @@ impl Platform for LinuxPlatform {
     async fn hide_notification(&self) {
         self.notifier.lock().await.close().await;
     }
+
+    fn device_id(&self) -> String {
+        let uid = nix::unistd::getuid().as_raw();
+        let machine_id = read_machine_id().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        format!("uid{}-{}", uid, machine_id)
+    }
+}
+
+fn read_machine_id() -> Option<String> {
+    let paths = ["/etc/machine-id", "/var/lib/dbus/machine-id"];
+    for p in paths {
+        if let Ok(s) = std::fs::read_to_string(p) {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
 }
