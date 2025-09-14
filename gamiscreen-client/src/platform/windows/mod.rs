@@ -84,14 +84,16 @@ impl Platform for WindowsPlatform {
         let svc = install::TASK_NAME; // assume service name equals install task name
         // Service-aware update: stop service, wait for STOPPED, move new, start service
         let script = format!(
-            "@echo off\r\n"
-                + "sc stop \"{}\" > NUL\r\n"
-                + ":waitstopped\r\n"
-                + "for /f \"tokens=3\" %%A in ('sc query \"{}\" ^| findstr STATE') do set state=%%A\r\n"
-                + "if /I not \"%state%\"==\"STOPPED\" (timeout /t 1 /nobreak > NUL & goto waitstopped)\r\n"
-                + "move /y \"{}\" \"{}\" > NUL\r\n"
-                + "sc start \"{}\" > NUL\r\n"
-                + "del \"%~f0\"\r\n",
+            concat!(
+                "@echo off\r\n",
+                "sc stop \"{}\" > NUL\r\n",
+                ":waitstopped\r\n",
+                "for /f \"tokens=3\" %%A in ('sc query \"{}\" ^| findstr STATE') do set state=%%A\r\n",
+                "if /I not \"%state%\"==\"STOPPED\" (timeout /t 1 /nobreak > NUL & goto waitstopped)\r\n",
+                "move /y \"{}\" \"{}\" > NUL\r\n",
+                "sc start \"{}\" > NUL\r\n",
+                "del \"%~f0\"\r\n",
+            ),
             svc,
             svc,
             new_path.display(),
