@@ -26,6 +26,8 @@ jobs:
         run: |
           cargo build --release -p gamiscreen-client
           Copy-Item "target/release/gamiscreen-client.exe" "gamiscreen-client-windows-x86_64.exe"
+          # Compute SHA256 for raw .exe (used for workflow artifacts)
+          Get-FileHash "gamiscreen-client-windows-x86_64.exe" -Algorithm SHA256 | Select-Object -ExpandProperty Hash | Out-File -NoNewline "gamiscreen-client-windows-x86_64.exe.sha256"
           if (Test-Path "gamiscreen-client-windows-x86_64.zip") { Remove-Item "gamiscreen-client-windows-x86_64.zip" -Force }
           Compress-Archive -Path "gamiscreen-client-windows-x86_64.exe" -DestinationPath "gamiscreen-client-windows-x86_64.zip"
           Get-FileHash "gamiscreen-client-windows-x86_64.zip" -Algorithm SHA256 | Select-Object -ExpandProperty Hash | Out-File -NoNewline "gamiscreen-client-windows-x86_64.zip.sha256"
@@ -47,8 +49,8 @@ jobs:
         with:
           name: gamiscreen-client-windows-x86_64
           path: |
-            gamiscreen-client-windows-x86_64.zip
-            gamiscreen-client-windows-x86_64.zip.sha256
+            gamiscreen-client-windows-x86_64.exe
+            gamiscreen-client-windows-x86_64.exe.sha256
 
   build-client-linux-x86_64:
     name: Build gamiscreen-client (linux x86_64)
