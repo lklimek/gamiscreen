@@ -65,7 +65,7 @@ impl Platform for WindowsPlatform {
         format!("win-{}-{}", computer, username)
     }
 
-    fn replace_and_restart(&self, staged_src: &Path, current_exe: &Path, args: &[String]) -> ! {
+    fn replace_and_restart(&self, staged_src: &Path, current_exe: &Path, _args: &[String]) -> ! {
         // Prepare a .new file next to the current exe
         let parent = current_exe.parent().unwrap_or_else(|| Path::new("."));
         let fname = current_exe
