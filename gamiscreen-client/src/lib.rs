@@ -73,8 +73,7 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
         }
     }
 
-    let cfg_path = resolve_config_path(cli.config)?;
-    let cfg = load_config(&cfg_path)?;
+    let (cfg_path, cfg) = ClientConfig::find_and_load(cli.config)?;
     info!(path=?cfg_path, "loaded config");
 
     // Auto-update check (best-effort)

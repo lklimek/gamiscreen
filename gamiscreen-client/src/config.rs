@@ -68,3 +68,13 @@ pub fn normalize_server_url(input: &str) -> String {
         format!("http://{}", trimmed.trim_end_matches('/'))
     }
 }
+
+impl ClientConfig {
+    /// Resolves the config path from CLI arg, env, or default location and loads it.
+    /// Returns the resolved path and the loaded config.
+    pub fn find_and_load(cli_path: Option<PathBuf>) -> Result<(PathBuf, ClientConfig), AppError> {
+        let path = resolve_config_path(cli_path)?;
+        let cfg = load_config(&path)?;
+        Ok((path, cfg))
+    }
+}
