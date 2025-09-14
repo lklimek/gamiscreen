@@ -118,6 +118,27 @@ impl Platform for WindowsPlatform {
         let computer = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "pc".to_string());
         format!("win-{}-{}", computer, username)
     }
+
+    async fn install(&self, user: Option<String>) -> Result<(), AppError> {
+        // Ignore provided user on Windows and install for current user
+        if let Some(u) = user {
+            let cur = std::env::var("USERNAME").unwrap_or_default();
+            if !u.is_empty() && u.to_lowercase() != cur.to_lowercase() {
+                warn!(requested=%u, current=%cur, "Windows install ignores --user; installing for current user");
+            }
+        }
+        install_for_current_user(true).await
+    }
+
+    async fn uninstall(&self, user: Option<String>) -> Result<(), AppError> {
+        if let Some(u) = user {
+            let cur = std::env::var("USERNAME").unwrap_or_default();
+            if !u.is_empty() && u.to_lowercase() != cur.to_lowercase() {
+                warn!(requested=%u, current=%cur, "Windows uninstall ignores --user; uninstalling for current user");
+            }
+        }
+        uninstall_for_current_user().await
+    }
 }
 
 /// Simple notifier placeholder for Windows: logs to tracing for now.
@@ -203,4 +224,65 @@ fn current_user_sid_string() -> Option<String> {
         let _ = LocalFree(sid_str_ptr as HLOCAL);
         Some(sid)
     }
+}
+
+const TASK_NAME: &str = "GamiScreen Client";
+
+async fn install_for_current_user(start_now: bool) -> Result<(), AppError> {
+    use tokio::process::Command;
+    use tracing::info;
+
+    let exe = std::env::current_exe().map_err(AppError::Io)?;
+    let exe_str = exe.display().to_string();
+    // schtasks expects quotes around the full path; we also pass -- to ensure default agent run
+    let tr = format!("\"{}\"", exe_str);
+
+    // Create or update the task (use /F)
+    let status = Command::new("schtasks")
+        .args([
+            "/Create",
+            "/F",
+            "/SC",
+            "ONLOGON",
+            "/RL",
+            "LIMITED",
+            "/TN",
+            TASK_NAME,
+            "/TR",
+            &tr,
+        ])
+        .status()
+        .await
+        .map_err(AppError::Io)?;
+    if !status.success() {
+        return Err(AppError::Io(std::io::Error::other(format!(
+            "schtasks /Create failed with status {}",
+            status
+        ))));
+    }
+
+    info!(task=TASK_NAME, path=%exe_str, "Windows Scheduled Task installed for current user");
+
+    if start_now {
+        // Best-effort: start it immediately in current session
+        let _ = Command::new("schtasks")
+            .args(["/Run", "/TN", TASK_NAME])
+            .status()
+            .await;
+    }
+    Ok(())
+}
+
+async fn uninstall_for_current_user() -> Result<(), AppError> {
+    use tokio::process::Command;
+    let status = Command::new("schtasks")
+        .args(["/Delete", "/F", "/TN", TASK_NAME])
+        .status()
+        .await
+        .map_err(AppError::Io)?;
+    if !status.success() {
+        // Treat missing task as success
+        warn!(task=TASK_NAME, status=%status, "schtasks /Delete failed or task missing; continuing");
+    }
+    Ok(())
 }

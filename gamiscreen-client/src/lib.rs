@@ -57,13 +57,13 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
             Command::Login { server, username } => {
                 return login::login(server.clone(), username.clone(), cli.config.clone()).await;
             }
-            #[cfg(not(target_os = "windows"))]
             Command::Install { user } => {
-                return platform::linux::install::install_all(user.clone()).await;
+                let plat = platform::detect_default().await?;
+                return plat.install(user.clone()).await;
             }
-            #[cfg(not(target_os = "windows"))]
             Command::Uninstall { user } => {
-                return platform::linux::install::uninstall_all(user.clone()).await;
+                let plat = platform::detect_default().await?;
+                return plat.uninstall(user.clone()).await;
             }
             #[cfg(not(target_os = "windows"))]
             Command::Lock { method } => {

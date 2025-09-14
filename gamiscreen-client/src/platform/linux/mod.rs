@@ -53,6 +53,14 @@ impl Platform for LinuxPlatform {
         let machine_id = read_machine_id().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         format!("uid{}-{}", uid, machine_id)
     }
+
+    async fn install(&self, user: Option<String>) -> Result<(), AppError> {
+        install::install_all(user).await
+    }
+
+    async fn uninstall(&self, user: Option<String>) -> Result<(), AppError> {
+        install::uninstall_all(user).await
+    }
 }
 
 fn read_machine_id() -> Option<String> {

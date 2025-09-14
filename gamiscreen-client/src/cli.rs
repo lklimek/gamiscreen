@@ -38,21 +38,21 @@ pub enum Command {
         #[arg(long)]
         username: Option<String>,
     },
-    #[cfg(not(target_os = "windows"))]
-    /// Install helper: polkit rule + user systemd service
+    /// Install background agent/service for this platform
     ///
-    /// When run as root, you must provide --user (or you will be prompted).
+    /// Linux: polkit rule + user systemd unit. When run as root, provide --user (or you will be prompted).
+    /// Windows: per-user Scheduled Task that starts the agent on logon (runs as current user).
     Install {
-        /// Target username for user-level setup (systemd --user, unit location)
+        /// Target username (Linux root only). Ignored on Windows.
         #[arg(long)]
         user: Option<String>,
     },
-    #[cfg(not(target_os = "windows"))]
-    /// Uninstall helper: remove polkit rule and user systemd service
+    /// Uninstall background agent/service for this platform
     ///
-    /// When run as root, you must provide --user (or you will be prompted).
+    /// Linux: removes polkit rule + user systemd unit.
+    /// Windows: removes the per-user Scheduled Task.
     Uninstall {
-        /// Target username for user-level cleanup
+        /// Target username (Linux root only). Ignored on Windows.
         #[arg(long)]
         user: Option<String>,
     },
