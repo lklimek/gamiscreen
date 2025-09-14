@@ -9,6 +9,45 @@ permissions:
   contents: write
 
 jobs:
+  build-client-windows-x86_64:
+    name: Build gamiscreen-client (windows x86_64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build client
+        env:
+          SKIP_WEB_BUILD: "1"
+        shell: pwsh
+        run: |
+          cargo build --release -p gamiscreen-client
+          Copy-Item "target/release/gamiscreen-client.exe" "gamiscreen-client-windows-x86_64.exe"
+          Get-FileHash "gamiscreen-client-windows-x86_64.exe" -Algorithm SHA256 | Select-Object -ExpandProperty Hash | Out-File -NoNewline "gamiscreen-client-windows-x86_64.exe.sha256"
+
+      - name: Upload release assets
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            gamiscreen-client-windows-x86_64.exe
+            gamiscreen-client-windows-x86_64.exe.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload build artifacts (manual runs)
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamiscreen-client-windows-x86_64
+          path: |
+            gamiscreen-client-windows-x86_64.exe
+            gamiscreen-client-windows-x86_64.exe.sha256
+
   build-client-linux-x86_64:
     name: Build gamiscreen-client (linux x86_64)
     runs-on: ubuntu-latest
