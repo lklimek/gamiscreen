@@ -1,12 +1,12 @@
-use super::{auth::AuthCtx, AppError, Role};
 use super::auth;
-use percent_encoding::percent_decode_str;
+use super::{AppError, Role, auth::AuthCtx};
 use axum::response::Response;
 use axum::{
     extract::State,
     http::{Method, Request},
     middleware::Next,
 };
+use percent_encoding::percent_decode_str;
 // use http_body_util::BodyExt; // not used
 
 pub async fn enforce_acl(
@@ -49,7 +49,12 @@ pub async fn enforce_acl(
     }
 
     // Remaining: allow parent for any id; children only for self
-    if method == Method::GET && segs.len() == 4 && segs[0] == "api" && segs[1] == "children" && segs[3] == "remaining" {
+    if method == Method::GET
+        && segs.len() == 4
+        && segs[0] == "api"
+        && segs[1] == "children"
+        && segs[3] == "remaining"
+    {
         if auth.role != Role::Parent {
             let child = decode(segs[2]);
             match &auth.child_id {
@@ -61,7 +66,12 @@ pub async fn enforce_acl(
     }
 
     // Child tasks listing: allow parent for any id; children only for self
-    if method == Method::GET && segs.len() == 4 && segs[0] == "api" && segs[1] == "children" && segs[3] == "tasks" {
+    if method == Method::GET
+        && segs.len() == 4
+        && segs[0] == "api"
+        && segs[1] == "children"
+        && segs[3] == "tasks"
+    {
         if auth.role != Role::Parent {
             let child = decode(segs[2]);
             match &auth.child_id {
@@ -73,7 +83,12 @@ pub async fn enforce_acl(
     }
 
     // Child rewards listing: allow parent for any id; children only for self
-    if method == Method::GET && segs.len() == 4 && segs[0] == "api" && segs[1] == "children" && segs[3] == "reward" {
+    if method == Method::GET
+        && segs.len() == 4
+        && segs[0] == "api"
+        && segs[1] == "children"
+        && segs[3] == "reward"
+    {
         if auth.role != Role::Parent {
             let child = decode(segs[2]);
             match &auth.child_id {
@@ -85,7 +100,12 @@ pub async fn enforce_acl(
     }
 
     // Rewards (new REST path): parent-only on any child id
-    if method == Method::POST && segs.len() == 4 && segs[0] == "api" && segs[1] == "children" && segs[3] == "reward" {
+    if method == Method::POST
+        && segs.len() == 4
+        && segs[0] == "api"
+        && segs[1] == "children"
+        && segs[3] == "reward"
+    {
         if auth.role != Role::Parent {
             return Err(AppError::forbidden());
         }
@@ -94,11 +114,15 @@ pub async fn enforce_acl(
 
     // Notifications: parent-only
     if segs.as_slice() == ["api", "notifications"] && method == Method::GET {
-        if auth.role != Role::Parent { return Err(AppError::forbidden()); }
+        if auth.role != Role::Parent {
+            return Err(AppError::forbidden());
+        }
         allowed = true;
     }
     if segs.as_slice() == ["api", "notifications", "count"] && method == Method::GET {
-        if auth.role != Role::Parent { return Err(AppError::forbidden()); }
+        if auth.role != Role::Parent {
+            return Err(AppError::forbidden());
+        }
         allowed = true;
     }
     if method == Method::POST
@@ -109,7 +133,9 @@ pub async fn enforce_acl(
         && (segs[4] == "approve" || segs[4] == "discard")
         && segs[3].parse::<i32>().is_ok()
     {
-        if auth.role != Role::Parent { return Err(AppError::forbidden()); }
+        if auth.role != Role::Parent {
+            return Err(AppError::forbidden());
+        }
         allowed = true;
     }
 
@@ -121,7 +147,9 @@ pub async fn enforce_acl(
         && segs[3] == "tasks"
         && segs[5] == "submit"
     {
-        if auth.role != Role::Child { return Err(AppError::forbidden()); }
+        if auth.role != Role::Child {
+            return Err(AppError::forbidden());
+        }
         let child = decode(segs[2]);
         match &auth.child_id {
             Some(id) if id == &child => allowed = true,
@@ -130,7 +158,12 @@ pub async fn enforce_acl(
     }
 
     // Register device (new REST path): parent any id; child only for own id
-    if method == Method::POST && segs.len() == 4 && segs[0] == "api" && segs[1] == "children" && segs[3] == "register" {
+    if method == Method::POST
+        && segs.len() == 4
+        && segs[0] == "api"
+        && segs[1] == "children"
+        && segs[3] == "register"
+    {
         if auth.role != Role::Parent {
             let child = decode(segs[2]);
             match &auth.child_id {

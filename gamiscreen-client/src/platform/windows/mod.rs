@@ -41,11 +41,6 @@ impl Platform for WindowsPlatform {
         }
     }
 
-    async fn unlock(&self) -> Result<(), AppError> {
-        // Not supported: unlocking programmatically is not permitted for security reasons.
-        Ok(())
-    }
-
     async fn is_session_locked(&self) -> Result<bool, AppError> {
         // Determine lock state by checking the active input desktop name.
         // When the workstation is locked, the input desktop is typically "Winlogon".
@@ -149,11 +144,11 @@ impl Notifier {
 
 /// Returns the current user's SID as a string (e.g., "S-1-5-21-...")
 fn current_user_sid_string() -> Option<String> {
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL};
-    use windows_sys::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY};
-    use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
-    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
     use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL};
+    use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows_sys::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TokenUser};
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
     unsafe {
         let mut token: HANDLE = std::ptr::null_mut();
@@ -183,10 +178,15 @@ fn current_user_sid_string() -> Option<String> {
 
         #[repr(C)]
         #[allow(non_snake_case)]
-        struct SID_AND_ATTRIBUTES { Sid: *mut core::ffi::c_void, Attributes: u32 }
+        struct SID_AND_ATTRIBUTES {
+            Sid: *mut core::ffi::c_void,
+            Attributes: u32,
+        }
         #[repr(C)]
         #[allow(non_snake_case)]
-        struct TOKEN_USER_RS { User: SID_AND_ATTRIBUTES }
+        struct TOKEN_USER_RS {
+            User: SID_AND_ATTRIBUTES,
+        }
 
         let tu = &*(buf.as_ptr() as *const TOKEN_USER_RS);
         let mut sid_str_ptr: *mut u16 = std::ptr::null_mut();
@@ -195,7 +195,9 @@ fn current_user_sid_string() -> Option<String> {
         }
         // Convert PWSTR to Rust String
         let mut len = 0usize;
-        while *sid_str_ptr.add(len) != 0 { len += 1; }
+        while *sid_str_ptr.add(len) != 0 {
+            len += 1;
+        }
         let slice = core::slice::from_raw_parts(sid_str_ptr, len);
         let sid = String::from_utf16_lossy(slice);
         let _ = LocalFree(sid_str_ptr as HLOCAL);

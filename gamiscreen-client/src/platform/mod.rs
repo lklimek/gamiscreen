@@ -12,7 +12,6 @@ use std::sync::Arc;
 #[async_trait]
 pub trait Platform: Send + Sync {
     async fn lock(&self) -> Result<(), AppError>;
-    async fn unlock(&self) -> Result<(), AppError>;
     async fn is_session_locked(&self) -> Result<bool, AppError>;
     async fn notify(&self, total_secs: u64);
     async fn update_notification(&self, seconds_left: u64);

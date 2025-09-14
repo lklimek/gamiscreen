@@ -153,5 +153,8 @@ pub enum ServerEvent {
     #[serde(rename = "pending_count")]
     PendingCount { count: u32 },
     #[serde(rename = "remaining_updated")]
-    RemainingUpdated { child_id: String, remaining_minutes: i32 },
+    RemainingUpdated {
+        child_id: String,
+        remaining_minutes: i32,
+    },
 }

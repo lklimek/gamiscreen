@@ -32,11 +32,6 @@ impl Platform for LinuxPlatform {
         lock::enforce_lock_backend(&self.lock_backend).await
     }
 
-    async fn unlock(&self) -> Result<(), AppError> {
-        // Not supported on Linux in a generic, safe way.
-        Ok(())
-    }
-
     async fn is_session_locked(&self) -> Result<bool, AppError> {
         lock::is_session_locked().await
     }

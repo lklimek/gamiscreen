@@ -63,7 +63,10 @@ impl SseHub {
             }
         });
 
-        Ok(Self { tx, _joinset: std::sync::Arc::new(tokio::sync::Mutex::new(js)) })
+        Ok(Self {
+            tx,
+            _joinset: std::sync::Arc::new(tokio::sync::Mutex::new(js)),
+        })
     }
 
     /// Subscribe to events.
@@ -73,7 +76,8 @@ impl SseHub {
 }
 
 fn to_sse_url(http_base: &str, token: &str) -> Result<String, AppError> {
-    let mut u = url::Url::parse(http_base).map_err(|e| AppError::Config(format!("invalid server_url: {e}")))?;
+    let mut u = url::Url::parse(http_base)
+        .map_err(|e| AppError::Config(format!("invalid server_url: {e}")))?;
     // keep http/https
     let mut path = u.path().trim_end_matches('/').to_string();
     path.push_str("/api/sse");
