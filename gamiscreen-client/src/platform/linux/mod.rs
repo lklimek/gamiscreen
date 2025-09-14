@@ -34,6 +34,10 @@ impl Platform for LinuxPlatform {
         Ok(())
     }
 
+    async fn is_session_locked(&self) -> Result<bool, AppError> {
+        lock::is_session_locked().await
+    }
+
     async fn notify(&self, total_secs: u64) {
         self.notifier.lock().await.show_countdown(total_secs).await;
     }

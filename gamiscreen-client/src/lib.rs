@@ -111,6 +111,7 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
     let cfg_cloned = cfg.clone();
     let token_cloned = token.clone();
     let relocker_cloned = relocker.clone();
+    let plat_cloned = plat.clone();
     let cancel_child = cancel.child_token();
     let mut handle = tokio::spawn(async move {
         let _ = main_loop(
@@ -118,6 +119,7 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
             cfg_cloned,
             token_cloned,
             relocker_cloned,
+            plat_cloned,
             countdown_task,
         )
         .await;
@@ -147,6 +149,7 @@ async fn main_loop(
     cfg: ClientConfig,
     token: String,
     relocker: ReLocker,
+    platform: Arc<dyn platform::Platform>,
     countdown_task: CountdownTask,
 ) -> Result<(), AppError> {
     let mut failures: u32 = 0;
@@ -160,7 +163,7 @@ async fn main_loop(
 
         let start = std::time::Instant::now();
         // If the session is locked, skip accounting and heartbeats for this loop.
-        let session_locked = platform::is_session_locked().await;
+        let session_locked = platform.is_session_locked().await;
         tracing::debug!(?session_locked, "session lock status checked");
         if let Ok(true) = &session_locked {
             // Cancel any pending countdown notification
@@ -362,7 +365,7 @@ impl ReLocker {
                 tracing::error!(error=%e, "initial re-lock attempt failed");
             }
             loop {
-                match platform::is_session_locked().await {
+                match platform.is_session_locked().await {
                     Ok(false) => {
                         if let Err(e) = platform.lock().await {
                             tracing::error!(error=%e, "re-lock attempt failed");
