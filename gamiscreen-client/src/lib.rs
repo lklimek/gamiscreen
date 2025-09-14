@@ -8,17 +8,13 @@ use tracing::{debug, error, info, warn};
 pub mod cli;
 pub mod config;
 pub mod login;
-pub mod notify;
 pub mod platform;
 pub mod sse;
 pub mod update;
 
 pub use cli::{Cli, Command};
 pub use config::{ClientConfig, load_config, resolve_config_path};
-use notify::default_backend;
-pub use platform::linux::lock::{
-    LockBackend, detect_lock_backend, enforce_lock_backend, is_session_locked,
-};
+use std::sync::Arc;
 
 const RELOCK_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -83,11 +79,12 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
         warn!(error=%e, "auto-update failed; continuing with current binary");
     }
 
-    let backend = detect_lock_backend(&cfg).await?;
-    info!(?backend, "lock backend selected");
+    // Detect platform implementation
+    let plat = platform::detect(&cfg).await?;
+    info!("platform selected: linux");
 
     // Background re-locker: when time is exhausted, keep re-locking with short delays
-    let relocker = ReLocker::new(backend.clone());
+    let relocker = ReLocker::new(plat.clone());
 
     // Load token from keyring using normalized server_url as the account key
     let key = crate::config::normalize_server_url(&cfg.server_url);
@@ -106,7 +103,8 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
     }
 
     // Countdown task controller
-    let countdown_task = CountdownTask::new(cfg.interval_secs, cfg.warn_before_lock_secs);
+    let countdown_task =
+        CountdownTask::new(cfg.interval_secs, cfg.warn_before_lock_secs, plat.clone());
 
     // Create cancellation token and spawn main loop task
     let cancel = tokio_util::sync::CancellationToken::new();
@@ -162,7 +160,7 @@ async fn main_loop(
 
         let start = std::time::Instant::now();
         // If the session is locked, skip accounting and heartbeats for this loop.
-        let session_locked = is_session_locked().await;
+        let session_locked = platform::is_session_locked().await;
         tracing::debug!(?session_locked, "session lock status checked");
         if let Ok(true) = &session_locked {
             // Cancel any pending countdown notification
@@ -272,13 +270,15 @@ struct CountdownTask {
 }
 
 impl CountdownTask {
-    fn new(interval_secs: u64, warn_before_lock_secs: u64) -> Self {
+    fn new(
+        interval_secs: u64,
+        warn_before_lock_secs: u64,
+        platform: Arc<dyn platform::Platform>,
+    ) -> Self {
         let far_in_future = Instant::now() + Duration::from_secs(interval_secs * 1000);
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(10);
         tokio::spawn(async move {
-            let mut notifier = default_backend();
-
             let mut when_notify = far_in_future;
             // wait until deadline and show countdown; countdown will stop when new deadline arrives
             loop {
@@ -292,7 +292,7 @@ impl CountdownTask {
 
                         // we got new msg - it means previous notification is obsolete
                         debug!(?when_notify, "countdown task: new deadline received; closing previous notification");
-                        notifier.close().await;
+                        platform.hide_notification().await;
                         // continue to next loop iteration to wait for next deadline or timeout
                     }
 
@@ -300,7 +300,7 @@ impl CountdownTask {
                         // countdown finished, we notify
                         debug!("countdown task: deadline reached; showing countdown notification");
                         when_notify = far_in_future; // reset to far future to avoid repeated notifications
-                        notifier.show_countdown(warn_before_lock_secs).await;
+                        platform.notify(warn_before_lock_secs).await;
                     }
                 }
             }
@@ -336,15 +336,15 @@ impl CountdownTask {
 /// Re-locker task: spawns a background loop that re-locks every second until disabled.
 #[derive(Clone)]
 struct ReLocker {
-    backend: LockBackend,
+    platform: Arc<dyn platform::Platform>,
     handle: std::sync::Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
     sse_task: std::sync::Arc<tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl ReLocker {
-    fn new(backend: LockBackend) -> Self {
+    fn new(platform: Arc<dyn platform::Platform>) -> Self {
         Self {
-            backend,
+            platform,
             handle: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
             sse_task: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
         }
@@ -355,16 +355,16 @@ impl ReLocker {
         if h.is_some() {
             return;
         }
-        let backend = self.backend.clone();
+        let platform = self.platform.clone();
         let handle = tokio::spawn(async move {
             // Immediate lock attempt
-            if let Err(e) = enforce_lock_backend(&backend).await {
+            if let Err(e) = platform.lock().await {
                 tracing::error!(error=%e, "initial re-lock attempt failed");
             }
             loop {
-                match is_session_locked().await {
+                match platform::is_session_locked().await {
                     Ok(false) => {
-                        if let Err(e) = enforce_lock_backend(&backend).await {
+                        if let Err(e) = platform.lock().await {
                             tracing::error!(error=%e, "re-lock attempt failed");
                         }
                     }
