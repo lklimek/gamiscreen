@@ -65,7 +65,7 @@ impl Platform for WindowsPlatform {
         format!("win-{}-{}", computer, username)
     }
 
-    fn replace_and_restart(&self, staged_src: &Path, current_exe: &Path, _args: &[String]) -> ! {
+    fn replace_and_restart(&self, staged_src: &Path, current_exe: &Path, args: &[String]) -> ! {
         // Prepare a .new file next to the current exe
         let parent = current_exe.parent().unwrap_or_else(|| Path::new("."));
         let fname = current_exe
@@ -78,27 +78,37 @@ impl Platform for WindowsPlatform {
             tracing::warn!(error=%e, "Windows: failed to copy staged update");
             std::process::exit(0);
         }
-        // Create a small .bat script to swap files after this process exits.
-        // Assume we always run as a Windows Service; control via SCM.
+        // Create a small .bat script to swap files after this process exits and
+        // relaunch the app directly (Scheduled Task friendly; no SCM involved).
         let bat_path = parent.join(format!("update-runner-{}.bat", std::process::id()));
-        let svc = install::TASK_NAME; // assume service name equals install task name
-        // Service-aware update: stop service, wait for STOPPED, move new, start service
+        // Quote exe and args for cmd.exe; escape embedded quotes by doubling them
+        let exe_quoted = format!("\"{}\"", current_exe.display());
+        let mut args_quoted = String::new();
+        for a in args {
+            let mut s = a.replace('"', "\"\"");
+            s.insert(0, '"');
+            s.push('"');
+            args_quoted.push(' ');
+            args_quoted.push_str(&s);
+        }
         let script = format!(
             concat!(
                 "@echo off\r\n",
-                "sc stop \"{}\" > NUL\r\n",
-                ":waitstopped\r\n",
-                "for /f \"tokens=3\" %%A in ('sc query \"{}\" ^| findstr STATE') do set state=%%A\r\n",
-                "if /I not \"%state%\"==\"STOPPED\" (timeout /t 1 /nobreak > NUL & goto waitstopped)\r\n",
+                "setlocal enableextensions\r\n",
+                "set PID={}\r\n",
+                ":waitproc\r\n",
+                "tasklist /FI \"PID eq %PID%\" | find \"%PID%\" > NUL\r\n",
+                "if not errorlevel 1 (timeout /t 1 /nobreak > NUL & goto waitproc)\r\n",
                 "move /y \"{}\" \"{}\" > NUL\r\n",
-                "sc start \"{}\" > NUL\r\n",
+                "start \"\" {}{}\r\n",
+                "endlocal\r\n",
                 "del \"%~f0\"\r\n",
             ),
-            svc,
-            svc,
+            std::process::id(),
             new_path.display(),
             current_exe.display(),
-            svc
+            exe_quoted,
+            args_quoted,
         );
         if let Err(e) = std::fs::write(&bat_path, script) {
             tracing::warn!(error=%e, "Windows: failed to write update script");
@@ -139,7 +149,7 @@ impl Platform for WindowsPlatform {
     }
 }
 
-// No arg escaping required for service start; SCM does not accept args here.
+// On Windows we relaunch directly, so we handle basic arg quoting above.
 
 /// Returns the current user's SID as a string (e.g., "S-1-5-21-...")
 fn current_user_sid_string() -> Option<String> {
