@@ -428,7 +428,20 @@ async fn api_child_reward(
             .await
             .map_err(AppError::internal)?
         {
-            Some(t) => (t.minutes, t.name),
+            Some(t) => {
+                let mut desc = t.name;
+                if let Some(note) = body
+                    .description
+                    .as_ref()
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                {
+                    desc.push_str(" - ");
+                    desc.push_str(&note);
+                }
+                (t.minutes, desc)
+            }
             None => return Err(AppError::bad_request(format!("unknown task_id: {}", tid))),
         }
     } else if let Some(m) = body.minutes {

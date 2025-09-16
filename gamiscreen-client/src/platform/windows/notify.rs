@@ -21,4 +21,3 @@ impl Notifier {
         debug!("[COUNTDOWN CLOSED] (Windows)");
     }
 }
-

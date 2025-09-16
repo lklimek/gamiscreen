@@ -12,6 +12,7 @@ export function ChildDetailsPage(props: { childId: string }) {
   const isChild = claims?.role === 'child'
   const [tasks, setTasks] = useState<TaskWithStatusDto[]>([])
   const [confirm, setConfirm] = useState<null | { mode: 'task', task: TaskWithStatusDto } | { mode: 'custom', minutes: number }>(null)
+  const [taskNote, setTaskNote] = useState('')
   const [customMinutes, setCustomMinutes] = useState('')
   const [customLabel, setCustomLabel] = useState('')
   const [rewards, setRewards] = useState<RewardHistoryItemDto[]>([])
@@ -83,7 +84,8 @@ export function ChildDetailsPage(props: { childId: string }) {
     setError(null)
     try {
       if (confirm.mode === 'task') {
-        const resp = await rewardMinutes({ child_id: childId, task_id: confirm.task.id })
+        const description = taskNote.trim() || undefined
+        const resp = await rewardMinutes({ child_id: childId, task_id: confirm.task.id, description })
         setRemaining(resp.remaining_minutes)
         // Update last_done locally for immediate UI feedback
         const nowIso = new Date().toISOString()
@@ -95,6 +97,7 @@ export function ChildDetailsPage(props: { childId: string }) {
         setRemaining(resp.remaining_minutes)
       }
       setConfirm(null)
+      setTaskNote('')
       setCustomMinutes('')
       setCustomLabel('')
       // Refresh reward history (show newest on first page)
@@ -153,7 +156,13 @@ export function ChildDetailsPage(props: { childId: string }) {
                 <div className="row" style={{ gap: 8, alignItems: 'center' }}>
                   <span className="subtitle" style={{ color: isNegative ? '#d00' : undefined }}>{t.minutes > 0 ? '+' : ''}{t.minutes} min</span>
                   {isParent && (
-                    <button className={isDoneToday ? 'contrast' : undefined} onClick={() => setConfirm({ mode: 'task', task: t })}>Accept</button>
+                    <button
+                      className={isDoneToday ? 'contrast' : undefined}
+                      onClick={() => {
+                        setTaskNote('')
+                        setConfirm({ mode: 'task', task: t })
+                      }}
+                    >Accept</button>
                   )}
                   {isChild && (
                     wasSubmitted || isDoneToday ? (
@@ -277,7 +286,7 @@ export function ChildDetailsPage(props: { childId: string }) {
       </div>
       {confirm && (
         <dialog open>
-          <article>
+          <article className="col" style={{ gap: 12 }}>
             <header>
               <strong>Confirm</strong>
             </header>
@@ -302,9 +311,20 @@ export function ChildDetailsPage(props: { childId: string }) {
                   )
                 })()}
             </p>
+            {confirm.mode === 'task' && (
+              <label className="col" style={{ gap: 4 }}>
+                <span>Note (optional)</span>
+                <input
+                  type="text"
+                  placeholder="Add a note for this completion"
+                  value={taskNote}
+                  onChange={e => setTaskNote(e.target.value)}
+                />
+              </label>
+            )}
             <footer className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
               <button onClick={doConfirm} disabled={loading}>Accept</button>
-              <button className="secondary" onClick={() => setConfirm(null)} disabled={loading}>Cancel</button>
+              <button className="secondary" onClick={() => { setConfirm(null); setTaskNote('') }} disabled={loading}>Cancel</button>
             </footer>
           </article>
         </dialog>

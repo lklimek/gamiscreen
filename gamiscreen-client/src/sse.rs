@@ -38,7 +38,7 @@ impl SseHub {
                                 Ok(Event::Message(msg)) => {
                                     if !msg.data.is_empty() {
                                         match serde_json::from_str::<gamiscreen_shared::api::ServerEvent>(&msg.data) {
-                                            Ok(val) => {                                                
+                                            Ok(val) => {
                                                 tracing::trace!(event=?val, "SSE: received event");
                                                 let _ = tx_cloned.send(val); }
                                             Err(e) => tracing::warn!(error=%e, "SSE: failed to parse event"),
