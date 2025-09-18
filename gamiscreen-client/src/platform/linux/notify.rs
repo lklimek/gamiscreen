@@ -1,5 +1,7 @@
 use tracing::{debug, info, warn};
 
+use notify_rust::Hint;
+
 #[derive(Debug)]
 pub struct Notifier {
     replace_id: u32,
@@ -36,6 +38,10 @@ impl Notifier {
             .body("Zapisz swoją pracę. Czas dobiega końca.")
             .id(replace_id)
             .urgency(notify_rust::Urgency::Critical)
+            // Request sound via desktop notification hint
+            .hint(Hint::SuppressSound(false))
+            .hint(Hint::SoundName("dialog-warning".into()))
+            .hint(Hint::Resident(true))
             .show_async()
             .await;
 
@@ -66,6 +72,10 @@ impl Notifier {
             .body("Zapisz swoją pracę. Czas dobiega końca.")
             .id(replace_id)
             .urgency(notify_rust::Urgency::Critical)
+            // Request sound via desktop notification hint
+            .hint(Hint::SuppressSound(false))
+            .hint(Hint::SoundName("dialog-warning".into()))
+            .hint(Hint::Resident(true))
             .show_async()
             .await;
         match res {
