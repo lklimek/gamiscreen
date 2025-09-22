@@ -40,8 +40,8 @@ impl Store {
 
     pub async fn seed_from_config(
         &self,
-        cfg_children: &[crate::shared::Child],
-        cfg_tasks: &[crate::shared::Task],
+        cfg_children: &[gamiscreen_shared::domain::Child],
+        cfg_tasks: &[gamiscreen_shared::domain::Task],
     ) -> Result<(), String> {
         use schema::{children, tasks};
 

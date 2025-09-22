@@ -3,6 +3,7 @@ use reqwest_eventsource::{Event, EventSource};
 use tokio::{sync::broadcast, task::JoinSet};
 
 use crate::AppError;
+use gamiscreen_shared::jwt::JwtClaims;
 
 /// Clone-friendly SSE hub with multi-consumer broadcast of server events.
 #[derive(Clone)]
@@ -13,12 +14,12 @@ pub struct SseHub {
 
 impl SseHub {
     /// Creates a new SSE hub, starts the worker and records its handle in a JoinSet.
-    pub fn new(server_base: &str, token: &str) -> Result<Self, AppError> {
+    pub fn new(server_base: &str, token: &str, claims: &JwtClaims) -> Result<Self, AppError> {
         let base = crate::config::normalize_server_url(server_base);
         if base.is_empty() {
             return Err(AppError::Config("SSE: server_base empty".into()));
         }
-        let url = to_sse_url(&base, token)?;
+        let url = to_sse_url(&base, &claims.tenant_id, token)?;
 
         let (tx, _) = broadcast::channel(64);
         let mut js = JoinSet::new();
@@ -75,12 +76,13 @@ impl SseHub {
     }
 }
 
-fn to_sse_url(http_base: &str, token: &str) -> Result<String, AppError> {
+fn to_sse_url(http_base: &str, tenant_id: &str, token: &str) -> Result<String, AppError> {
     let mut u = url::Url::parse(http_base)
         .map_err(|e| AppError::Config(format!("invalid server_url: {e}")))?;
     // keep http/https
     let mut path = u.path().trim_end_matches('/').to_string();
-    path.push_str("/api/sse");
+    let scope = gamiscreen_shared::api::tenant_scope(tenant_id);
+    path.push_str(&format!("{}/sse", scope));
     u.set_path(&path);
     let mut qp = u.query_pairs_mut();
     qp.clear();

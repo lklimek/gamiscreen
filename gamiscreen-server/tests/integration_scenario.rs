@@ -1,8 +1,12 @@
 use axum::http::StatusCode;
 use gamiscreen_server::{server, storage};
+use gamiscreen_shared::domain::{Child, Task};
 use reqwest::Client;
 use serde_json::{Value, json};
 use std::net::SocketAddr;
+
+const LOGIN_PATH: &str = "/api/v1/auth/login";
+const TENANT_ID: &str = "test-tenant";
 
 const PORT: u16 = 51761;
 async fn start_server(
@@ -14,23 +18,24 @@ async fn start_server(
     let parent_hash = bcrypt::hash(parent_pwd, bcrypt::DEFAULT_COST).unwrap();
     let child_hash = bcrypt::hash(child_pwd, bcrypt::DEFAULT_COST).unwrap();
     let config = server::AppConfig {
+        tenant_id: TENANT_ID.into(),
         children: vec![
-            gamiscreen_server::shared::Child {
+            Child {
                 id: "alice".into(),
                 display_name: "Alice".into(),
             },
-            gamiscreen_server::shared::Child {
+            Child {
                 id: "bob".into(),
                 display_name: "Bob".into(),
             },
         ],
         tasks: vec![
-            gamiscreen_server::shared::Task {
+            Task {
                 id: "homework".into(),
                 name: "Homework".into(),
                 minutes: 2,
             },
-            gamiscreen_server::shared::Task {
+            Task {
                 id: "chores".into(),
                 name: "Chores".into(),
                 minutes: 1,
@@ -74,6 +79,14 @@ async fn start_server(
         axum::serve(listener, app).await.unwrap();
     });
     Ok((addr, handle))
+}
+
+fn tenant_path(suffix: &str) -> String {
+    format!(
+        "{}/{}",
+        gamiscreen_shared::api::tenant_scope(TENANT_ID),
+        suffix.trim_start_matches('/')
+    )
 }
 
 async fn send_json(
@@ -132,7 +145,7 @@ async fn end_to_end_scenario() {
         &client,
         &base,
         "POST",
-        "/api/auth/login",
+        LOGIN_PATH,
         None,
         Some(json!({"username":"parent","password":"secret123"})),
     )
@@ -145,11 +158,12 @@ async fn end_to_end_scenario() {
         .to_string();
 
     // list children
+    let children_path = tenant_path("children");
     let (st, body) = send_json(
         &client,
         &base,
         "GET",
-        "/api/children",
+        &children_path,
         Some(&parent_token),
         None,
     )
@@ -163,11 +177,12 @@ async fn end_to_end_scenario() {
     );
 
     // list tasks
+    let tasks_path = tenant_path("tasks");
     let (st, body) = send_json(
         &client,
         &base,
         "GET",
-        "/api/tasks",
+        &tasks_path,
         Some(&parent_token),
         None,
     )
@@ -181,11 +196,12 @@ async fn end_to_end_scenario() {
     );
 
     // reward alice with homework (2 minutes)
+    let child_reward_path = tenant_path("children/alice/reward");
     let (st, body) = send_json(
         &client,
         &base,
         "POST",
-        "/api/children/alice/reward",
+        &child_reward_path,
         Some(&parent_token),
         Some(json!({"child_id":"alice","task_id":"homework"})),
     )
@@ -199,7 +215,7 @@ async fn end_to_end_scenario() {
         &client,
         &base,
         "POST",
-        "/api/auth/login",
+        LOGIN_PATH,
         None,
         Some(json!({"username":"alice","password":"kidpass"})),
     )
@@ -212,11 +228,12 @@ async fn end_to_end_scenario() {
         .to_string();
 
     // heartbeat should decrement to 1
+    let heartbeat_path = tenant_path("children/alice/device/dev1/heartbeat");
     let (st, body) = send_json(
         &client,
         &base,
         "POST",
-        "/api/children/alice/device/dev1/heartbeat",
+        &heartbeat_path,
         Some(&child_token),
         None,
     )
@@ -225,11 +242,12 @@ async fn end_to_end_scenario() {
     assert_eq!(body.get("remaining_minutes").unwrap().as_i64().unwrap(), 1);
 
     // remaining via child
+    let remaining_path = tenant_path("children/alice/remaining");
     let (st, body) = send_json(
         &client,
         &base,
         "GET",
-        "/api/children/alice/remaining",
+        &remaining_path,
         Some(&child_token),
         None,
     )

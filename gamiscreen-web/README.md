@@ -32,14 +32,14 @@ npm run build
 Output goes to `dist/`. The Rust server serves files from `gamiscreen-web/dist`.
 
 Pages / Flow
-- Login: obtains JWT via `/api/auth/login` and stores it in `localStorage`.
+- Login: obtains JWT via `/api/v1/auth/login` and stores it in `localStorage`.
   - Navigating to `#login` logs out (token cleared).
 - Status (parent): lists children and shows remaining minutes; links to child details.
   - Auto-refresh every 60s.
 - Child Details (parent or child): shows remaining, tasks, and optional custom minutes.
-  - Tasks come from `/api/children/{id}/tasks` and include `last_done` for the child.
+  - Tasks come from `/api/v1/family/{tenant}/children/{id}/tasks` (tenant ID comes from the JWT claims) and include `last_done` for the child.
   - If a task was completed today, a small “Done” badge appears next to its name; hover shows the last done time.
-  - Clicking a task (parent only) opens a confirmation dialog and then calls `/api/children/{id}/reward`.
+  - Clicking a task (parent only) opens a confirmation dialog and then calls `/api/v1/family/{tenant}/children/{id}/reward`.
   - After a reward, remaining updates immediately, the task is marked done for today, and reward history refreshes (page 1).
   - Reward History: collapsible section with a refresh button and pagination.
   - Auto-refresh every 60s for remaining/tasks.

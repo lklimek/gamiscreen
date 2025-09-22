@@ -26,7 +26,6 @@ time = { version = "0.3", features = ["macros", "serde"] }
 diesel = { version = "2.1.6", features = ["sqlite", "chrono", "r2d2"] }
 diesel_migrations = "2.1.0"
 chrono = { version = "0.4.42", features = ["serde"] }
-jsonwebtoken = { version = "9" }
 bcrypt = "0.17"
 uuid = { version = "1", features = ["v4", "serde"] }
 rust-embed = "8"

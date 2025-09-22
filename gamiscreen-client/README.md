@@ -35,15 +35,15 @@ Notes
 - The client always locks via DBus using `org.freedesktop.login1` Manager (`LockSessions`). Ensure the bundled polkit rule is installed.
 - Auto-update: on startup, the client queries the server's public update manifest (`/api/update/manifest`). If a newer version is available for the current platform and the SHA‑256 matches after download, it atomically replaces its own binary and restarts.
 - Token handling: Use `gamiscreen-client login` to authenticate; the token is stored in your system keyring keyed by the server URL. The agent reads the token from the keyring automatically.
-- Heartbeats: every `interval_secs` the client posts `/api/children/{child_id}/device/{device_id}/heartbeat` with a list of UTC minute timestamps covering all minutes since the last successful heartbeat. The server deduplicates across devices, so simultaneous usage is counted once.
+- Heartbeats: every `interval_secs` the client posts `/api/v1/family/{tenant}/children/{child_id}/device/{device_id}/heartbeat` with a list of UTC minute timestamps covering all minutes since the last successful heartbeat. The server deduplicates across devices, so simultaneous usage is counted once. The tenant identifier is derived from the stored JWT.
 
 Login helper
 
 - `gamiscreen-client login [--server <URL>] [--username <USER>]`
-  - Prompts for password, calls `/api/auth/login`.
+  - Prompts for password, calls `/api/v1/auth/login`.
   - If logged in as Parent, prompts for `child_id` to provision.
-  - Generates a `device_id`, calls `/api/children/{child_id}/register` to obtain a device‑bound child token, stores it in keyring.
+  - Generates a `device_id`, calls `/api/v1/family/{tenant}/children/{child_id}/register` to obtain a device‑bound child token, stores it in keyring (tenant ID is taken from the login JWT).
   - Writes the config file.
 - You can force a custom command via `lock_cmd` when DBus isn’t available.
 - Backoff/failsafe: locks the screen after ~5 minutes of continuous failures.
-- Agent reads the device token from the keyring (keyed by server URL). Heartbeats use `POST /api/children/{child_id}/device/{device_id}/heartbeat`.
+- Agent reads the device token from the keyring (keyed by server URL). Heartbeats use `POST /api/v1/family/{tenant}/children/{child_id}/device/{device_id}/heartbeat`.

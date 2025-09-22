@@ -8,6 +8,7 @@ export interface NotificationItemDto { id: number; kind: string; child_id: strin
 
 const TOKEN_KEY = 'gamiscreen.token'
 const SERVER_BASE_KEY = 'gamiscreen.server_base'
+const API_V1_PREFIX = '/api/v1'
 
 export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY)
@@ -43,6 +44,7 @@ export interface JwtClaims {
   role: Role
   child_id?: string
   device_id?: string
+  tenant_id?: string
 }
 
 export function getAuthClaims(): JwtClaims | null {
@@ -91,9 +93,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return await resp.json() as T
 }
 
+function resolveTenantId(): string {
+  const claims = getAuthClaims()
+  if (!claims?.tenant_id) {
+    throw new Error('Tenant ID unavailable; please log in again')
+  }
+  return claims.tenant_id
+}
+
+function tenantPath(path: string): string {
+  const tenantId = resolveTenantId()
+  const scope = `${API_V1_PREFIX}/family/${encodeURIComponent(tenantId)}`
+  return `${scope}/${path.replace(/^\/+/, '')}`
+}
+
 export async function login(username: string, password: string) {
   const body = { username, password }
-  const data = await request<AuthResp>('/api/auth/login', {
+  const data = await request<AuthResp>(`${API_V1_PREFIX}/auth/login`, {
     method: 'POST',
     body: JSON.stringify(body),
   })
@@ -102,29 +118,29 @@ export async function login(username: string, password: string) {
 }
 
 export async function listChildren() {
-  return request<ChildDto[]>('/api/children')
+  return request<ChildDto[]>(tenantPath('children'))
 }
 
 export async function listTasks() {
-  return request<TaskDto[]>('/api/tasks')
+  return request<TaskDto[]>(tenantPath('tasks'))
 }
 
 export async function getRemaining(childId: string) {
-  return request<RemainingDto>(`/api/children/${encodeURIComponent(childId)}/remaining`)
+  return request<RemainingDto>(tenantPath(`children/${encodeURIComponent(childId)}/remaining`))
 }
 
 export async function listChildTasks(childId: string) {
-  return request<TaskWithStatusDto[]>(`/api/children/${encodeURIComponent(childId)}/tasks`)
+  return request<TaskWithStatusDto[]>(tenantPath(`children/${encodeURIComponent(childId)}/tasks`))
 }
 
 export interface RewardHistoryItemDto { time: string; description?: string | null; minutes: number }
 export async function listChildRewards(childId: string, page = 1, per_page = 10) {
   const p = new URLSearchParams({ page: String(page), per_page: String(per_page) })
-  return request<RewardHistoryItemDto[]>(`/api/children/${encodeURIComponent(childId)}/reward?${p.toString()}`)
+  return request<RewardHistoryItemDto[]>(`${tenantPath(`children/${encodeURIComponent(childId)}/reward`)}?${p.toString()}`)
 }
 
 export async function rewardMinutes(opts: { child_id: string; task_id?: string; minutes?: number; description?: string | null }) {
-  const path = `/api/children/${encodeURIComponent(opts.child_id)}/reward`
+  const path = tenantPath(`children/${encodeURIComponent(opts.child_id)}/reward`)
   return request<{ remaining_minutes: number }>(path, {
     method: 'POST',
     body: JSON.stringify(opts)
@@ -133,23 +149,28 @@ export async function rewardMinutes(opts: { child_id: string; task_id?: string; 
 
 // Child task submission
 export async function submitTask(childId: string, taskId: string) {
-  const path = `/api/children/${encodeURIComponent(childId)}/tasks/${encodeURIComponent(taskId)}/submit`
+  const path = tenantPath(`children/${encodeURIComponent(childId)}/tasks/${encodeURIComponent(taskId)}/submit`)
   return request<void>(path, { method: 'POST' })
 }
 
 // Notifications
 export async function notificationsCount() {
-  return request<NotificationsCountDto>('/api/notifications/count')
+  return request<NotificationsCountDto>(tenantPath('notifications/count'))
 }
 
 export async function listNotifications() {
-  return request<NotificationItemDto[]>('/api/notifications')
+  return request<NotificationItemDto[]>(tenantPath('notifications'))
 }
 
 export async function approveSubmission(id: number) {
-  return request<void>(`/api/notifications/task-submissions/${id}/approve`, { method: 'POST' })
+  return request<void>(tenantPath(`notifications/task-submissions/${id}/approve`), { method: 'POST' })
 }
 
 export async function discardSubmission(id: number) {
-  return request<void>(`/api/notifications/task-submissions/${id}/discard`, { method: 'POST' })
+  return request<void>(tenantPath(`notifications/task-submissions/${id}/discard`), { method: 'POST' })
+}
+
+export async function getServerVersion(): Promise<string> {
+  const { version } = await request<{ version: string }>(`${API_V1_PREFIX}/version`)
+  return version
 }

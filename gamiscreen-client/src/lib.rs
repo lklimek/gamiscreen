@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use gamiscreen_shared::api::{self};
+use gamiscreen_shared::jwt::{self, JwtClaims};
 use tokio::time::{Instant, sleep};
 use tracing::{debug, error, info, warn};
 
@@ -16,7 +17,7 @@ pub use cli::{Cli, Command};
 pub use config::{ClientConfig, load_config, resolve_config_path};
 use std::sync::Arc;
 
-const RELOCK_INTERVAL: Duration = Duration::from_secs(1);
+const RELOCK_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -94,9 +95,11 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
     // Load token from keyring using normalized server_url as the account key
     let key = crate::config::normalize_server_url(&cfg.server_url);
     let token = read_token_from_keyring(&key)?;
+    let claims = jwt::decode_unverified(&token)
+        .map_err(|e| AppError::Http(format!("invalid token: {e}")))?;
 
     // SSE hub: subscribe re-locker to server events
-    let hub = match sse::SseHub::new(&cfg.server_url, &token) {
+    let hub = match sse::SseHub::new(&cfg.server_url, &token, &claims) {
         Ok(h) => Some(h),
         Err(e) => {
             warn!(error=%e, "SSE hub init failed; continuing without SSE");
@@ -118,11 +121,13 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
     let relocker_cloned = relocker.clone();
     let plat_cloned = plat.clone();
     let cancel_child = cancel.child_token();
+    let claims_cloned = claims.clone();
     let mut handle = tokio::spawn(async move {
         let _ = main_loop(
             cancel_child,
             cfg_cloned,
             token_cloned,
+            claims_cloned,
             relocker_cloned,
             plat_cloned,
             countdown_task,
@@ -153,6 +158,7 @@ async fn main_loop(
     cancel: tokio_util::sync::CancellationToken,
     cfg: ClientConfig,
     token: String,
+    claims: JwtClaims,
     relocker: ReLocker,
     platform: Arc<dyn platform::Platform>,
     countdown_task: CountdownTask,
@@ -188,7 +194,7 @@ async fn main_loop(
         let now_min: i64 = chrono::Utc::now().timestamp() / 60;
         unsent_minutes.insert(now_min);
 
-        match send_pending(&cfg, &token, &mut unsent_minutes).await {
+        match send_pending(&cfg, &claims.tenant_id, &token, &mut unsent_minutes).await {
             Ok(Some(rem)) => {
                 info!(remaining = rem, "heartbeat ok");
                 failures = 0;
@@ -240,6 +246,7 @@ async fn main_loop(
 
 async fn send_pending(
     cfg: &ClientConfig,
+    tenant_id: &str,
     token: &str,
     unsent_minutes: &mut BTreeSet<i64>,
 ) -> Result<Option<i32>, AppError> {
@@ -250,6 +257,7 @@ async fn send_pending(
     let minutes: Vec<i64> = unsent_minutes.iter().copied().collect();
     let resp = api::rest::child_device_heartbeat_with_minutes(
         &base,
+        tenant_id,
         &cfg.child_id,
         &cfg.device_id,
         token,

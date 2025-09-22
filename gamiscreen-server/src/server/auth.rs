@@ -1,29 +1,16 @@
 use axum::{http::Request, response::Response};
 use axum::{http::header, middleware::Next};
 use chrono::{Duration, Utc};
-use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
-use serde::{Deserialize, Serialize};
 use tracing::error;
 
-use super::{AppError, AppState, Role};
+use gamiscreen_shared::auth::Role;
+use gamiscreen_shared::jwt::{self, JwtClaims};
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct JwtClaims {
-    pub sub: String,
-    pub jti: String,
-    pub exp: i64,
-    pub role: Role,
-    pub child_id: Option<String>,
-    pub device_id: Option<String>,
-}
+use super::{AppError, AppState};
 
 #[derive(Clone, Debug)]
 pub struct AuthCtx {
-    pub username: String,
-    pub role: Role,
-    pub child_id: Option<String>,
-    pub device_id: Option<String>,
-    pub jti: String,
+    pub claims: JwtClaims,
 }
 
 pub async fn require_bearer(
@@ -43,16 +30,22 @@ pub async fn require_bearer(
     }
     let token = &header_str[prefix.len()..];
 
-    let decoding = DecodingKey::from_secret(state.config.jwt_secret.as_bytes());
-    let validation = Validation::new(Algorithm::HS256);
-    let data = match decode::<JwtClaims>(token, &decoding, &validation) {
-        Ok(d) => d,
+    let claims = match jwt::decode_and_verify(token, state.config.jwt_secret.as_bytes()) {
+        Ok(c) => c,
         Err(e) => {
             tracing::warn!(error=%e, "auth: jwt decode failed");
             return unauthorized();
         }
     };
-    let jti = data.claims.jti.clone();
+    if claims.tenant_id != state.config.tenant_id {
+        tracing::warn!(
+            token_tenant=%claims.tenant_id,
+            config_tenant=%state.config.tenant_id,
+            "auth: tenant mismatch"
+        );
+        return unauthorized();
+    }
+    let jti = claims.jti.clone();
     let session = state.store.get_session(&jti).await.map_err(|e| {
         tracing::error!(error=%e, jti=%jti, "auth: get_session failed");
         AppError::internal(e)
@@ -71,13 +64,7 @@ pub async fn require_bearer(
         .await
         .map_err(AppError::internal)?;
 
-    let auth = AuthCtx {
-        username: data.claims.sub,
-        role: data.claims.role,
-        child_id: data.claims.child_id,
-        device_id: data.claims.device_id,
-        jti,
-    };
+    let auth = AuthCtx { claims };
     req.extensions_mut().insert(auth);
     Ok(next.run(req).await)
 }
@@ -106,13 +93,9 @@ pub async fn issue_jwt_for_user(
         role,
         child_id,
         device_id,
+        tenant_id: state.config.tenant_id.clone(),
     };
-    let token = encode(
-        &Header::new(Algorithm::HS256),
-        &claims,
-        &EncodingKey::from_secret(state.config.jwt_secret.as_bytes()),
-    )
-    .map_err(|e| {
+    let token = jwt::encode(&claims, state.config.jwt_secret.as_bytes()).map_err(|e| {
         error!(username, error=%e, "login/register: jwt encode failed");
         AppError::internal(e)
     })?;

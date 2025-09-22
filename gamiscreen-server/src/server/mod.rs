@@ -17,6 +17,7 @@ use bcrypt::verify;
 pub use config::{AppConfig, Role, UserConfig};
 use gamiscreen_shared::api;
 use gamiscreen_shared::api::ChildDto;
+use gamiscreen_shared::jwt;
 use mime_guess::from_path;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
@@ -113,30 +114,36 @@ use gamiscreen_shared::api::ServerEvent;
 struct ReqId(pub String);
 
 pub fn router(state: AppState) -> Router {
-    let private = Router::new()
-        .route("/api/children", get(api_list_children))
-        .route("/api/tasks", get(api_list_tasks))
-        .route("/api/notifications", get(api_list_notifications))
-        .route("/api/notifications/count", get(api_notifications_count))
+    let tenant_scope = gamiscreen_shared::api::tenant_scope(&state.config.tenant_id);
+    let api_v1_prefix = gamiscreen_shared::api::API_V1_PREFIX;
+    let sse_path = format!("{}/sse", tenant_scope);
+    let version_path = format!("{}/version", api_v1_prefix);
+    let auth_login_path = format!("{}/auth/login", api_v1_prefix);
+
+    let tenant_private = Router::new()
+        .route("/children", get(api_list_children))
+        .route("/tasks", get(api_list_tasks))
+        .route("/notifications", get(api_list_notifications))
+        .route("/notifications/count", get(api_notifications_count))
         .route(
-            "/api/notifications/task-submissions/{id}/approve",
+            "/notifications/task-submissions/{id}/approve",
             post(api_approve_submission),
         )
         .route(
-            "/api/notifications/task-submissions/{id}/discard",
+            "/notifications/task-submissions/{id}/discard",
             post(api_discard_submission),
         )
-        .route("/api/children/{id}/remaining", get(api_remaining))
-        .route("/api/children/{id}/reward", post(api_child_reward))
-        .route("/api/children/{id}/reward", get(api_list_child_rewards))
+        .route("/children/{id}/remaining", get(api_remaining))
+        .route("/children/{id}/reward", post(api_child_reward))
+        .route("/children/{id}/reward", get(api_list_child_rewards))
         .route(
-            "/api/children/{id}/device/{device_id}/heartbeat",
+            "/children/{id}/device/{device_id}/heartbeat",
             post(api_device_heartbeat),
         )
-        .route("/api/children/{id}/register", post(api_child_register))
-        .route("/api/children/{id}/tasks", get(api_list_child_tasks))
+        .route("/children/{id}/register", post(api_child_register))
+        .route("/children/{id}/tasks", get(api_list_child_tasks))
         .route(
-            "/api/children/{id}/tasks/{task_id}/submit",
+            "/children/{id}/tasks/{task_id}/submit",
             post(api_submit_task),
         )
         .with_state(state.clone())
@@ -152,6 +159,8 @@ pub fn router(state: AppState) -> Router {
         ))
         .layer(middleware::from_fn(set_auth_span_fields));
 
+    let private = Router::new().nest(tenant_scope.as_str(), tenant_private);
+
     // Trace with request context (method, path, request_id)
     let trace = TraceLayer::new_for_http().make_span_with(|req: &axum::http::Request<_>| {
         let request_id = req
@@ -166,6 +175,7 @@ pub fn router(state: AppState) -> Router {
             request_id = %request_id,
             username = tracing::field::Empty,
             role = tracing::field::Empty,
+            tenant_id = tracing::field::Empty,
             child_id = tracing::field::Empty,
             device_id = tracing::field::Empty
         )
@@ -173,13 +183,14 @@ pub fn router(state: AppState) -> Router {
 
     // Public SSE route for push notifications (token passed via query)
     let sse = Router::new()
-        .route("/api/sse", get(sse_notifications))
+        .route(&sse_path, get(sse_notifications))
         .with_state(state.clone());
 
     let app = Router::new()
         .route("/healthz", get(health))
         .route("/api/version", get(api_version))
-        .route("/api/auth/login", post(api_auth_login))
+        .route(&version_path, get(api_version))
+        .route(&auth_login_path, post(api_auth_login))
         .merge(sse)
         .merge(private)
         .fallback(get(serve_embedded))
@@ -298,13 +309,15 @@ async fn set_auth_span_fields(
     next: axum::middleware::Next,
 ) -> Result<AxumResponse, AppError> {
     if let Some(auth) = req.extensions().get::<AuthCtx>() {
+        let claims = &auth.claims;
         let span = Span::current();
-        span.record("username", tracing::field::display(&auth.username));
-        span.record("role", tracing::field::debug(&auth.role));
-        if let Some(cid) = &auth.child_id {
+        span.record("username", tracing::field::display(&claims.sub));
+        span.record("role", tracing::field::debug(&claims.role));
+        span.record("tenant_id", tracing::field::display(&claims.tenant_id));
+        if let Some(cid) = &claims.child_id {
             span.record("child_id", tracing::field::display(cid));
         }
-        if let Some(did) = &auth.device_id {
+        if let Some(did) = &claims.device_id {
             span.record("device_id", tracing::field::display(did));
         }
     }
@@ -473,7 +486,7 @@ async fn api_child_reward(
     if let Some(tid) = body.task_id.as_deref() {
         state
             .store
-            .record_task_done(&p.id, tid, &auth.username)
+            .record_task_done(&p.id, tid, &auth.claims.sub)
             .await
             .map_err(AppError::internal)?;
     }
@@ -527,7 +540,7 @@ async fn api_notifications_count(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthCtx>,
 ) -> Result<Json<NotificationsCountDto>, AppError> {
-    if auth.role != Role::Parent {
+    if auth.claims.role != Role::Parent {
         return Err(AppError::forbidden());
     }
     let c = state
@@ -548,11 +561,8 @@ async fn sse_notifications(
     Query(q): Query<SseQuery>,
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, std::convert::Infallible>>>, AppError> {
     // Validate token from query
-    let decoding = jsonwebtoken::DecodingKey::from_secret(state.config.jwt_secret.as_bytes());
-    let validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
-    let data = jsonwebtoken::decode::<auth::JwtClaims>(&q.token, &decoding, &validation)
+    let claims = jwt::decode_and_verify(&q.token, state.config.jwt_secret.as_bytes())
         .map_err(|_| AppError::unauthorized())?;
-    let claims = data.claims;
     // Access control
     crate::server::acl::validate_ws_access_from_claims(&claims)?;
 
@@ -615,7 +625,7 @@ async fn api_list_notifications(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthCtx>,
 ) -> Result<Json<Vec<NotificationItemDto>>, AppError> {
-    if auth.role != Role::Parent {
+    if auth.claims.role != Role::Parent {
         return Err(AppError::forbidden());
     }
     let rows = state
@@ -647,12 +657,12 @@ async fn api_approve_submission(
     Extension(auth): Extension<AuthCtx>,
     Path(id): Path<i32>,
 ) -> Result<StatusCode, AppError> {
-    if auth.role != Role::Parent {
+    if auth.claims.role != Role::Parent {
         return Err(AppError::forbidden());
     }
     let child_opt = state
         .store
-        .approve_submission(id, &auth.username)
+        .approve_submission(id, &auth.claims.sub)
         .await
         .map_err(AppError::internal)?;
     // Invalidate remaining cache for that child so subsequent reads reflect new reward
@@ -696,10 +706,10 @@ async fn api_submit_task(
     Path(p): Path<ChildTaskPath>,
 ) -> Result<StatusCode, AppError> {
     // child can submit only for own id
-    if auth.role != Role::Child {
+    if auth.claims.role != Role::Child {
         return Err(AppError::forbidden());
     }
-    match &auth.child_id {
+    match &auth.claims.child_id {
         Some(cid) if cid == &p.id => {}
         _ => return Err(AppError::forbidden()),
     }
@@ -771,7 +781,7 @@ async fn api_child_register(
     let device_id = body.device_id.clone();
     let token = auth::issue_jwt_for_user(
         &state,
-        &auth.username,
+        &auth.claims.sub,
         Role::Child,
         Some(p.id.clone()),
         Some(device_id.clone()),

@@ -990,7 +990,6 @@ name = "gamiscreen-client"
 version = "0.6.0"
 dependencies = [
  "async-trait",
- "base64",
  "chrono",
  "clap",
  "directories",
@@ -1036,7 +1035,6 @@ dependencies = [
  "futures",
  "gamiscreen-shared",
  "http-body-util",
- "jsonwebtoken",
  "mime_guess",
  "percent-encoding",
  "reqwest",
@@ -1061,12 +1059,15 @@ dependencies = [
 name = "gamiscreen-shared"
 version = "0.6.0"
 dependencies = [
+ "base64",
+ "jsonwebtoken",
  "once_cell",
  "percent-encoding",
  "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.16",
+ "time",
 ]
 
 [[package]]

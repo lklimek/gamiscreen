@@ -64,12 +64,13 @@ pub async fn login(base: &str, req: &AuthReq) -> Result<AuthResp, RestError> {
 
 pub async fn child_register(
     base: &str,
+    tenant_id: &str,
     child_id: &str,
     device_id: &str,
     bearer: &str,
 ) -> Result<ClientRegisterResp, RestError> {
     let client = mk_client()?;
-    let url = ep::child_register(base, child_id);
+    let url = ep::child_register(base, tenant_id, child_id);
     let body = ClientRegisterReq {
         child_id: None,
         device_id: device_id.to_string(),
@@ -86,13 +87,14 @@ pub async fn child_register(
 
 pub async fn child_device_heartbeat_with_minutes(
     base: &str,
+    tenant_id: &str,
     child_id: &str,
     device_id: &str,
     bearer: &str,
     minutes: &[i64],
 ) -> Result<HeartbeatResp, RestError> {
     let client = mk_client()?;
-    let url = ep::child_device_heartbeat(base, child_id, device_id);
+    let url = ep::child_device_heartbeat(base, tenant_id, child_id, device_id);
     let body = HeartbeatReq {
         minutes: minutes.to_vec(),
     };
@@ -108,12 +110,13 @@ pub async fn child_device_heartbeat_with_minutes(
 
 pub async fn child_reward(
     base: &str,
+    tenant_id: &str,
     child_id: &str,
     bearer: &str,
     body: &RewardReq,
 ) -> Result<RewardResp, RestError> {
     let client = mk_client()?;
-    let url = ep::child_reward(base, child_id);
+    let url = ep::child_reward(base, tenant_id, child_id);
     let res = client
         .post(url)
         .bearer_auth(bearer)
@@ -124,9 +127,13 @@ pub async fn child_reward(
     handle_json(res).await
 }
 
-pub async fn list_children(base: &str, bearer: &str) -> Result<Vec<ChildDto>, RestError> {
+pub async fn list_children(
+    base: &str,
+    tenant_id: &str,
+    bearer: &str,
+) -> Result<Vec<ChildDto>, RestError> {
     let client = mk_client()?;
-    let url = ep::children(base);
+    let url = ep::children(base, tenant_id);
     let res = client
         .get(url)
         .bearer_auth(bearer)
@@ -136,9 +143,13 @@ pub async fn list_children(base: &str, bearer: &str) -> Result<Vec<ChildDto>, Re
     handle_json(res).await
 }
 
-pub async fn list_tasks(base: &str, bearer: &str) -> Result<Vec<TaskDto>, RestError> {
+pub async fn list_tasks(
+    base: &str,
+    tenant_id: &str,
+    bearer: &str,
+) -> Result<Vec<TaskDto>, RestError> {
     let client = mk_client()?;
-    let url = ep::tasks(base);
+    let url = ep::tasks(base, tenant_id);
     let res = client
         .get(url)
         .bearer_auth(bearer)
@@ -150,11 +161,12 @@ pub async fn list_tasks(base: &str, bearer: &str) -> Result<Vec<TaskDto>, RestEr
 
 pub async fn child_remaining(
     base: &str,
+    tenant_id: &str,
     child_id: &str,
     bearer: &str,
 ) -> Result<RemainingDto, RestError> {
     let client = mk_client()?;
-    let url = ep::child_remaining(base, child_id);
+    let url = ep::child_remaining(base, tenant_id, child_id);
     let res = client
         .get(url)
         .bearer_auth(bearer)
@@ -166,11 +178,12 @@ pub async fn child_remaining(
 
 pub async fn child_tasks(
     base: &str,
+    tenant_id: &str,
     child_id: &str,
     bearer: &str,
 ) -> Result<Vec<TaskWithStatusDto>, RestError> {
     let client = mk_client()?;
-    let url = ep::child_tasks(base, child_id);
+    let url = ep::child_tasks(base, tenant_id, child_id);
     let res = client
         .get(url)
         .bearer_auth(bearer)

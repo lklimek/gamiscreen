@@ -1,6 +1,3 @@
-//! Shared types for the server (server-only). API DTOs moved to gamiscreen-shared.
-pub mod path;
-
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
@@ -57,13 +54,13 @@ impl Minutes {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Child {
-    pub id: String, // keeps config simple; upgrade to ChildId in APIs
+    pub id: String,
     pub display_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
-    pub id: String, // keeps config simple; upgrade to TaskId in APIs
+    pub id: String,
     pub name: String,
     pub minutes: i32,
 }
@@ -84,6 +81,5 @@ pub struct UsageTick {
 }
 
 pub fn now_utc() -> OffsetDateTime {
-    // Monotonic, timezone-agnostic server time
     OffsetDateTime::now_utc().to_offset(UtcOffset::UTC)
 }

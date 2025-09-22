@@ -14,9 +14,9 @@ Session policy
 
 ## Device Registration
 
-- `POST /api/client/register` issues a child token bound to `{ child_id, device_id }`.
+- `POST /api/v1/family/{tenant}/children/{child_id}/register` issues a child token bound to `{ child_id, device_id }`. The tenant identifier comes from the server configuration and is embedded in issued JWTs.
 - Parents can register on behalf of a child by passing `child_id`; children can self‑register without it.
 
 ## Heartbeat Enforcement
 
-- `POST /api/heartbeat` requires a child token; the body `{ child_id, device_id }` must match the token claims.
+- `POST /api/v1/family/{tenant}/children/{child_id}/device/{device_id}/heartbeat` requires a child token; the body `{ child_id, device_id }` must match the token claims (tenant from the token must match the configured tenant).

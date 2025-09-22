@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use crate::AppError;
 use crate::config::{load_config, resolve_config_path};
-use base64::Engine;
 use gamiscreen_shared::api::{self};
+use gamiscreen_shared::{auth::Role, jwt};
 
 pub async fn login(
     server_arg: Option<String>,
@@ -49,13 +49,15 @@ pub async fn login(
     };
 
     // Inspect token to determine role/child_id. If parent, prompt for child_id to register.
-    let claims = decode_claims(&body.token)?;
-    let target_child_id = match claims.role_str.as_deref() {
-        Some(s) if s.eq_ignore_ascii_case("child") => claims
+    let jwt_claims = jwt::decode_unverified(&body.token)
+        .map_err(|e| AppError::Http(format!("invalid token: {e}")))?;
+    let tenant_id = jwt_claims.tenant_id.clone();
+    let target_child_id = match jwt_claims.role {
+        Role::Child => jwt_claims
             .child_id
+            .clone()
             .ok_or_else(|| AppError::Http("child token missing child_id".into()))?,
-        Some(s) if s.eq_ignore_ascii_case("parent") => prompt("Child ID to register: ")?,
-        _ => return Err(AppError::Http("unsupported role in token".into())),
+        Role::Parent => prompt("Child ID to register: ")?,
     };
 
     // Register client to obtain device-scoped token, then write config
@@ -67,7 +69,14 @@ pub async fn login(
         })?;
         plat.device_id()
     };
-    let reg = register_client(&server_url, &body.token, &target_child_id, &device_id).await?;
+    let reg = register_client(
+        &server_url,
+        &tenant_id,
+        &body.token,
+        &target_child_id,
+        &device_id,
+    )
+    .await?;
     // Save device token in keyring under the server_url only (single-user support)
     let entry = keyring_entry_for_login(&server_url)?;
     entry
@@ -107,11 +116,12 @@ type RegisterResp = api::ClientRegisterResp;
 
 async fn register_client(
     server_url: &str,
+    tenant_id: &str,
     login_token: &str,
     child_id: &str,
     device_id: &str,
 ) -> Result<RegisterResp, AppError> {
-    api::rest::child_register(server_url, child_id, device_id, login_token)
+    api::rest::child_register(server_url, tenant_id, child_id, device_id, login_token)
         .await
         .map_err(|e| AppError::Http(format!("registration failed: {e}")))
 }
@@ -119,40 +129,4 @@ async fn register_client(
 fn keyring_entry_for_login(server_url: &str) -> Result<keyring::Entry, AppError> {
     keyring::Entry::new("gamiscreen-client", server_url)
         .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))
-}
-
-#[derive(serde::Deserialize)]
-struct JwtClaimsCheck {
-    role: serde_json::Value,
-    #[serde(default)]
-    child_id: Option<String>,
-}
-
-struct DecodedClaims {
-    role_str: Option<String>,
-    child_id: Option<String>,
-}
-
-fn decode_claims(token: &str) -> Result<DecodedClaims, AppError> {
-    let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() < 2 {
-        return Err(AppError::Http("invalid JWT format".into()));
-    }
-    let payload_b64 = parts[1];
-    let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .decode(payload_b64)
-        .map_err(|e| AppError::Http(format!("invalid base64 payload: {e}")))
-        .and_then(|bytes| {
-            String::from_utf8(bytes).map_err(|e| AppError::Http(format!("invalid utf8: {e}")))
-        })?;
-    let claims: JwtClaimsCheck =
-        serde_json::from_str(&payload).map_err(|e| AppError::Http(format!("invalid json: {e}")))?;
-    let role_str = match claims.role.clone() {
-        serde_json::Value::String(s) => Some(s),
-        _ => None,
-    };
-    Ok(DecodedClaims {
-        role_str,
-        child_id: claims.child_id,
-    })
 }

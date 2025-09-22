@@ -16,11 +16,11 @@ MVP will be shipped in three parts, in order: Server → Web App → Linux Clien
   - [x] Decrement on heartbeat (one minute per tick)
   - [x] Carry over unused minutes to next day (simple balance model)
 - [x] HTTP API (v1)
-  - [x] `GET /api/children` → list children
-  - [x] `GET /api/tasks` → list tasks
-  - [x] `POST /api/reward { child_id, task_id | minutes }` → add minutes
-  - [x] `POST /api/heartbeat { child_id, device_id }` → decrement balance, returns remaining minutes
-  - [x] `GET /api/children/{id}/remaining` → remaining minutes
+  - [x] `GET /api/v1/family/{tenant}/children` → list children
+  - [x] `GET /api/v1/family/{tenant}/tasks` → list tasks
+  - [x] `POST /api/v1/family/{tenant}/children/{id}/reward { task_id | minutes }` → add minutes
+  - [x] `POST /api/v1/family/{tenant}/children/{id}/device/{device_id}/heartbeat` → decrement balance, returns remaining minutes
+  - [x] `GET /api/v1/family/{tenant}/children/{id}/remaining` → remaining minutes
   
 - [x] Auth (MVP)
   - [x] JWT login endpoint with bcrypt users (config-driven)
@@ -39,11 +39,11 @@ MVP will be shipped in three parts, in order: Server → Web App → Linux Clien
   - [x] Build: `npm run build` → outputs to `web/dist` (served by Rust server)
   - [x] Page: "Login"
   - [x] Page: “Reward Minutes”
-    - [x] Load children and tasks from `/api/children` + `/api/tasks`
+    - [x] Load children and tasks from `/api/v1/family/{tenant}/children` + `/api/v1/family/{tenant}/tasks`
     - [x] UI: select child, select task, or enter custom minutes
-    - [x] Submit to `/api/reward` and show remaining minutes
+    - [x] Submit to `/api/v1/family/{tenant}/children/{id}/reward` and show remaining minutes
   - [x] Page: “Status”
-    - [x] Show per-child remaining minutes (calls `/api/children` and `/api/children/{id}/remaining`)
+    - [x] Show per-child remaining minutes (calls `/api/v1/family/{tenant}/children` and `/api/v1/family/{tenant}/children/{id}/remaining`)
   - [x] API client wrapper
     - [x] Attach bearer token header when present
     - [x] Centralized error handling and JSON parsing
@@ -58,7 +58,7 @@ MVP will be shipped in three parts, in order: Server → Web App → Linux Clien
  - [x] Config: server URL, `child_id`, `device_id`, heartbeat interval (default 60s)
  - [x] Token stored in keyring; auto-read by agent
  - [x] `login` command writes config after server registration
-- [x] Every minute: `POST /api/heartbeat` → get remaining minutes
+- [x] Every minute: `POST /api/v1/family/{tenant}/children/{id}/device/{device_id}/heartbeat` → get remaining minutes
 - [x] Enforcement
   - [x] If remaining <= 0 → trigger screen lock
   - [x] If server unreachable for >5 minutes → trigger screen lock (failsafe)

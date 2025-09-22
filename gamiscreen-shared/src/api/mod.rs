@@ -1,5 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+pub const API_V1_PREFIX: &str = "/api/v1";
+pub const FAMILY_SCOPE_PREFIX: &str = "/api/v1/family";
+
+pub fn tenant_scope(tenant_id: &str) -> String {
+    format!("{}/{}", FAMILY_SCOPE_PREFIX, tenant_id)
+}
+
 pub mod endpoints;
 #[cfg(feature = "rest-client")]
 pub mod rest;

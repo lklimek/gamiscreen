@@ -1,9 +1,11 @@
-use crate::shared::{Child, Task};
-use serde::{Deserialize, Serialize};
+pub use gamiscreen_shared::auth::Role;
+use gamiscreen_shared::domain::{Child, Task};
+use serde::Deserialize;
 use std::{env, fs, path::Path};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppConfig {
+    pub tenant_id: String,
     pub children: Vec<Child>,
     pub tasks: Vec<Task>,
     pub jwt_secret: String,
@@ -18,13 +20,6 @@ pub struct UserConfig {
     pub password_hash: String, // bcrypt hash
     pub role: Role,
     pub child_id: Option<String>, // required when role == child
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum Role {
-    Parent,
-    Child,
 }
 
 #[derive(Debug)]

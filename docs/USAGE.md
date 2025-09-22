@@ -21,8 +21,7 @@ Notes
 
 `gamiscreen-client login`
 - Logs in as Parent or Child.
-- If Parent, prompts for `child_id` to provision; generates a `device_id` and calls `/api/client/register`.
+- If Parent, prompts for `child_id` to provision; generates a `device_id` and calls `/api/v1/family/{tenant}/children/{child_id}/register`. The tenant identifier is read from the login token (which mirrors the server config).
 - Stores a device token in the system keyring and writes `~/.config/gamiscreen/client.yaml` with `server_url`, `child_id`, and `device_id`.
 
 See also: docs/INSTALL.md for full installation and systemd setup.
-

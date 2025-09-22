@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { getAuthClaims, getToken, notificationsCount, setToken } from './api'
+import { getAuthClaims, getServerVersion, getToken, notificationsCount, setToken } from './api'
+
+const API_V1_PREFIX = '/api/v1'
 import { ChildDetailsPage } from './pages/ChildDetailsPage'
 import { LoginPage } from './pages/LoginPage'
 import { NotificationsPage } from './pages/NotificationsPage'
@@ -51,6 +53,7 @@ export function App() {
     const isIOSStandalone = (navigator as any).standalone === true
     return isStandalone || isIOSStandalone
   })
+  const [serverVersion, setServerVersion] = useState<string | null>(null)
 
   const logout = () => {
     setToken(null)
@@ -78,8 +81,9 @@ export function App() {
   }, [token])
   // Server-Sent Events push for notifications and child remaining updates
   useEffect(() => {
-    const cl = getAuthClaims()
+    const tenantId = claims?.tenant_id
     if (!token) return
+    if (!tenantId) return
     const serverBase = (window as any).gamiscreenApiBase || (window.location.origin)
     const base = (() => {
       const ls = localStorage.getItem('gamiscreen.server_base') || ''
@@ -87,15 +91,16 @@ export function App() {
       return serverBase
     })()
     const sseUrl = (() => {
+      const scope = `${API_V1_PREFIX}/family/${encodeURIComponent(tenantId)}`
       try {
         const u = new URL(base)
-        // keep http/https, use /api/sse
-        u.pathname = (u.pathname.replace(/\/+$/, '')) + '/api/sse'
+        // keep http/https, use tenant-scoped SSE
+        u.pathname = (u.pathname.replace(/\/+$/, '')) + `${scope}/sse`
         u.search = '?token=' + encodeURIComponent(token)
         return u.toString()
       } catch {
         const loc = window.location
-        return `${loc.protocol}//${loc.host}/api/sse?token=${encodeURIComponent(token)}`
+        return `${loc.protocol}//${loc.host}${scope}/sse?token=${encodeURIComponent(token)}`
       }
     })()
     let es: EventSource | null = null
@@ -122,7 +127,7 @@ export function App() {
     }
     connect()
     return () => { if (es) { try { es.close() } catch { } } }
-  }, [token])
+  }, [token, claims?.tenant_id])
   // Immediate refresh when notifications change (approve/discard)
   useEffect(() => {
     const refresh = async () => {
@@ -148,6 +153,20 @@ export function App() {
       }
     }
   }, [loggedIn])
+
+  useEffect(() => {
+    let cancelled = false
+    getServerVersion()
+      .then((version) => {
+        if (!cancelled) setServerVersion(version)
+      })
+      .catch(() => {
+        if (!cancelled) setServerVersion(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     const onBip = (e: Event & { preventDefault: () => void; prompt: () => Promise<void> }) => {
@@ -236,6 +255,14 @@ export function App() {
           )}
         </section>
       </article>
+      <footer style={{ textAlign: 'center', marginTop: 12 }}>
+        <p style={{ margin: 0, fontSize: 12 }}>
+          <small>Use responsibly. Reward healthy habits.</small>
+        </p>
+        <p style={{ margin: 0, fontSize: 10, color: 'var(--muted-color, #666)' }}>
+          Server&nbsp;v{serverVersion ?? '…'} · Tenant&nbsp;{claims?.tenant_id ?? '—'}
+        </p>
+      </footer>
       {!installed && installEvt && (
         <footer style={{ textAlign: 'center', fontSize: 12, marginTop: 12 }}>
           <a href="#install" onClick={async (e) => { e.preventDefault(); const ev = installEvt; try { await ev.prompt(); } catch { } }}>Install app</a>

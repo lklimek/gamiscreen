@@ -24,7 +24,7 @@ fn default_interval() -> u64 {
 }
 
 fn default_warn_before_lock_secs() -> u64 {
-    10
+    45
 }
 
 pub fn resolve_config_path(cli_value: Option<PathBuf>) -> Result<PathBuf, AppError> {
