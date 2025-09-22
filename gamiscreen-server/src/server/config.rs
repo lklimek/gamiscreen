@@ -73,7 +73,7 @@ impl AppConfig {
 
 type MigrationFn = fn(&mut Mapping) -> bool;
 
-const MIGRATIONS: &[(&str, MigrationFn, bool)] = &[("0.7.0", migrate_to_0_7_0, true)];
+const MIGRATIONS: &[(&str, MigrationFn)] = &[("0.7.0", migrate_to_0_7_0)];
 
 fn migrate_config(path: &Path) -> Result<(), ConfigError> {
     let text = fs::read_to_string(path)?;
@@ -85,20 +85,24 @@ fn migrate_config(path: &Path) -> Result<(), ConfigError> {
 
     let version_key = Value::String("config_version".to_string());
 
-    let mut required_change = false;
-    let mut optional_change = false;
+    let mut changed = false;
+    let mut major_update = false;
 
     let mut current_version = mapping
         .get(&version_key)
         .and_then(|v| v.as_str())
         .and_then(|s| Version::parse(s).ok())
         .unwrap_or_else(|| Version::new(0, 0, 0));
+    let original_version = current_version.clone();
 
-    for (version_str, migrate, required) in MIGRATIONS {
+    for (version_str, migrate) in MIGRATIONS {
         let target_version = Version::parse(version_str).map_err(|e| {
             ConfigError::Invalid(format!("invalid migration version {}: {}", version_str, e))
         })?;
         if current_version < target_version {
+            if target_version.major > original_version.major {
+                major_update = true;
+            }
             let migration_changed = migrate(mapping);
             let previous =
                 mapping.insert(version_key.clone(), Value::String(version_str.to_string()));
@@ -108,11 +112,7 @@ fn migrate_config(path: &Path) -> Result<(), ConfigError> {
                 .map(|s| s != *version_str)
                 .unwrap_or(true);
             if migration_changed || version_changed {
-                if *required {
-                    required_change = true;
-                } else {
-                    optional_change = true;
-                }
+                changed = true;
             }
             current_version = target_version;
         }
@@ -121,6 +121,9 @@ fn migrate_config(path: &Path) -> Result<(), ConfigError> {
     let pkg_version = Version::parse(env!("CARGO_PKG_VERSION"))
         .map_err(|e| ConfigError::Invalid(format!("invalid package version: {}", e)))?;
     if current_version < pkg_version {
+        if pkg_version.major > original_version.major {
+            major_update = true;
+        }
         let previous = mapping.insert(
             version_key,
             Value::String(env!("CARGO_PKG_VERSION").to_string()),
@@ -132,18 +135,21 @@ fn migrate_config(path: &Path) -> Result<(), ConfigError> {
             .unwrap_or(true);
         if version_changed {
             if pkg_version.major > current_version.major {
-                required_change = true;
-            } else {
-                optional_change = true;
+                major_update = true;
             }
+            changed = true;
         }
     }
 
-    if required_change || optional_change {
+    if changed {
         let updated = serde_yaml::to_string(&doc)?;
         if let Err(e) = fs::write(path, updated) {
-            if required_change {
-                return Err(ConfigError::Io(e));
+            if major_update {
+                warn!(
+                    error = %e,
+                    path = ?path,
+                    "config migration for major update failed; continuing with existing config"
+                );
             } else {
                 warn!(error = %e, path = ?path, "config migration skipped (read-only)");
             }
