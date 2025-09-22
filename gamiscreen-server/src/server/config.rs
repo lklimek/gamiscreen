@@ -4,6 +4,7 @@ use semver::Version;
 use serde::Deserialize;
 use serde_yaml::{Mapping, Value};
 use std::{env, fs, path::Path};
+use tracing::warn;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppConfig {
@@ -72,7 +73,7 @@ impl AppConfig {
 
 type MigrationFn = fn(&mut Mapping) -> bool;
 
-const MIGRATIONS: &[(&str, MigrationFn)] = &[("0.7.0", migrate_to_0_7_0)];
+const MIGRATIONS: &[(&str, MigrationFn, bool)] = &[("0.7.0", migrate_to_0_7_0, true)];
 
 fn migrate_config(path: &Path) -> Result<(), ConfigError> {
     let text = fs::read_to_string(path)?;
@@ -83,7 +84,9 @@ fn migrate_config(path: &Path) -> Result<(), ConfigError> {
     };
 
     let version_key = Value::String("config_version".to_string());
-    let mut changed = false;
+
+    let mut required_change = false;
+    let mut optional_change = false;
 
     let mut current_version = mapping
         .get(&version_key)
@@ -91,7 +94,7 @@ fn migrate_config(path: &Path) -> Result<(), ConfigError> {
         .and_then(|s| Version::parse(s).ok())
         .unwrap_or_else(|| Version::new(0, 0, 0));
 
-    for (version_str, migrate) in MIGRATIONS {
+    for (version_str, migrate, required) in MIGRATIONS {
         let target_version = Version::parse(version_str).map_err(|e| {
             ConfigError::Invalid(format!("invalid migration version {}: {}", version_str, e))
         })?;
@@ -105,7 +108,11 @@ fn migrate_config(path: &Path) -> Result<(), ConfigError> {
                 .map(|s| s != *version_str)
                 .unwrap_or(true);
             if migration_changed || version_changed {
-                changed = true;
+                if *required {
+                    required_change = true;
+                } else {
+                    optional_change = true;
+                }
             }
             current_version = target_version;
         }
@@ -124,13 +131,23 @@ fn migrate_config(path: &Path) -> Result<(), ConfigError> {
             .map(|s| s != env!("CARGO_PKG_VERSION"))
             .unwrap_or(true);
         if version_changed {
-            changed = true;
+            if pkg_version.major > current_version.major {
+                required_change = true;
+            } else {
+                optional_change = true;
+            }
         }
     }
 
-    if changed {
+    if required_change || optional_change {
         let updated = serde_yaml::to_string(&doc)?;
-        fs::write(path, updated)?;
+        if let Err(e) = fs::write(path, updated) {
+            if required_change {
+                return Err(ConfigError::Io(e));
+            } else {
+                warn!(error = %e, path = ?path, "config migration skipped (read-only)");
+            }
+        }
     }
 
     Ok(())
