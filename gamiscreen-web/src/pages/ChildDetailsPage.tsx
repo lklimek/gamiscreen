@@ -156,15 +156,15 @@ export function ChildDetailsPage(props: { childId: string }) {
             const canClick = isParent || (isChild && !wasSubmitted && !isDoneToday)
             const isNegative = t.minutes < 0
             return (
-              <div className="row" key={t.id} style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
-                  {t.name}
+              <div className={`row taskRow${isNegative ? ' taskRowNegative' : ''}`} key={t.id}>
+                <div className="row taskRowHeader">
+                  <span>{t.name}</span>
                   {isDoneToday && (
-                    <mark title={last?.toLocaleString() || ''} style={{ marginLeft: 8 }}>Done</mark>
+                    <mark title={last?.toLocaleString() || ''}>Done</mark>
                   )}
                 </div>
-                <div className="row" style={{ gap: 8, alignItems: 'center' }}>
-                  <span className="subtitle" style={{ color: isNegative ? '#d00' : undefined }}>{t.minutes > 0 ? '+' : ''}{t.minutes} min</span>
+                <div className="row taskRowActions">
+                  <span className={`subtitle${isNegative ? ' negativeMinutes' : ''}`}>{t.minutes > 0 ? '+' : ''}{t.minutes} min</span>
                   {isParent && (
                     <button
                       className={isDoneToday ? 'contrast' : undefined}

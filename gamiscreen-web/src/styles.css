@@ -92,6 +92,33 @@ textarea::placeholder {
   color: #065f46;
 }
 
+.taskRow {
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.taskRowHeader {
+  align-items: center;
+  gap: 8px;
+}
+
+.taskRowActions {
+  gap: 8px;
+  align-items: center;
+}
+
+.taskRowNegative {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.negativeMinutes {
+  color: #b91c1c;
+}
+
 /* Icon-only buttons: consistent square size and centering */
 .iconButton {
   width: 40px;
