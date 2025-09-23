@@ -30,13 +30,19 @@ pub async fn require_bearer(
     }
     let token = &header_str[prefix.len()..];
 
-    let claims = match jwt::decode_and_verify(token, state.config.jwt_secret.as_bytes()) {
+    let mut claims = match jwt::decode_and_verify(token, state.config.jwt_secret.as_bytes()) {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!(error=%e, "auth: jwt decode failed");
             return unauthorized();
         }
     };
+    // TODO: enforce tenant_id presence in tokens in v0.8+
+    if claims.tenant_id.is_empty() {
+        tracing::debug!("auth: token missing tenant_id; defaulting to configured tenant");
+        claims.tenant_id = state.config.tenant_id.clone();
+    }
+
     if claims.tenant_id != state.config.tenant_id {
         tracing::warn!(
             token_tenant=%claims.tenant_id,

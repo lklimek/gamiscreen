@@ -16,6 +16,7 @@ pub struct JwtClaims {
     pub role: Role,
     pub child_id: Option<String>,
     pub device_id: Option<String>,
+    #[serde(default)]
     pub tenant_id: String,
 }
 
@@ -62,4 +63,24 @@ pub fn encode(token: &JwtClaims, secret: &[u8]) -> Result<String, JwtError> {
 pub fn tenant_id_from_token(token: &str) -> Result<String, JwtError> {
     let claims = decode_unverified(token)?;
     Ok(claims.tenant_id.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_tenant_defaults_to_empty_string() {
+        let json = r#"{
+            "sub": "user",
+            "jti": "123",
+            "exp": 0,
+            "role": "parent",
+            "child_id": null,
+            "device_id": null
+        }"#;
+
+        let claims: JwtClaims = serde_json::from_str(json).expect("claims deserialize");
+        assert!(claims.tenant_id.is_empty());
+    }
 }

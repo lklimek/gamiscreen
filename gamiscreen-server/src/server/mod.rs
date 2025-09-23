@@ -776,7 +776,7 @@ async fn api_device_heartbeat(
 
 async fn api_child_register(
     State(state): State<AppState>,
-    Extension(_auth): Extension<AuthCtx>,
+    Extension(auth): Extension<AuthCtx>,
     Path(p): Path<ChildPathId>,
     Json(body): Json<api::ClientRegisterReq>,
 ) -> Result<Json<api::ClientRegisterResp>, AppError> {
@@ -806,7 +806,7 @@ async fn api_child_register(
         Role::Child,
         Some(p.id.clone()),
         Some(device_id.clone()),
-        &state.config.tenant_id,
+        &auth.claims.tenant_id,
     )
     .await?;
     Ok(Json(api::ClientRegisterResp {
