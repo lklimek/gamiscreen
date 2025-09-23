@@ -62,6 +62,18 @@ pub async fn login(base: &str, req: &AuthReq) -> Result<AuthResp, RestError> {
     handle_json(res).await
 }
 
+pub async fn renew_token(base: &str, bearer: &str) -> Result<AuthResp, RestError> {
+    let client = mk_client()?;
+    let url = ep::auth_renew(base);
+    let res = client
+        .post(url)
+        .bearer_auth(bearer)
+        .send()
+        .await
+        .map_err(|e| RestError::Http(e.to_string()))?;
+    handle_json(res).await
+}
+
 pub async fn child_register(
     base: &str,
     tenant_id: &str,

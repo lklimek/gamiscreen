@@ -119,6 +119,7 @@ pub fn router(state: AppState) -> Router {
     let sse_path = format!("{}/sse", tenant_scope);
     let version_path = format!("{}/version", api_v1_prefix);
     let auth_login_path = format!("{}/auth/login", api_v1_prefix);
+    let auth_renew_path = format!("{}/auth/renew", api_v1_prefix);
 
     let tenant_private = Router::new()
         .route("/children", get(api_list_children))
@@ -186,11 +187,21 @@ pub fn router(state: AppState) -> Router {
         .route(&sse_path, get(sse_notifications))
         .with_state(state.clone());
 
+    let auth_router = Router::new()
+        .route(&auth_renew_path, post(api_auth_renew))
+        .with_state(state.clone())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth::require_bearer,
+        ))
+        .layer(middleware::from_fn(set_auth_span_fields));
+
     let app = Router::new()
         .route("/healthz", get(health))
         .route("/api/version", get(api_version))
         .route(&version_path, get(api_version))
         .route(&auth_login_path, post(api_auth_login))
+        .merge(auth_router)
         .merge(sse)
         .merge(private)
         .fallback(get(serve_embedded))
@@ -765,7 +776,7 @@ async fn api_device_heartbeat(
 
 async fn api_child_register(
     State(state): State<AppState>,
-    Extension(auth): Extension<AuthCtx>,
+    Extension(_auth): Extension<AuthCtx>,
     Path(p): Path<ChildPathId>,
     Json(body): Json<api::ClientRegisterReq>,
 ) -> Result<Json<api::ClientRegisterResp>, AppError> {
@@ -779,12 +790,23 @@ async fn api_child_register(
         return Err(AppError::not_found(format!("child not found: {}", p.id)));
     }
     let device_id = body.device_id.clone();
+    let child_username = state
+        .config
+        .users
+        .iter()
+        .find(|u| u.role == Role::Child && u.child_id.as_deref() == Some(p.id.as_str()))
+        .map(|u| u.username.clone())
+        .ok_or_else(|| {
+            tracing::error!(child_id = %p.id, "register: no child user configured for id");
+            AppError::internal("child login not configured")
+        })?;
     let token = auth::issue_jwt_for_user(
         &state,
-        &auth.claims.sub,
+        &child_username,
         Role::Child,
         Some(p.id.clone()),
         Some(device_id.clone()),
+        &state.config.tenant_id,
     )
     .await?;
     Ok(Json(api::ClientRegisterResp {
@@ -828,8 +850,47 @@ async fn api_auth_login(
         user.role,
         user.child_id.clone(),
         None,
+        &state.config.tenant_id,
     )
     .await?;
+    Ok(Json(api::AuthResp { token }))
+}
+
+async fn api_auth_renew(
+    State(state): State<AppState>,
+    Extension(auth): Extension<AuthCtx>,
+) -> Result<Json<api::AuthResp>, AppError> {
+    let claims = auth.claims.clone();
+    let tenant_id = if claims.tenant_id.is_empty() {
+        // TODO(v0.8): remove fallback once legacy tokens always embed tenant_id
+        state.config.tenant_id.clone()
+    } else {
+        claims.tenant_id.clone()
+    };
+    let token = auth::issue_jwt_for_user(
+        &state,
+        &claims.sub,
+        claims.role,
+        claims.child_id.clone(),
+        claims.device_id.clone(),
+        &tenant_id,
+    )
+    .await?;
+
+    match state.store.delete_session(&claims.jti).await {
+        Ok(true) => {}
+        Ok(false) => {
+            tracing::warn!(jti = %claims.jti, "auth renew: previous session missing");
+        }
+        Err(e) => {
+            tracing::error!(jti = %claims.jti, error = %e, "auth renew: failed to delete session");
+            if let Ok(new_claims) = jwt::decode_unverified(&token) {
+                let _ = state.store.delete_session(&new_claims.jti).await;
+            }
+            return Err(AppError::internal(e));
+        }
+    }
+
     Ok(Json(api::AuthResp { token }))
 }
 

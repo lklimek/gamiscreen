@@ -142,6 +142,12 @@ export async function login(username: string, password: string) {
   return data
 }
 
+export async function renewToken() {
+  return request<AuthResp>(`${API_V1_PREFIX}/auth/renew`, {
+    method: 'POST',
+  })
+}
+
 export async function listChildren() {
   return request<ChildDto[]>(tenantPath('children'))
 }

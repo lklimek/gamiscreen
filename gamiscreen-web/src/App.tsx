@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getAuthClaims, getServerVersion, getToken, notificationsCount, setToken } from './api'
+import { getAuthClaims, getServerVersion, getToken, notificationsCount, renewToken, setToken } from './api'
 
 const API_V1_PREFIX = '/api/v1'
 import { ChildDetailsPage } from './pages/ChildDetailsPage'
@@ -60,6 +60,25 @@ export function App() {
     setTokenState(null)
     nav('login')
   }
+
+  useEffect(() => {
+    let cancelled = false
+    const current = getToken()
+    if (!current) return
+    renewToken()
+      .then(({ token: newToken }) => {
+        if (cancelled) return
+        setToken(newToken)
+        setTokenState(newToken)
+      })
+      .catch((err: any) => {
+        if (cancelled) return
+        console.warn('Token renewal failed', err)
+        const msg = String(err?.message || err || '')
+        if (/401/.test(msg)) logout()
+      })
+    return () => { cancelled = true }
+  }, [])
 
   // Notifications polling (parent)
   const [notifCount, setNotifCount] = useState<number>(0)

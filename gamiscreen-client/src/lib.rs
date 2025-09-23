@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use gamiscreen_shared::api::{self};
+use gamiscreen_shared::api::{self, rest::RestError};
 use gamiscreen_shared::jwt::{self, JwtClaims};
 use tokio::time::{Instant, sleep};
 use tracing::{debug, error, info, warn};
@@ -96,9 +96,32 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
 
     // Load token from keyring using normalized server_url as the account key
     let key = crate::config::normalize_server_url(&cfg.server_url);
-    let token = read_token_from_keyring(&key)?;
-    let claims = jwt::decode_unverified(&token)
+    let mut token = read_token_from_keyring(&key)?;
+    let mut claims = jwt::decode_unverified(&token)
         .map_err(|e| AppError::Http(format!("invalid token: {e}")))?;
+
+    match api::rest::renew_token(&cfg.server_url, &token).await {
+        Ok(resp) => {
+            let new_token = resp.token;
+            let new_claims = jwt::decode_unverified(&new_token)
+                .map_err(|e| AppError::Http(format!("invalid renewed token: {e}")))?;
+            let entry = keyring_entry(&cfg.server_url)?;
+            entry
+                .set_password(&new_token)
+                .map_err(|e| AppError::Keyring(e.to_string()))?;
+            info!("renewed auth token from server");
+            token = new_token;
+            claims = new_claims;
+        }
+        Err(RestError::Status { status, .. }) if status == 401 => {
+            return Err(AppError::Http(
+                "token renewal failed with unauthorized; please log in again".into(),
+            ));
+        }
+        Err(e) => {
+            warn!(error=%e, "token renewal failed; continuing with existing token");
+        }
+    }
     let child_id = claims
         .child_id
         .clone()

@@ -561,18 +561,17 @@ impl Store {
         .map_err(|e| e.to_string())?
     }
 
-    pub async fn touch_session(&self, jti_: &str) -> Result<(), String> {
+    pub async fn delete_session(&self, jti_: &str) -> Result<bool, String> {
         use schema::sessions::dsl::*;
         let pool = self.pool.clone();
         let j = jti_.to_string();
-        tokio::task::spawn_blocking(move || -> Result<(), String> {
+        tokio::task::spawn_blocking(move || -> Result<bool, String> {
             let mut conn = pool.get().map_err(|e| e.to_string())?;
             configure_sqlite_conn(&mut conn).map_err(|e| format!("pragma error: {e}"))?;
-            diesel::update(sessions.filter(jti.eq(&j)))
-                .set(last_used_at.eq(diesel::dsl::now))
+            let deleted = diesel::delete(sessions.filter(jti.eq(&j)))
                 .execute(&mut conn)
                 .map_err(|e| e.to_string())?;
-            Ok(())
+            Ok(deleted > 0)
         })
         .await
         .map_err(|e| e.to_string())?

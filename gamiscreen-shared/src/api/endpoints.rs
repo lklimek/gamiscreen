@@ -15,6 +15,9 @@ fn enc(s: &str) -> String {
 pub fn auth_login(base: &str) -> String {
     base_join(base, &format!("{}/auth/login", API_V1_PREFIX))
 }
+pub fn auth_renew(base: &str) -> String {
+    base_join(base, &format!("{}/auth/renew", API_V1_PREFIX))
+}
 pub fn children(base: &str, tenant_id: &str) -> String {
     base_join(base, &format!("{}/children", tenant_scope(tenant_id)))
 }

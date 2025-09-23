@@ -8,8 +8,9 @@
   - Child: send heartbeats only for their own `child_id` and registered `device_id`.
 
 Session policy
-- Server stores sessions by `jti` and updates last-used timestamp on each request.
-- Inactivity window: tokens become invalid after 7 days without use.
+- Server stores sessions by `jti`. Tokens are not auto-extended on API usage; clients must explicitly renew them.
+- Renewal endpoint: `POST /api/v1/auth/renew` consumes the presented token, issues a new one, and invalidates the previous session.
+- Inactivity window: tokens become invalid after 7 days without renewal.
 - Token expiry (`exp`): 30 days from issuance.
 
 ## Device Registration

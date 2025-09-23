@@ -12,6 +12,7 @@ use std::net::SocketAddr;
 use std::path::Path;
 
 const LOGIN_PATH: &str = "/api/v1/auth/login";
+const RENEW_PATH: &str = "/api/v1/auth/renew";
 const TENANT_ID: &str = "test-tenant";
 
 struct TestServer {
@@ -312,6 +313,39 @@ async fn unauthenticated_requests_are_rejected() {
             .request_expect_status(method, path, None, body.clone(), StatusCode::UNAUTHORIZED)
             .await;
     }
+}
+
+#[tokio::test]
+async fn token_renew_rotates_sessions() {
+    let Some(server) = TestServer::spawn().await else {
+        return;
+    };
+    let original = server.login("parent", "secret123").await;
+    let renewed: api::AuthResp = server
+        .request_expect_json("POST", RENEW_PATH, Some(&original), None, StatusCode::OK)
+        .await;
+    assert_ne!(renewed.token, original);
+
+    let children_path = tenant_path("children");
+    server
+        .request_expect_status(
+            "GET",
+            &children_path,
+            Some(&renewed.token),
+            None,
+            StatusCode::OK,
+        )
+        .await;
+
+    server
+        .request_expect_status(
+            "GET",
+            &children_path,
+            Some(&original),
+            None,
+            StatusCode::UNAUTHORIZED,
+        )
+        .await;
 }
 
 #[tokio::test]

@@ -1,7 +1,7 @@
 use axum::{http::Request, response::Response};
 use axum::{http::header, middleware::Next};
 use chrono::{Duration, Utc};
-use tracing::error;
+use tracing::{error, warn};
 
 use gamiscreen_shared::auth::Role;
 use gamiscreen_shared::jwt::{self, JwtClaims};
@@ -58,12 +58,6 @@ pub async fn require_bearer(
     if last < cutoff.naive_utc() {
         return unauthorized();
     }
-    state
-        .store
-        .touch_session(&jti)
-        .await
-        .map_err(AppError::internal)?;
-
     let auth = AuthCtx { claims };
     req.extensions_mut().insert(auth);
     Ok(next.run(req).await)
@@ -75,16 +69,9 @@ pub async fn issue_jwt_for_user(
     role: Role,
     child_id: Option<String>,
     device_id: Option<String>,
+    tenant_id: &str,
 ) -> Result<String, AppError> {
     let jti = uuid::Uuid::new_v4().to_string();
-    state
-        .store
-        .create_session(&jti, username)
-        .await
-        .map_err(|e| {
-            error!(username, error=%e, "login/register: create_session failed");
-            AppError::internal(e)
-        })?;
     let exp = (Utc::now() + Duration::days(30)).timestamp();
     let claims = JwtClaims {
         sub: username.to_string(),
@@ -93,11 +80,109 @@ pub async fn issue_jwt_for_user(
         role,
         child_id,
         device_id,
-        tenant_id: state.config.tenant_id.clone(),
+        tenant_id: tenant_id.to_string(),
     };
+
+    validate_claims(state, &claims)?;
+
+    state
+        .store
+        .create_session(&jti, username)
+        .await
+        .map_err(|e| {
+            error!(username, error=%e, "login/register: create_session failed");
+            AppError::internal(e)
+        })?;
     let token = jwt::encode(&claims, state.config.jwt_secret.as_bytes()).map_err(|e| {
         error!(username, error=%e, "login/register: jwt encode failed");
         AppError::internal(e)
     })?;
     Ok(token)
+}
+
+fn validate_claims(state: &AppState, claims: &JwtClaims) -> Result<(), AppError> {
+    if claims.tenant_id != state.config.tenant_id {
+        warn!(
+            username = %claims.sub,
+            requested_tenant = %claims.tenant_id,
+            configured_tenant = %state.config.tenant_id,
+            "issue_jwt: tenant mismatch"
+        );
+        return Err(AppError::forbidden());
+    }
+    let user = state
+        .config
+        .users
+        .iter()
+        .find(|u| u.username == claims.sub)
+        .ok_or_else(|| {
+            warn!(username = %claims.sub, "issue_jwt: unknown user");
+            AppError::forbidden()
+        })?;
+
+    match claims.role {
+        Role::Parent => {
+            if user.role != Role::Parent {
+                warn!(
+                    username = %claims.sub,
+                    requested_role = ?claims.role,
+                    actual_role = ?user.role,
+                    "issue_jwt: role mismatch"
+                );
+                return Err(AppError::forbidden());
+            }
+            if claims.child_id.is_some() || claims.device_id.is_some() {
+                warn!(
+                    username = %claims.sub,
+                    "issue_jwt: parent token must not include child or device"
+                );
+                return Err(AppError::forbidden());
+            }
+        }
+        Role::Child => {
+            if user.role != Role::Child {
+                warn!(
+                    username = %claims.sub,
+                    requested_role = ?claims.role,
+                    actual_role = ?user.role,
+                    "issue_jwt: role mismatch"
+                );
+                return Err(AppError::forbidden());
+            }
+            let child_id = claims.child_id.as_deref().ok_or_else(|| {
+                warn!(username = %claims.sub, "issue_jwt: child token missing child_id");
+                AppError::forbidden()
+            })?;
+            let expected_child = user.child_id.as_deref().ok_or_else(|| {
+                warn!(
+                    username = %claims.sub,
+                    "issue_jwt: user missing child binding in config"
+                );
+                AppError::forbidden()
+            })?;
+            if expected_child != child_id {
+                warn!(
+                    username = %claims.sub,
+                    expected = expected_child,
+                    requested = child_id,
+                    "issue_jwt: child mismatch"
+                );
+                return Err(AppError::forbidden());
+            }
+            if !state.config.children.iter().any(|c| c.id == child_id) {
+                warn!(child_id, "issue_jwt: child not configured");
+                return Err(AppError::not_found(format!(
+                    "child not found: {}",
+                    child_id
+                )));
+            }
+            if let Some(device_id) = claims.device_id.as_deref() {
+                if device_id.trim().is_empty() {
+                    return Err(AppError::bad_request("device_id cannot be empty"));
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
