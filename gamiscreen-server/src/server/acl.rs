@@ -1,7 +1,7 @@
 use super::{AppError, AppState, auth::AuthCtx};
 use axum::response::Response;
 use axum::{
-    extract::State,
+    extract::{OriginalUri, State},
     http::{Method, Request},
     middleware::Next,
 };
@@ -14,7 +14,11 @@ pub async fn enforce_acl(
     req: Request<axum::body::Body>,
     next: Next,
 ) -> Result<Response, AppError> {
-    let path = req.uri().path().to_string();
+    let path = req
+        .extensions()
+        .get::<OriginalUri>()
+        .map(|orig| orig.0.path().to_string())
+        .unwrap_or_else(|| req.uri().path().to_string());
     let method = req.method().clone();
     let Some(auth) = req.extensions().get::<AuthCtx>() else {
         return Err(AppError::unauthorized());
