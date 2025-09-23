@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getAuthClaims, getServerVersion, getToken, notificationsCount, renewToken, setToken } from './api'
 
 const API_V1_PREFIX = '/api/v1'
@@ -42,11 +42,12 @@ function useHashRoute(): [Route, (r: Route, opts?: { childId?: string }) => void
 export function App() {
   const [route, nav, params] = useHashRoute()
   const [token, setTokenState] = useState<string | null>(() => getToken())
-  const loggedIn = !!token
   const claims = getAuthClaims()
   const isChild = claims?.role === 'child'
   const [menuOpen, setMenuOpen] = useState(false)
   const [refreshingToken, setRefreshingToken] = useState(() => !!getToken())
+  const hasToken = token != null
+  const authReady = hasToken && !refreshingToken
   // PWA install prompt handling
   const [installEvt, setInstallEvt] = useState<null | (Event & { prompt: () => Promise<void> })>(null)
   const [installed, setInstalled] = useState<boolean>(() => {
@@ -59,13 +60,33 @@ export function App() {
   const logout = useCallback(() => {
     setToken(null)
     setTokenState(null)
+    setRefreshingToken(false)
     nav('login')
   }, [nav])
+
+  const handleLogin = useCallback(
+    (t: string) => {
+      setTokenState(t)
+      const cl = getAuthClaims()
+      if (cl?.role === 'child' && cl.child_id) {
+        nav('child', { childId: cl.child_id })
+      } else {
+        nav('status')
+      }
+    },
+    [nav],
+  )
 
   const logoutRef = useRef(logout)
   useEffect(() => {
     logoutRef.current = logout
   }, [logout])
+
+  useEffect(() => {
+    if (!authReady) {
+      setMenuOpen(false)
+    }
+  }, [authReady])
 
   useEffect(() => {
     const handler = () => logout()
@@ -110,7 +131,12 @@ export function App() {
   // Notifications polling (parent)
   const [notifCount, setNotifCount] = useState<number>(0)
   useEffect(() => {
-    if (!token || refreshingToken) {
+    if (!authReady) {
+      setNotifCount(0)
+    }
+  }, [authReady])
+  useEffect(() => {
+    if (!authReady) {
       return
     }
     let cancelled = false
@@ -133,11 +159,12 @@ export function App() {
       cancelled = true
       if (timer) clearTimeout(timer)
     }
-  }, [token, refreshingToken])
+  }, [authReady])
   // Server-Sent Events push for notifications and child remaining updates
   useEffect(() => {
+    if (!authReady) return
     const tenantId = claims?.tenant_id
-    if (!token || !tenantId || refreshingToken) return
+    if (!tenantId) return
     const serverBase = (window as any).gamiscreenApiBase || (window.location.origin)
     const base = (() => {
       const ls = localStorage.getItem('gamiscreen.server_base') || ''
@@ -181,9 +208,10 @@ export function App() {
     }
     connect()
     return () => { if (es) { try { es.close() } catch { } } }
-  }, [token, claims?.tenant_id, refreshingToken])
+  }, [authReady, claims?.tenant_id, token])
   // Immediate refresh when notifications change (approve/discard)
   useEffect(() => {
+    if (!authReady) return
     const refresh = async () => {
       try {
         if (getAuthClaims()?.role === 'parent') {
@@ -195,20 +223,20 @@ export function App() {
     const handler = () => { refresh() }
     window.addEventListener('gamiscreen:notif-refresh', handler as EventListener)
     return () => window.removeEventListener('gamiscreen:notif-refresh', handler as EventListener)
-  }, [token])
+  }, [authReady])
 
   useEffect(() => {
-    if (!loggedIn && route !== 'login') nav('login')
-    // If child is logged in but URL is not child route, redirect.
-    if (loggedIn) {
+    if (!hasToken && route !== 'login') nav('login')
+    if (authReady) {
       const cl = getAuthClaims()
       if (cl?.role === 'child' && cl.child_id && route !== 'child') {
         nav('child', { childId: cl.child_id })
       }
     }
-  }, [loggedIn])
+  }, [hasToken, authReady, route, nav])
 
   useEffect(() => {
+    if (refreshingToken) return
     let cancelled = false
     getServerVersion()
       .then((version) => {
@@ -220,7 +248,7 @@ export function App() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [refreshingToken, token])
 
   useEffect(() => {
     const onBip = (e: Event & { preventDefault: () => void; prompt: () => Promise<void> }) => {
@@ -240,6 +268,29 @@ export function App() {
     }
   }, [])
 
+  const content = useMemo(() => {
+    if (!hasToken) {
+      return <LoginPage onLogin={handleLogin} />
+    }
+    if (!authReady) {
+      return (
+        <div className="col" style={{ alignItems: 'center', gap: 12 }}>
+          <span className="subtitle">Renewing session…</span>
+        </div>
+      )
+    }
+    if (isChild && claims?.child_id) {
+      return <ChildDetailsPage childId={claims.child_id} />
+    }
+    if (route === 'child' && params.childId) {
+      return <ChildDetailsPage childId={params.childId} />
+    }
+    if (route === 'notifications') {
+      return <NotificationsPage />
+    }
+    return <StatusPage />
+  }, [authReady, claims?.child_id, handleLogin, hasToken, isChild, params.childId, route])
+
   return (
     <main className="container">
       <article>
@@ -250,7 +301,7 @@ export function App() {
             </a>
             <p className="subtitle" style={{ margin: 0 }}>Reward earned screen time</p>
           </div>
-          {loggedIn && (
+          {authReady && (
             <div className="row" style={{ alignItems: 'center', gap: 8, position: 'relative' }}>
               {claims?.role === 'parent' && (
                 <button
@@ -285,29 +336,7 @@ export function App() {
           )}
         </header>
         {/* Navigation removed per new workflow */}
-        <section>
-          {(!loggedIn || route === 'login') && (
-            <LoginPage onLogin={(t) => {
-              setTokenState(t)
-              const cl = getAuthClaims()
-              if (cl?.role === 'child' && cl.child_id) {
-                nav('child', { childId: cl.child_id })
-              } else {
-                nav('status')
-              }
-            }} />
-          )}
-          {loggedIn && isChild && claims?.child_id && (
-            <ChildDetailsPage childId={claims.child_id} />
-          )}
-          {loggedIn && !isChild && route === 'status' && <StatusPage />}
-          {loggedIn && !isChild && route === 'child' && params.childId && (
-            <ChildDetailsPage childId={params.childId} />
-          )}
-          {loggedIn && !isChild && route === 'notifications' && (
-            <NotificationsPage />
-          )}
-        </section>
+        <section>{content}</section>
       </article>
       <footer style={{ textAlign: 'center', marginTop: 12 }}>
         <p style={{ margin: 0, fontSize: 12 }}>
