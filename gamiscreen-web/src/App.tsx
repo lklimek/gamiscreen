@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { getAuthClaims, getServerVersion, getToken, notificationsCount, renewToken, setToken } from './api'
 
 const API_V1_PREFIX = '/api/v1'
@@ -46,6 +46,7 @@ export function App() {
   const claims = getAuthClaims()
   const isChild = claims?.role === 'child'
   const [menuOpen, setMenuOpen] = useState(false)
+  const [refreshingToken, setRefreshingToken] = useState(() => !!getToken())
   // PWA install prompt handling
   const [installEvt, setInstallEvt] = useState<null | (Event & { prompt: () => Promise<void> })>(null)
   const [installed, setInstalled] = useState<boolean>(() => {
@@ -61,6 +62,11 @@ export function App() {
     nav('login')
   }, [nav])
 
+  const logoutRef = useRef(logout)
+  useEffect(() => {
+    logoutRef.current = logout
+  }, [logout])
+
   useEffect(() => {
     const handler = () => logout()
     window.addEventListener('gamiscreen:token-invalid', handler)
@@ -70,7 +76,10 @@ export function App() {
   useEffect(() => {
     let cancelled = false
     const current = getToken()
-    if (!current) return
+    if (!current) {
+      return
+    }
+    setRefreshingToken(true)
     renewToken()
       .then(({ token: newToken }) => {
         if (cancelled) return
@@ -81,34 +90,47 @@ export function App() {
         if (cancelled) return
         console.warn('Token renewal failed', err)
         const msg = String(err?.message || err || '')
-        if (/401/.test(msg)) logout()
+        if (/401/.test(msg)) logoutRef.current()
       })
-    return () => { cancelled = true }
+      .finally(() => {
+        if (!cancelled) setRefreshingToken(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   // Notifications polling (parent)
   const [notifCount, setNotifCount] = useState<number>(0)
   useEffect(() => {
-    let timer: any
+    if (!token || refreshingToken) {
+      return
+    }
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
     const tick = async () => {
       try {
         if (getAuthClaims()?.role === 'parent') {
           const { count } = await notificationsCount()
-          setNotifCount(count)
-        } else {
+          if (!cancelled) setNotifCount(count)
+        } else if (!cancelled) {
           setNotifCount(0)
         }
       } catch { }
-      timer = setTimeout(tick, 30000)
+      if (!cancelled) {
+        timer = setTimeout(tick, 30000)
+      }
     }
     tick()
-    return () => { if (timer) clearTimeout(timer) }
-  }, [token])
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [token, refreshingToken])
   // Server-Sent Events push for notifications and child remaining updates
   useEffect(() => {
     const tenantId = claims?.tenant_id
-    if (!token) return
-    if (!tenantId) return
+    if (!token || !tenantId || refreshingToken) return
     const serverBase = (window as any).gamiscreenApiBase || (window.location.origin)
     const base = (() => {
       const ls = localStorage.getItem('gamiscreen.server_base') || ''
@@ -152,7 +174,7 @@ export function App() {
     }
     connect()
     return () => { if (es) { try { es.close() } catch { } } }
-  }, [token, claims?.tenant_id])
+  }, [token, claims?.tenant_id, refreshingToken])
   // Immediate refresh when notifications change (approve/discard)
   useEffect(() => {
     const refresh = async () => {
