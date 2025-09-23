@@ -987,7 +987,7 @@ dependencies = [
 
 [[package]]
 name = "gamiscreen-client"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1024,7 +1024,7 @@ dependencies = [
 
 [[package]]
 name = "gamiscreen-server"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "axum",
  "bcrypt",
@@ -1058,7 +1058,7 @@ dependencies = [
 
 [[package]]
 name = "gamiscreen-shared"
-version = "0.7.1"
+version = "0.8.0"
 dependencies = [
  "base64",
  "jsonwebtoken",
