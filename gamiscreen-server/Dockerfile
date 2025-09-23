@@ -22,9 +22,6 @@ RUN mkdir -p gamiscreen-server/src gamiscreen-client/src \
  && echo "fn main(){}" > gamiscreen-server/src/main.rs \
  && echo "pub fn placeholder(){}" > gamiscreen-client/src/lib.rs
 
-# Pre-build Rust dependencies without invoking web build.rs
-RUN SKIP_WEB_BUILD=1 cargo build -p gamiscreen-server --release || true
-
 # Cache web dependencies
 COPY gamiscreen-web/package.json gamiscreen-web/package.json
 COPY gamiscreen-web/package-lock.json gamiscreen-web/package-lock.json
@@ -37,7 +34,12 @@ COPY . .
 RUN cd gamiscreen-web && npm run build
 
 # Build release binary, skipping web build.rs step (dist already built)
-RUN SKIP_WEB_BUILD=1 cargo build -p gamiscreen-server --release
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    cargo build -p gamiscreen-server --release && \
+    mkdir -p /app/dist && \
+    mv /app/target/release/gamiscreen-server /app/dist/ && \
+    rm -fr /app/target
 
 ###############################
 # Runtime stage
@@ -58,7 +60,7 @@ RUN useradd -r -s /usr/sbin/nologin -d /var/lib/gamiscreen gamiscreen \
  && mkdir -p /etc/gamiscreen /var/lib/gamiscreen \
  && chown -R gamiscreen:gamiscreen /var/lib/gamiscreen
 
-COPY --from=builder /app/target/release/gamiscreen-server /usr/local/bin/gamiscreen-server
+COPY --from=builder /app/dist/gamiscreen-server /usr/local/bin/gamiscreen-server
 
 USER gamiscreen:gamiscreen
 WORKDIR /var/lib/gamiscreen

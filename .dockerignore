@@ -1,0 +1,9 @@
+/.git
+/target/
+/gamiscreen-web/node-modules
+*/config.yaml
+/gamiscreen-server/data
+/gamiscreen-web/node_modules
+/gamiscreen-web/dist
+/logs/
+/dist/
