@@ -1,4 +1,5 @@
 use axum::http::StatusCode;
+use chrono::Utc;
 use gamiscreen_server::{server, storage};
 use gamiscreen_shared::domain::{Child, Task};
 use reqwest::Client;
@@ -228,15 +229,34 @@ async fn end_to_end_scenario() {
         .unwrap()
         .to_string();
 
+    // child device register
+    let register_path = tenant_path("children/alice/register");
+    let (st, body) = send_json(
+        &client,
+        &base,
+        "POST",
+        &register_path,
+        Some(&child_token),
+        Some(json!({"device_id":"dev1"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "child register failed: {:?}", body);
+    let device_token = body
+        .get("token")
+        .and_then(|v| v.as_str())
+        .unwrap()
+        .to_string();
+
     // heartbeat should decrement to 1
     let heartbeat_path = tenant_path("children/alice/device/dev1/heartbeat");
+    let minute_ts = Utc::now().timestamp() / 60;
     let (st, body) = send_json(
         &client,
         &base,
         "POST",
         &heartbeat_path,
-        Some(&child_token),
-        None,
+        Some(&device_token),
+        Some(json!({"minutes": [minute_ts]})),
     )
     .await;
     assert_eq!(st, StatusCode::OK, "heartbeat failed: {:?}", body);
