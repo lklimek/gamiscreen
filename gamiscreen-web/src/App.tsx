@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { getAuthClaims, getServerVersion, getToken, notificationsCount, renewToken, setToken } from './api'
 
 const API_V1_PREFIX = '/api/v1'
@@ -55,11 +55,17 @@ export function App() {
   })
   const [serverVersion, setServerVersion] = useState<string | null>(null)
 
-  const logout = () => {
+  const logout = useCallback(() => {
     setToken(null)
     setTokenState(null)
     nav('login')
-  }
+  }, [nav])
+
+  useEffect(() => {
+    const handler = () => logout()
+    window.addEventListener('gamiscreen:token-invalid', handler)
+    return () => window.removeEventListener('gamiscreen:token-invalid', handler)
+  }, [logout])
 
   useEffect(() => {
     let cancelled = false

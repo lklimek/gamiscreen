@@ -860,20 +860,14 @@ async fn api_auth_renew(
     State(state): State<AppState>,
     Extension(auth): Extension<AuthCtx>,
 ) -> Result<Json<api::AuthResp>, AppError> {
-    let claims = auth.claims.clone();
-    let tenant_id = if claims.tenant_id.is_empty() {
-        // TODO(v0.8): remove fallback once legacy tokens always embed tenant_id
-        state.config.tenant_id.clone()
-    } else {
-        claims.tenant_id.clone()
-    };
+    let claims = auth.claims;
     let token = auth::issue_jwt_for_user(
         &state,
         &claims.sub,
         claims.role,
         claims.child_id.clone(),
         claims.device_id.clone(),
-        &tenant_id,
+        &claims.tenant_id,
     )
     .await?;
 

@@ -107,6 +107,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (token) headers['Authorization'] = `Bearer ${token}`
   const resp = await fetch(url, { ...init, headers })
   if (!resp.ok) {
+    if (resp.status === 401) {
+      setToken(null)
+      try {
+        window.dispatchEvent(new CustomEvent('gamiscreen:token-invalid'))
+      } catch { }
+    }
     let msg = `${resp.status} ${resp.statusText}`
     try {
       const body = await resp.json() as any

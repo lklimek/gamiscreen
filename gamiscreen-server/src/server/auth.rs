@@ -30,18 +30,19 @@ pub async fn require_bearer(
     }
     let token = &header_str[prefix.len()..];
 
-    let mut claims = match jwt::decode_and_verify(token, state.config.jwt_secret.as_bytes()) {
+    let claims = match jwt::decode_and_verify(token, state.config.jwt_secret.as_bytes()) {
         Ok(c) => c,
         Err(e) => {
             tracing::warn!(error=%e, "auth: jwt decode failed");
             return unauthorized();
         }
     };
-    // TODO: enforce tenant_id presence in tokens in v0.8+
-    if claims.tenant_id.is_empty() {
-        tracing::debug!("auth: token missing tenant_id; defaulting to configured tenant");
-        claims.tenant_id = state.config.tenant_id.clone();
-    }
+
+    validate_claims(&state, &claims).map_err(|e| {
+        tracing::warn!(error=?e, username=%claims.sub, "auth: validate_claims failed");
+        // Invalid token, log out the user
+        AppError::unauthorized()
+    })?;
 
     if claims.tenant_id != state.config.tenant_id {
         tracing::warn!(
@@ -57,6 +58,7 @@ pub async fn require_bearer(
         AppError::internal(e)
     })?;
     let Some(sess) = session else {
+        tracing::warn!(jti = %jti, username = %claims.sub, "auth: session missing");
         return unauthorized();
     };
     let last = sess.last_used_at;
