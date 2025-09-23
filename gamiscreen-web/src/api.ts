@@ -149,9 +149,11 @@ export async function login(username: string, password: string) {
 }
 
 export async function renewToken() {
-  return request<AuthResp>(`${API_V1_PREFIX}/auth/renew`, {
+  const data = await request<AuthResp>(`${API_V1_PREFIX}/auth/renew`, {
     method: 'POST',
   })
+  setToken(data.token)
+  return data
 }
 
 export async function listChildren() {

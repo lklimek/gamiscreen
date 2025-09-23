@@ -83,8 +83,15 @@ export function App() {
     renewToken()
       .then(({ token: newToken }) => {
         if (cancelled) return
-        setToken(newToken)
-        setTokenState(newToken)
+        const persisted = getToken()
+        if (persisted !== newToken) {
+          try {
+            setToken(newToken)
+          } catch (err) {
+            console.error('Failed to persist renewed token', err)
+          }
+        }
+        setTokenState(getToken() ?? newToken)
       })
       .catch((err: any) => {
         if (cancelled) return
