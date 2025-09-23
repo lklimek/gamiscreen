@@ -1,10 +1,46 @@
-export interface AuthResp { token: string }
-export interface ChildDto { id: string; display_name: string }
-export interface TaskDto { id: string; name: string; minutes: number }
-export interface TaskWithStatusDto { id: string; name: string; minutes: number; last_done?: string | null }
-export interface RemainingDto { child_id: string; remaining_minutes: number }
-export interface NotificationsCountDto { count: number }
-export interface NotificationItemDto { id: number; kind: string; child_id: string; child_display_name: string; task_id: string; task_name: string; submitted_at: string }
+import type {
+  AuthReq,
+  AuthResp,
+  ChildDto,
+  ClientRegisterReq,
+  ClientRegisterResp,
+  HeartbeatReq,
+  HeartbeatResp,
+  JwtClaims,
+  NotificationItemDto,
+  NotificationsCountDto,
+  RemainingDto,
+  RewardHistoryItemDto,
+  RewardReq,
+  RewardResp,
+  Role,
+  SubmitTaskReq,
+  TaskDto,
+  TaskWithStatusDto,
+  VersionInfoDto,
+} from './generated/api-types'
+
+export type {
+  AuthReq,
+  AuthResp,
+  ChildDto,
+  ClientRegisterReq,
+  ClientRegisterResp,
+  HeartbeatReq,
+  HeartbeatResp,
+  JwtClaims,
+  NotificationItemDto,
+  NotificationsCountDto,
+  RemainingDto,
+  RewardHistoryItemDto,
+  RewardReq,
+  RewardResp,
+  Role,
+  SubmitTaskReq,
+  TaskDto,
+  TaskWithStatusDto,
+  VersionInfoDto,
+} from './generated/api-types'
 
 const TOKEN_KEY = 'gamiscreen.token'
 const SERVER_BASE_KEY = 'gamiscreen.server_base'
@@ -34,17 +70,6 @@ export function setServerBase(url: string | null) {
   } catch {
     // ignore storage errors (private mode, etc.)
   }
-}
-
-export type Role = 'parent' | 'child'
-export interface JwtClaims {
-  sub: string
-  jti: string
-  exp: number
-  role: Role
-  child_id?: string
-  device_id?: string
-  tenant_id?: string
 }
 
 export function getAuthClaims(): JwtClaims | null {
@@ -108,7 +133,7 @@ function tenantPath(path: string): string {
 }
 
 export async function login(username: string, password: string) {
-  const body = { username, password }
+  const body: AuthReq = { username, password }
   const data = await request<AuthResp>(`${API_V1_PREFIX}/auth/login`, {
     method: 'POST',
     body: JSON.stringify(body),
@@ -133,17 +158,16 @@ export async function listChildTasks(childId: string) {
   return request<TaskWithStatusDto[]>(tenantPath(`children/${encodeURIComponent(childId)}/tasks`))
 }
 
-export interface RewardHistoryItemDto { time: string; description?: string | null; minutes: number }
 export async function listChildRewards(childId: string, page = 1, per_page = 10) {
   const p = new URLSearchParams({ page: String(page), per_page: String(per_page) })
   return request<RewardHistoryItemDto[]>(`${tenantPath(`children/${encodeURIComponent(childId)}/reward`)}?${p.toString()}`)
 }
 
-export async function rewardMinutes(opts: { child_id: string; task_id?: string; minutes?: number; description?: string | null }) {
-  const path = tenantPath(`children/${encodeURIComponent(opts.child_id)}/reward`)
-  return request<{ remaining_minutes: number }>(path, {
+export async function rewardMinutes(body: RewardReq) {
+  const path = tenantPath(`children/${encodeURIComponent(body.child_id)}/reward`)
+  return request<RewardResp>(path, {
     method: 'POST',
-    body: JSON.stringify(opts)
+    body: JSON.stringify(body)
   })
 }
 
@@ -171,6 +195,6 @@ export async function discardSubmission(id: number) {
 }
 
 export async function getServerVersion(): Promise<string> {
-  const { version } = await request<{ version: string }>(`${API_V1_PREFIX}/version`)
+  const { version } = await request<VersionInfoDto>(`${API_V1_PREFIX}/version`)
   return version
 }

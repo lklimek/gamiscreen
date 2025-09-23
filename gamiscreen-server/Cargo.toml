@@ -40,6 +40,7 @@ semver = "1"
 gamiscreen-shared = { path = "../gamiscreen-shared" }
 
 [build-dependencies]
+gamiscreen-shared = { path = "../gamiscreen-shared", features = ["ts"] }
 
 
 [dev-dependencies]

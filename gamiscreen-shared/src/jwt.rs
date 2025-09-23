@@ -7,9 +7,11 @@ use thiserror::Error;
 use crate::auth::Role;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct JwtClaims {
     pub sub: String,
     pub jti: String,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub exp: i64,
     pub role: Role,
     pub child_id: Option<String>,

@@ -1,3 +1,4 @@
+use gamiscreen_shared::api::ts_export;
 use std::hash::{Hash, Hasher};
 use std::{
     collections::hash_map::DefaultHasher,
@@ -19,6 +20,16 @@ fn main() {
             web_dir.display()
         );
         return;
+    }
+
+    // Generate shared TypeScript definitions for the web app
+    let generated_ts = web_dir.join("src/generated/api-types.ts");
+    if let Err(err) = ts_export::export_types(&generated_ts) {
+        panic!(
+            "failed to export TypeScript definitions to {}: {}",
+            generated_ts.display(),
+            err
+        );
     }
 
     // Watch all files under gamiscreen-web except node_modules and dist

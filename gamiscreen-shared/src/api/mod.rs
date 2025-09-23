@@ -10,27 +10,33 @@ pub fn tenant_scope(tenant_id: &str) -> String {
 pub mod endpoints;
 #[cfg(feature = "rest-client")]
 pub mod rest;
+#[cfg(feature = "ts")]
+pub mod ts_export;
 
 // Auth
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct AuthReq {
     pub username: String,
     pub password: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct AuthResp {
     pub token: String,
 }
 
 // Children/Tasks
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ChildDto {
     pub id: String,
     pub display_name: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct TaskDto {
     pub id: String,
     pub name: String,
@@ -38,6 +44,7 @@ pub struct TaskDto {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct TaskWithStatusDto {
     pub id: String,
     pub name: String,
@@ -47,6 +54,7 @@ pub struct TaskWithStatusDto {
 
 // Remaining
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct RemainingDto {
     pub child_id: String,
     pub remaining_minutes: i32,
@@ -54,6 +62,7 @@ pub struct RemainingDto {
 
 // Reward
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct RewardReq {
     pub child_id: String,
     pub task_id: Option<String>,
@@ -62,29 +71,35 @@ pub struct RewardReq {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct RewardResp {
     pub remaining_minutes: i32,
 }
 
 // Heartbeat: batch of minute timestamps (UTC epoch minutes)
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct HeartbeatReq {
+    #[cfg_attr(feature = "ts", ts(type = "Array<number>"))]
     pub minutes: Vec<i64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct HeartbeatResp {
     pub remaining_minutes: i32,
 }
 
 // Client registration
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ClientRegisterReq {
     pub child_id: Option<String>,
     pub device_id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct ClientRegisterResp {
     pub token: String,
     pub child_id: String,
@@ -92,6 +107,7 @@ pub struct ClientRegisterResp {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct RewardHistoryItemDto {
     pub time: String, // RFC3339 UTC
     pub description: Option<String>,
@@ -100,17 +116,20 @@ pub struct RewardHistoryItemDto {
 
 // Submissions / Notifications
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct SubmitTaskReq {
     pub child_id: String,
     pub task_id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct NotificationsCountDto {
     pub count: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct NotificationItemDto {
     pub id: i32,
     pub kind: String,
@@ -126,6 +145,7 @@ pub struct NotificationItemDto {
 // specific package and semantic version. Clients should select the
 // newest compatible version by comparing semvers.
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct UpdateManifestDto {
     pub schema_version: u32,
     pub generated_at: String,
@@ -133,6 +153,7 @@ pub struct UpdateManifestDto {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct UpdateItemDto {
     pub package: String, // e.g. "gamiscreen-client"
     pub version: String, // semantic version, e.g. "1.2.3"
@@ -140,6 +161,7 @@ pub struct UpdateItemDto {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct UpdateArtifactDto {
     pub os: String,
     pub arch: String,
@@ -149,6 +171,7 @@ pub struct UpdateArtifactDto {
 
 // Server version
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct VersionInfoDto {
     pub version: String, // semantic version (e.g. "1.2.3")
 }

@@ -84,16 +84,26 @@ export function ChildDetailsPage(props: { childId: string }) {
     setError(null)
     try {
       if (confirm.mode === 'task') {
-        const description = taskNote.trim() || undefined
-        const resp = await rewardMinutes({ child_id: childId, task_id: confirm.task.id, description })
+        const description = taskNote.trim() || null
+        const resp = await rewardMinutes({
+          child_id: childId,
+          task_id: confirm.task.id,
+          minutes: null,
+          description,
+        })
         setRemaining(resp.remaining_minutes)
         // Update last_done locally for immediate UI feedback
         const nowIso = new Date().toISOString()
         setTasks(prev => prev.map(t => t.id === confirm.task.id ? { ...t, last_done: nowIso } : t))
       } else {
         const mins = confirm.minutes
-        const description = customLabel.trim() || undefined
-        const resp = await rewardMinutes({ child_id: childId, minutes: mins, description })
+        const description = customLabel.trim() || null
+        const resp = await rewardMinutes({
+          child_id: childId,
+          task_id: null,
+          minutes: mins,
+          description,
+        })
         setRemaining(resp.remaining_minutes)
       }
       setConfirm(null)
