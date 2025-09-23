@@ -10,21 +10,6 @@ pub const ENV_CONFIG: &str = "GAMISCREEN_CONFIG";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClientConfig {
     pub server_url: String,
-    pub child_id: String,
-    pub device_id: String,
-    #[serde(default = "default_interval")]
-    pub interval_secs: u64,
-    /// Seconds before lock to warn the user with a countdown
-    #[serde(default = "default_warn_before_lock_secs")]
-    pub warn_before_lock_secs: u64,
-}
-
-fn default_interval() -> u64 {
-    60
-}
-
-fn default_warn_before_lock_secs() -> u64 {
-    45
 }
 
 pub fn resolve_config_path(cli_value: Option<PathBuf>) -> Result<PathBuf, AppError> {

@@ -48,15 +48,13 @@ Path resolution
 
 Fields
 - `server_url` (string): base URL of the server, e.g., `http://127.0.0.1:5151`.
-- `child_id` (string): child identifier as configured on the server.
-- `device_id` (string): unique ID for the child’s device.
-- `interval_secs` (number, default 60): heartbeat interval in seconds.
-- `warn_before_lock_secs` (number, default 10): show a countdown notification this many seconds before lock when time is about to run out.
-- `lock_cmd` (array of strings, optional): override lock command if DBus is unavailable. Example: `["loginctl", "lock-session", "$XDG_SESSION_ID"]`.
+
+Derived at runtime
+- Child and device identifiers come from the JWT provisioned during `gamiscreen-client login`; they no longer appear in the config file.
+- Heartbeats run every 60 seconds and a 45-second pre-lock countdown notification is always shown when remaining time drops to one minute. These values are hardcoded for now.
 
 Tokens
 - `gamiscreen-client login` stores a device-bound token in the OS keyring. The agent reads it automatically based on `server_url`.
 
 Systemd (client)
 - A user service unit is provided at `gamiscreen-client/systemd/gamiscreen-client.service`. See docs/INSTALL.md for setup.
-

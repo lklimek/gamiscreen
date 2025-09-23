@@ -68,10 +68,6 @@ pub async fn detect_default() -> Result<Arc<dyn Platform>, AppError> {
     {
         let dummy_cfg = ClientConfig {
             server_url: String::new(),
-            child_id: String::new(),
-            device_id: String::new(),
-            interval_secs: 60,
-            warn_before_lock_secs: 10,
         };
         let backend = linux::lock::detect_lock_backend(&dummy_cfg).await?;
         Ok(Arc::new(linux::LinuxPlatform::new(backend)))

@@ -98,7 +98,7 @@ journalctl --user -u gamiscreen-client -f
 Notes
 - The agent sends heartbeats every minute and locks the session when time runs out or when the server is unreachable for ~5 minutes.
 - Config resolution order: `--config`, `$GAMISCREEN_CONFIG`, then `~/.config/gamiscreen/client.yaml`.
-- You can override the lock mechanism with `lock_cmd` in the config if DBus is not available.
+- Pre-lock countdown: the client always shows a critical notification 45 seconds before a lock would trigger.
 
 ### Lock Testing (Linux)
 

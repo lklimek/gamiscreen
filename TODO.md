@@ -82,9 +82,9 @@ MVP will be shipped in three parts, in order: Server → Web App → Linux Clien
 - [x] Integration with locking
   - [x] During countdown, enforce screen lock when the countdown reaches zero using existing `LockBackend`.
   - [x] Cancel countdown on early lock or process shutdown to avoid stale toasts.
-- [ ] Config & docs
-  - [ ] Document `warn_before_lock_secs` in `gamiscreen-client/config.example.yaml` and `docs/INSTALL.md`.
-  - [ ] Add short “How it works” note in `README.md` (10s pre‑lock warning and visible countdown).
+- [x] Config & docs
+  - [x] Document `warn_before_lock_secs` in `gamiscreen-client/config.example.yaml` and `docs/INSTALL.md`.
+  - [x] Add short “How it works” note in `README.md` (10s pre‑lock warning and visible countdown).
 - [ ] Windows (planned)
   - [ ] Reuse `notify-rust` Windows backend; document caveats (AppUserModelID/Start Menu shortcut requirements for toasts), and fall back to log-only when unavailable.
   - [ ] Parity plan for session lock integration on Windows.

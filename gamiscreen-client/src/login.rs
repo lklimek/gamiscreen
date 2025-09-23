@@ -87,10 +87,6 @@ pub async fn login(
         .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
     let cfg = crate::config::ClientConfig {
         server_url: server_url.clone(),
-        child_id: reg.child_id,
-        device_id: reg.device_id,
-        interval_secs: 60,
-        warn_before_lock_secs: 10,
     };
     let path = crate::config::default_config_path()
         .ok_or_else(|| AppError::Config("could not determine config dir".into()))?;

@@ -18,6 +18,8 @@ pub use config::{ClientConfig, load_config, resolve_config_path};
 use std::sync::Arc;
 
 const RELOCK_INTERVAL: Duration = Duration::from_secs(5);
+const HEARTBEAT_INTERVAL_SECS: u64 = 60;
+const WARN_BEFORE_LOCK_SECS: u64 = 45;
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -97,6 +99,14 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
     let token = read_token_from_keyring(&key)?;
     let claims = jwt::decode_unverified(&token)
         .map_err(|e| AppError::Http(format!("invalid token: {e}")))?;
+    let child_id = claims
+        .child_id
+        .clone()
+        .ok_or_else(|| AppError::Config("device token missing child_id".into()))?;
+    let device_id = claims
+        .device_id
+        .clone()
+        .ok_or_else(|| AppError::Config("device token missing device_id".into()))?;
 
     // SSE hub: subscribe re-locker to server events
     let hub = match sse::SseHub::new(&cfg.server_url, &token, &claims) {
@@ -112,7 +122,7 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
 
     // Countdown task controller
     let countdown_task =
-        CountdownTask::new(cfg.interval_secs, cfg.warn_before_lock_secs, plat.clone());
+        CountdownTask::new(HEARTBEAT_INTERVAL_SECS, WARN_BEFORE_LOCK_SECS, plat.clone());
 
     // Create cancellation token and spawn main loop task
     let cancel = tokio_util::sync::CancellationToken::new();
@@ -122,12 +132,16 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
     let plat_cloned = plat.clone();
     let cancel_child = cancel.child_token();
     let claims_cloned = claims.clone();
+    let child_id_cloned = child_id.clone();
+    let device_id_cloned = device_id.clone();
     let mut handle = tokio::spawn(async move {
         let _ = main_loop(
             cancel_child,
             cfg_cloned,
             token_cloned,
             claims_cloned,
+            child_id_cloned,
+            device_id_cloned,
             relocker_cloned,
             plat_cloned,
             countdown_task,
@@ -159,13 +173,16 @@ async fn main_loop(
     cfg: ClientConfig,
     token: String,
     claims: JwtClaims,
+    child_id: String,
+    device_id: String,
     relocker: ReLocker,
     platform: Arc<dyn platform::Platform>,
     countdown_task: CountdownTask,
 ) -> Result<(), AppError> {
     let mut failures: u32 = 0;
     let mut unsent_minutes: BTreeSet<i64> = BTreeSet::new();
-    let fail_fuse_secs = 300u64; // 5 minutes
+    let fail_fuse_secs = HEARTBEAT_INTERVAL_SECS * 5; // 5 minutes
+    let interval = Duration::from_secs(HEARTBEAT_INTERVAL_SECS);
 
     loop {
         if cancel.is_cancelled() {
@@ -181,7 +198,6 @@ async fn main_loop(
             countdown_task.cancel().await;
             info!("session locked; skipping heartbeat and accounting for this interval");
             let elapsed = start.elapsed();
-            let interval = Duration::from_secs(cfg.interval_secs);
             if elapsed < interval {
                 tokio::select! {
                     _ = cancel.cancelled() => { break; }
@@ -194,7 +210,16 @@ async fn main_loop(
         let now_min: i64 = chrono::Utc::now().timestamp() / 60;
         unsent_minutes.insert(now_min);
 
-        match send_pending(&cfg, &claims.tenant_id, &token, &mut unsent_minutes).await {
+        match send_pending(
+            &cfg.server_url,
+            &claims.tenant_id,
+            &child_id,
+            &device_id,
+            &token,
+            &mut unsent_minutes,
+        )
+        .await
+        {
             Ok(Some(rem)) => {
                 info!(remaining = rem, "heartbeat ok");
                 failures = 0;
@@ -216,7 +241,7 @@ async fn main_loop(
             Err(e) => {
                 failures = failures.saturating_add(1);
                 error!(error=%e, failures=failures, "heartbeat failed");
-                let elapsed_fail_secs = cfg.interval_secs.saturating_mul(failures as u64);
+                let elapsed_fail_secs = HEARTBEAT_INTERVAL_SECS.saturating_mul(failures as u64);
                 if elapsed_fail_secs >= fail_fuse_secs {
                     warn!(
                         "server unreachable threshold exceeded; enabling re-lock loop as failsafe"
@@ -229,7 +254,6 @@ async fn main_loop(
         }
 
         let elapsed = start.elapsed();
-        let interval = Duration::from_secs(cfg.interval_secs);
         if elapsed < interval {
             tokio::select! {
                 _ = cancel.cancelled() => { break; }
@@ -245,23 +269,20 @@ async fn main_loop(
 }
 
 async fn send_pending(
-    cfg: &ClientConfig,
+    server_url: &str,
     tenant_id: &str,
+    child_id: &str,
+    device_id: &str,
     token: &str,
     unsent_minutes: &mut BTreeSet<i64>,
 ) -> Result<Option<i32>, AppError> {
     if unsent_minutes.is_empty() {
         return Ok(None);
     }
-    let base = crate::config::normalize_server_url(&cfg.server_url);
+    let base = crate::config::normalize_server_url(server_url);
     let minutes: Vec<i64> = unsent_minutes.iter().copied().collect();
     let resp = api::rest::child_device_heartbeat_with_minutes(
-        &base,
-        tenant_id,
-        &cfg.child_id,
-        &cfg.device_id,
-        token,
-        &minutes,
+        &base, tenant_id, child_id, device_id, token, &minutes,
     )
     .await
     .map_err(|e| AppError::Http(format!("heartbeat error: {e}")))?;
