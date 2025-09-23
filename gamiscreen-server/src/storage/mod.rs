@@ -495,6 +495,36 @@ impl Store {
         Ok(())
     }
 
+    pub async fn list_usage_minutes(
+        &self,
+        child: &str,
+        minute_from: i64,
+        minute_to: i64,
+    ) -> Result<Vec<i64>, String> {
+        use schema::usage_minutes::dsl as um;
+        if minute_to <= minute_from {
+            return Ok(Vec::new());
+        }
+        let pool = self.pool.clone();
+        let child_owned = child.to_string();
+        tokio::task::spawn_blocking(move || -> Result<Vec<i64>, String> {
+            let mut conn = pool.get().map_err(|e| e.to_string())?;
+            configure_sqlite_conn(&mut conn).map_err(|e| format!("pragma error: {e}"))?;
+            let rows = um::usage_minutes
+                .filter(um::child_id.eq(&child_owned))
+                .filter(um::minute_ts.ge(minute_from))
+                .filter(um::minute_ts.lt(minute_to))
+                .select(um::minute_ts)
+                .distinct()
+                .order(um::minute_ts.asc())
+                .load::<i64>(&mut conn)
+                .map_err(|e| e.to_string())?;
+            Ok(rows)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
     pub async fn compute_remaining(&self, child: &str) -> Result<i32, String> {
         use diesel::dsl::{count_distinct, sum};
         let pool = self.pool.clone();

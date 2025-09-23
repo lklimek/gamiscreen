@@ -9,7 +9,7 @@ use super::{
     AuthReq, AuthResp, ChildDto, ClientRegisterReq, ClientRegisterResp, HeartbeatReq,
     HeartbeatResp, NotificationItemDto, NotificationsCountDto, RemainingDto, RewardHistoryItemDto,
     RewardReq, RewardResp, SubmitTaskReq, TaskDto, TaskWithStatusDto, UpdateArtifactDto,
-    UpdateItemDto, UpdateManifestDto, VersionInfoDto,
+    UpdateItemDto, UpdateManifestDto, UsageBucketDto, UsageSeriesDto, VersionInfoDto,
 };
 
 #[cfg(feature = "ts")]
@@ -57,6 +57,8 @@ pub fn export_types(path: impl AsRef<Path>) -> std::io::Result<()> {
     write_decl(ClientRegisterReq::decl())?;
     write_decl(ClientRegisterResp::decl())?;
     write_decl(RewardHistoryItemDto::decl())?;
+    write_decl(UsageBucketDto::decl())?;
+    write_decl(UsageSeriesDto::decl())?;
     write_decl(SubmitTaskReq::decl())?;
     write_decl(NotificationsCountDto::decl())?;
     write_decl(NotificationItemDto::decl())?;

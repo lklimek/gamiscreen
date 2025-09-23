@@ -54,6 +54,16 @@ pub fn child_reward(base: &str, tenant_id: &str, child_id: &str) -> String {
         ),
     )
 }
+pub fn child_usage(base: &str, tenant_id: &str, child_id: &str) -> String {
+    base_join(
+        base,
+        &format!(
+            "{}/children/{}/usage",
+            tenant_scope(tenant_id),
+            enc(child_id)
+        ),
+    )
+}
 pub fn child_register(base: &str, tenant_id: &str, child_id: &str) -> String {
     base_join(
         base,

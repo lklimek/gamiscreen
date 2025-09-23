@@ -27,6 +27,10 @@ export type ClientRegisterResp = { token: string, child_id: string, device_id: s
 
 export type RewardHistoryItemDto = { time: string, description: string | null, minutes: number, };
 
+export type UsageBucketDto = { start: string, minutes: number, };
+
+export type UsageSeriesDto = { start: string, end: string, bucket_minutes: number, buckets: Array<UsageBucketDto>, total_minutes: number, };
+
 export type SubmitTaskReq = { child_id: string, task_id: string, };
 
 export type NotificationsCountDto = { count: number, };

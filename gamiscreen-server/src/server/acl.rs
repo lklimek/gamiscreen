@@ -68,6 +68,7 @@ fn allow_parent(method: &Method, rest: &[&str]) -> Result<(), AppError> {
             Ok(())
         }
         ["children", _, "remaining"] if *method == Method::GET => Ok(()),
+        ["children", _, "usage"] if *method == Method::GET => Ok(()),
         ["children", _, "reward"] if *method == Method::GET || *method == Method::POST => Ok(()),
         ["children", _, "tasks"] if *method == Method::GET => Ok(()),
         ["children", _, "register"] if *method == Method::POST => Ok(()),
@@ -79,6 +80,7 @@ fn allow_child(method: &Method, rest: &[&str], claims: &JwtClaims) -> Result<(),
     match rest {
         ["tasks"] if *method == Method::GET => Ok(()),
         ["children", child, "remaining"] if *method == Method::GET => ensure_child(claims, child),
+        ["children", child, "usage"] if *method == Method::GET => ensure_child(claims, child),
         ["children", child, "tasks"] if *method == Method::GET => ensure_child(claims, child),
         ["children", child, "reward"] if *method == Method::GET => ensure_child(claims, child),
         ["children", child, "tasks", _, "submit"] if *method == Method::POST => {

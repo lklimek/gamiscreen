@@ -137,6 +137,7 @@ pub fn router(state: AppState) -> Router {
         .route("/children/{id}/remaining", get(api_remaining))
         .route("/children/{id}/reward", post(api_child_reward))
         .route("/children/{id}/reward", get(api_list_child_rewards))
+        .route("/children/{id}/usage", get(api_list_child_usage))
         .route(
             "/children/{id}/device/{device_id}/heartbeat",
             post(api_device_heartbeat),
@@ -516,6 +517,12 @@ struct PageOpts {
     per_page: Option<usize>,
 }
 
+#[derive(Deserialize)]
+struct UsageOpts {
+    days: Option<u32>,
+    bucket_minutes: Option<u32>,
+}
+
 async fn api_list_child_rewards(
     State(state): State<AppState>,
     Extension(_auth): Extension<AuthCtx>,
@@ -542,6 +549,77 @@ async fn api_list_child_rewards(
         })
         .collect();
     Ok(Json(items))
+}
+
+async fn api_list_child_usage(
+    State(state): State<AppState>,
+    Extension(_auth): Extension<AuthCtx>,
+    Path(id): Path<String>,
+    Query(opts): Query<UsageOpts>,
+) -> Result<Json<api::UsageSeriesDto>, AppError> {
+    let now = chrono::Utc::now();
+    let days = opts.days.unwrap_or(7).clamp(1, 90);
+    let bucket_minutes = opts.bucket_minutes.unwrap_or(60).clamp(1, (24 * 60) as u32);
+
+    let now_minute = now.timestamp() / 60;
+    let end_minute = now_minute + 1;
+    let span_minutes = (days as i64) * 24 * 60;
+    let start_minute = end_minute - span_minutes;
+
+    let usage_minutes = state
+        .store
+        .list_usage_minutes(&id, start_minute, end_minute)
+        .await
+        .map_err(AppError::internal)?;
+
+    let bucket = bucket_minutes as i64;
+    let start_bucket = (start_minute / bucket) * bucket;
+    let end_bucket = ((end_minute + bucket - 1) / bucket) * bucket;
+    let mut counts: std::collections::BTreeMap<i64, u32> = std::collections::BTreeMap::new();
+    for minute in usage_minutes.iter().copied() {
+        let bucket_start = (minute / bucket) * bucket;
+        counts
+            .entry(bucket_start)
+            .and_modify(|c| *c += 1)
+            .or_insert(1);
+    }
+
+    let mut buckets = Vec::new();
+    let mut cursor = start_bucket;
+    let mut total = 0u32;
+    while cursor < end_bucket {
+        let count = counts.remove(&cursor).unwrap_or(0);
+        total = total.saturating_add(count);
+        let ts = cursor
+            .checked_mul(60)
+            .and_then(|secs| chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0))
+            .ok_or_else(|| AppError::internal("invalid usage timestamp"))?;
+        let start_iso = ts.to_rfc3339();
+        buckets.push(api::UsageBucketDto {
+            start: start_iso,
+            minutes: count,
+        });
+        cursor += bucket;
+    }
+
+    let series_start = start_minute
+        .checked_mul(60)
+        .and_then(|secs| chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0))
+        .ok_or_else(|| AppError::internal("invalid usage timestamp"))?;
+    let series_end = end_minute
+        .checked_mul(60)
+        .and_then(|secs| chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0))
+        .ok_or_else(|| AppError::internal("invalid usage timestamp"))?;
+
+    let dto = api::UsageSeriesDto {
+        start: series_start.to_rfc3339(),
+        end: series_end.to_rfc3339(),
+        bucket_minutes,
+        buckets,
+        total_minutes: total,
+    };
+
+    Ok(Json(dto))
 }
 
 // Use shared DTOs

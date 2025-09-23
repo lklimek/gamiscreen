@@ -160,3 +160,73 @@ dialog::-webkit-scrollbar {
     width: 100%;
   }
 }
+
+.usageChart {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  min-height: 160px;
+  padding: 8px 0;
+}
+
+.usageBar {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.usageBarFill {
+  width: 100%;
+  background: linear-gradient(180deg, #6366f1 0%, #4f46e5 100%);
+  border-radius: 6px 6px 0 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  transition: opacity 0.2s ease;
+  padding: 2px;
+  box-sizing: border-box;
+}
+
+.usageBarFill[data-empty="true"] {
+  background: #e5e7eb;
+  color: #4b5563;
+}
+
+.usageBarFill span {
+  padding: 2px 4px;
+  line-height: 1;
+}
+
+.usageBarLabel {
+  font-size: 12px;
+  text-align: center;
+  color: #6b7280;
+  white-space: nowrap;
+}
+
+.usageBreakdown {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 4px 12px;
+  font-size: 13px;
+  color: #4b5563;
+}
+
+.usageBreakdown li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.usageBreakdown li span:last-child {
+  font-variant-numeric: tabular-nums;
+}

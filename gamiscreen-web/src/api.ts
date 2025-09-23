@@ -17,6 +17,8 @@ import type {
   SubmitTaskReq,
   TaskDto,
   TaskWithStatusDto,
+  UsageBucketDto,
+  UsageSeriesDto,
   VersionInfoDto,
 } from './generated/api-types'
 
@@ -39,6 +41,8 @@ export type {
   SubmitTaskReq,
   TaskDto,
   TaskWithStatusDto,
+  UsageBucketDto,
+  UsageSeriesDto,
   VersionInfoDto,
 } from './generated/api-types'
 
@@ -175,6 +179,18 @@ export async function listChildTasks(childId: string) {
 export async function listChildRewards(childId: string, page = 1, per_page = 10) {
   const p = new URLSearchParams({ page: String(page), per_page: String(per_page) })
   return request<RewardHistoryItemDto[]>(`${tenantPath(`children/${encodeURIComponent(childId)}/reward`)}?${p.toString()}`)
+}
+
+export async function listChildUsage(
+  childId: string,
+  opts: { days?: number, bucket_minutes?: number } = {},
+) {
+  const params = new URLSearchParams()
+  if (typeof opts.days === 'number') params.set('days', String(opts.days))
+  if (typeof opts.bucket_minutes === 'number') params.set('bucket_minutes', String(opts.bucket_minutes))
+  const qs = params.toString()
+  const url = `${tenantPath(`children/${encodeURIComponent(childId)}/usage`)}${qs ? `?${qs}` : ''}`
+  return request<UsageSeriesDto>(url)
 }
 
 export async function rewardMinutes(body: RewardReq) {

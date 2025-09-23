@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getAuthClaims, getRemaining, listChildren, listChildRewards, listChildTasks, RewardHistoryItemDto, rewardMinutes, submitTask, TaskWithStatusDto } from '../api'
+import { getAuthClaims, getRemaining, listChildren, listChildRewards, listChildTasks, listChildUsage, RewardHistoryItemDto, rewardMinutes, submitTask, TaskWithStatusDto, UsageSeriesDto } from '../api'
 
 export function ChildDetailsPage(props: { childId: string }) {
   const { childId } = props
@@ -16,8 +16,13 @@ export function ChildDetailsPage(props: { childId: string }) {
   const [customMinutes, setCustomMinutes] = useState('')
   const [customLabel, setCustomLabel] = useState('')
   const [rewards, setRewards] = useState<RewardHistoryItemDto[]>([])
+  const [usage, setUsage] = useState<UsageSeriesDto | null>(null)
+  const [usageLoading, setUsageLoading] = useState(false)
+  const [usageError, setUsageError] = useState<string | null>(null)
   const [page, setPage] = useState(1)
   const perPage = 10
+  const usageDays = 7
+  const usageBucketMinutes = 24 * 60
   const [rewardsOpen, setRewardsOpen] = useState(true)
   const [rewardsLoading, setRewardsLoading] = useState(false)
   // Track locally submitted tasks to avoid duplicate submissions until page reload or approval
@@ -73,6 +78,21 @@ export function ChildDetailsPage(props: { childId: string }) {
   }
 
   useEffect(() => { loadRewards(page) }, [childId, page])
+  async function loadUsageData() {
+    try {
+      setUsageLoading(true)
+      setUsageError(null)
+      const data = await listChildUsage(childId, { days: usageDays, bucket_minutes: usageBucketMinutes })
+      setUsage(data)
+    } catch (e: any) {
+      const msg = e?.message || 'Failed to load usage'
+      setUsageError(typeof msg === 'string' ? msg : 'Failed to load usage')
+    } finally {
+      setUsageLoading(false)
+    }
+  }
+
+  useEffect(() => { loadUsageData() }, [childId])
   useEffect(() => {
     const id = setInterval(() => { load() }, 60_000)
     return () => clearInterval(id)
@@ -144,6 +164,33 @@ export function ChildDetailsPage(props: { childId: string }) {
             {remaining ?? '—'} min
           </div>
         </div>
+      </div>
+      <div className="card" style={{ padding: '12px' }}>
+        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 className="title" style={{ fontSize: 16, margin: 0 }}>Usage (last {usageDays} days)</h3>
+          <button
+            className="secondary outline iconButton"
+            onClick={loadUsageData}
+            disabled={usageLoading}
+            aria-label="Refresh usage"
+            title={usageLoading ? 'Refreshing…' : 'Refresh'}
+          >
+            ↻
+          </button>
+        </div>
+        {usageError && <p className="error">{usageError}</p>}
+        {usageLoading && !usage && <p className="subtitle">Loading usage…</p>}
+        {usage && usage.buckets.length > 0 && (
+          <UsageChart series={usage} />
+        )}
+        {!usageLoading && usage && usage.buckets.length === 0 && (
+          <p className="subtitle">No usage recorded for this period.</p>
+        )}
+        {usage && (
+          <p className="subtitle">
+            Total {usage.total_minutes} minutes used across the last {usageDays} days.
+          </p>
+        )}
       </div>
       <div className="card" style={{ padding: '12px' }}>
         <h3 className="title" style={{ fontSize: 16, marginBottom: 8 }}>Tasks</h3>
@@ -345,5 +392,57 @@ export function ChildDetailsPage(props: { childId: string }) {
         </p>
       )}
     </section>
+  )
+}
+
+function UsageChart(props: { series: UsageSeriesDto }) {
+  const { series } = props
+  const buckets = series.buckets
+  if (!buckets.length) return null
+  const max = buckets.reduce((acc, bucket) => Math.max(acc, bucket.minutes), 0)
+
+  return (
+    <div className="col" style={{ gap: 12 }}>
+      <div className="usageChart" role="list" aria-label="Usage minutes per period">
+        {buckets.map(bucket => {
+          const date = new Date(bucket.start)
+          const shortLabel = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+          const detailLabel = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', weekday: 'short' })
+          const ratio = max > 0 ? bucket.minutes / max : 0
+          const percent = ratio === 0 ? 0 : Math.min(100, Math.max(12, ratio * 100))
+          const heightStyle = bucket.minutes === 0 ? '4px' : `${percent}%`
+          return (
+            <div
+              key={bucket.start}
+              className="usageBar"
+              role="listitem"
+              aria-label={`${detailLabel}: ${bucket.minutes} minutes`}
+              title={`${detailLabel}: ${bucket.minutes} minutes`}
+            >
+              <div
+                className="usageBarFill"
+                data-empty={bucket.minutes === 0}
+                style={{ height: heightStyle }}
+              >
+                {bucket.minutes > 0 && <span>{bucket.minutes}</span>}
+              </div>
+              <div className="usageBarLabel">{shortLabel}</div>
+            </div>
+          )
+        })}
+      </div>
+      <ul className="usageBreakdown">
+        {buckets.map(bucket => {
+          const date = new Date(bucket.start)
+          const label = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', weekday: 'short' })
+          return (
+            <li key={`summary-${bucket.start}`}>
+              <span>{label}</span>
+              <span>{bucket.minutes} min</span>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
   )
 }

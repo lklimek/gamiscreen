@@ -114,6 +114,23 @@ pub struct RewardHistoryItemDto {
     pub minutes: i32,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct UsageBucketDto {
+    pub start: String, // RFC3339 UTC bucket start
+    pub minutes: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct UsageSeriesDto {
+    pub start: String, // RFC3339 UTC (requested start)
+    pub end: String,   // RFC3339 UTC (exclusive end)
+    pub bucket_minutes: u32,
+    pub buckets: Vec<UsageBucketDto>,
+    pub total_minutes: u32,
+}
+
 // Submissions / Notifications
 #[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
