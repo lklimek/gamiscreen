@@ -2,15 +2,44 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getAuthClaims, getRemaining, listChildren, listChildRewards, listChildTasks, listChildUsage, RewardHistoryItemDto, rewardMinutes, submitTask, TaskWithStatusDto, UsageSeriesDto } from '../api'
 import { MINUTES_PER_DAY, MINUTES_PER_HOUR, MINUTES_PER_WEEK, UsageChart } from '../components/UsageChart'
 
-const USAGE_PRESETS = [
-  { key: '10m', label: '10 min', bucketMinutes: 10, windowMinutes: 4 * MINUTES_PER_HOUR },
-  { key: '1h', label: '1 hour', bucketMinutes: MINUTES_PER_HOUR, windowMinutes: MINUTES_PER_DAY },
-  { key: '1d', label: '1 day', bucketMinutes: MINUTES_PER_DAY, windowMinutes: 14 * MINUTES_PER_DAY },
-  { key: '1w', label: '1 week', bucketMinutes: MINUTES_PER_WEEK, windowMinutes: 26 * MINUTES_PER_WEEK },
+const USAGE_BASE_PRESETS = [
+  { key: '1h', label: '1 hour', bucketMinutes: MINUTES_PER_HOUR },
+  { key: '1d', label: '1 day', bucketMinutes: MINUTES_PER_DAY },
+  { key: '1w', label: '1 week', bucketMinutes: MINUTES_PER_WEEK },
 ] as const
 
-type UsagePreset = (typeof USAGE_PRESETS)[number]
-type UsagePresetKey = UsagePreset['key']
+type UsageBasePreset = (typeof USAGE_BASE_PRESETS)[number]
+type UsagePresetKey = UsageBasePreset['key']
+type UsageOption = UsageBasePreset & { windowMinutes: number }
+type ViewportVariant = 'mobilePortrait' | 'mobileLandscape' | 'desktop'
+
+const VARIANT_WINDOWS: Record<ViewportVariant, Record<UsagePresetKey, number>> = {
+  mobilePortrait: {
+    '1h': 6 * MINUTES_PER_HOUR,
+    '1d': 7 * MINUTES_PER_DAY,
+    '1w': 8 * MINUTES_PER_WEEK,
+  },
+  mobileLandscape: {
+    '1h': 12 * MINUTES_PER_HOUR,
+    '1d': 14 * MINUTES_PER_DAY,
+    '1w': 16 * MINUTES_PER_WEEK,
+  },
+  desktop: {
+    '1h': 24 * MINUTES_PER_HOUR,
+    '1d': 14 * MINUTES_PER_DAY,
+    '1w': 16 * MINUTES_PER_WEEK,
+  },
+} as const
+
+function detectViewportVariant(): ViewportVariant {
+  if (typeof window === 'undefined') return 'desktop'
+  const width = window.innerWidth
+  if (width >= 1024) return 'desktop'
+  const isLandscape = typeof window.matchMedia === 'function'
+    ? window.matchMedia('(orientation: landscape)').matches
+    : width > window.innerHeight
+  return isLandscape ? 'mobileLandscape' : 'mobilePortrait'
+}
 
 export function ChildDetailsPage(props: { childId: string }) {
   const { childId } = props
@@ -31,9 +60,15 @@ export function ChildDetailsPage(props: { childId: string }) {
   const [usageLoading, setUsageLoading] = useState(false)
   const [usageError, setUsageError] = useState<string | null>(null)
   const [usagePresetKey, setUsagePresetKey] = useState<UsagePresetKey>('1d')
-  const usagePreset = useMemo<UsagePreset>(() => {
-    return USAGE_PRESETS.find(p => p.key === usagePresetKey) ?? USAGE_PRESETS[0]
-  }, [usagePresetKey])
+  const [viewportVariant, setViewportVariant] = useState<ViewportVariant>(() => detectViewportVariant())
+  const usageOptions = useMemo<UsageOption[]>(() => {
+    const windows = VARIANT_WINDOWS[viewportVariant]
+    return USAGE_BASE_PRESETS.map(p => ({ ...p, windowMinutes: windows[p.key] }))
+  }, [viewportVariant])
+  const usagePreset = useMemo<UsageOption>(() => {
+    const found = usageOptions.find(p => p.key === usagePresetKey)
+    return (found ?? usageOptions[0])!
+  }, [usageOptions, usagePresetKey])
   const [page, setPage] = useState(1)
   const perPage = 10
   const [rewardsOpen, setRewardsOpen] = useState(true)
@@ -41,6 +76,37 @@ export function ChildDetailsPage(props: { childId: string }) {
   // Track locally submitted tasks to avoid duplicate submissions until page reload or approval
   const [submitted, setSubmitted] = useState<Set<string>>(new Set())
   const usageRequestIdRef = useRef(0)
+
+  useEffect(() => {
+    if (!usageOptions.length) return
+    if (!usageOptions.some(p => p.key === usagePresetKey)) {
+      setUsagePresetKey(usageOptions[0].key)
+    }
+  }, [usageOptions, usagePresetKey])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const updateVariant = () => setViewportVariant(detectViewportVariant())
+    updateVariant()
+    window.addEventListener('resize', updateVariant)
+    let orientationQuery: MediaQueryList | null = null
+    let orientationCleanup: (() => void) | null = null
+    if (typeof window.matchMedia === 'function') {
+      orientationQuery = window.matchMedia('(orientation: landscape)')
+      const orientationListener = () => updateVariant()
+      if (orientationQuery.addEventListener) {
+        orientationQuery.addEventListener('change', orientationListener)
+        orientationCleanup = () => orientationQuery?.removeEventListener('change', orientationListener)
+      } else if (orientationQuery.addListener) {
+        orientationQuery.addListener(orientationListener)
+        orientationCleanup = () => orientationQuery?.removeListener(orientationListener)
+      }
+    }
+    return () => {
+      window.removeEventListener('resize', updateVariant)
+      if (orientationCleanup) orientationCleanup()
+    }
+  }, [])
 
   async function load() {
     setLoading(true)
@@ -125,7 +191,7 @@ export function ChildDetailsPage(props: { childId: string }) {
   useEffect(() => {
     setUsage(null)
     loadUsageData()
-  }, [childId, usagePresetKey, loadUsageData])
+  }, [loadUsageData])
   useEffect(() => {
     const id = setInterval(() => { load() }, 60_000)
     return () => clearInterval(id)
@@ -311,7 +377,7 @@ export function ChildDetailsPage(props: { childId: string }) {
           </button>
         </div>
         <div className="row usageControls" style={{ gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-          {USAGE_PRESETS.map(preset => {
+          {usageOptions.map(preset => {
             const active = preset.key === usagePreset.key
             return (
               <button

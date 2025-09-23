@@ -11,7 +11,6 @@ export function UsageChart(props: { series: UsageSeriesDto }) {
   const bucketMinutes = series.bucket_minutes || 0
   const max = buckets.reduce((acc, bucket) => Math.max(acc, bucket.minutes), 0)
   const showValues = buckets.length <= 40
-  const showBreakdown = buckets.length <= 60
 
   return (
     <div className="col" style={{ gap: 12 }}>
@@ -42,20 +41,6 @@ export function UsageChart(props: { series: UsageSeriesDto }) {
           )
         })}
       </div>
-      {showBreakdown && (
-        <ul className="usageBreakdown">
-          {buckets.map(bucket => {
-            const date = new Date(bucket.start)
-            const { detail } = getBucketLabels(date, bucketMinutes)
-            return (
-              <li key={`summary-${bucket.start}`}>
-                <span>{detail}</span>
-                <span>{bucket.minutes} min</span>
-              </li>
-            )
-          })}
-        </ul>
-      )}
     </div>
   )
 }
