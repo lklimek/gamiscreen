@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import packageInfo from '../package.json'
 import { getAuthClaims, getServerVersion, getToken, notificationsCount, renewToken, setToken } from './api'
 
 const API_V1_PREFIX = '/api/v1'
@@ -40,6 +41,7 @@ function useHashRoute(): [Route, (r: Route, opts?: { childId?: string }) => void
 }
 
 export function App() {
+  const webVersion = packageInfo.version
   const [route, nav, params] = useHashRoute()
   const [token, setTokenState] = useState<string | null>(() => getToken())
   const claims = getAuthClaims()
@@ -343,7 +345,7 @@ export function App() {
           <small>Use responsibly. Reward healthy habits.</small>
         </p>
         <p style={{ margin: 0, fontSize: 10, color: 'var(--muted-color, #666)' }}>
-          Server&nbsp;v{serverVersion ?? '…'} · Tenant&nbsp;{claims?.tenant_id ?? '—'}
+          Server&nbsp;v{serverVersion ?? '…'} · Web&nbsp;v{webVersion} · Tenant&nbsp;{claims?.tenant_id ?? '—'}
         </p>
       </footer>
       {!installed && installEvt && (

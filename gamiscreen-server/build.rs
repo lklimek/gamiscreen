@@ -1,4 +1,5 @@
 use gamiscreen_shared::api::ts_export;
+use serde_json::Value;
 use std::hash::{Hash, Hasher};
 use std::{
     collections::hash_map::DefaultHasher,
@@ -11,6 +12,7 @@ use std::{
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let web_dir = manifest_dir.join("../gamiscreen-web");
+    let workspace_manifest = manifest_dir.join("../Cargo.toml");
     let _out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
     // If web dir doesn’t exist, nothing to do.
@@ -20,6 +22,15 @@ fn main() {
             web_dir.display()
         );
         return;
+    }
+
+    if workspace_manifest.exists() {
+        println!("cargo:rerun-if-changed={}", workspace_manifest.display());
+    }
+
+    // Ensure the web package version tracks the workspace version
+    if let Err(err) = sync_web_package_version(&web_dir) {
+        panic!("failed to synchronize gamiscreen-web version: {}", err);
     }
 
     // Generate shared TypeScript definitions for the web app
@@ -117,6 +128,115 @@ fn main() {
             }
         }
     }
+}
+
+fn sync_web_package_version(web_dir: &Path) -> Result<(), String> {
+    let version = env::var("CARGO_PKG_VERSION")
+        .map_err(|err| format!("CARGO_PKG_VERSION not available: {err}"))?;
+    let package_json_path = web_dir.join("package.json");
+    if !package_json_path.exists() {
+        return Err(format!("{} not found", package_json_path.display()));
+    }
+
+    let mut updated = update_version_in_file(&package_json_path, &version, false)?;
+    let package_lock_path = web_dir.join("package-lock.json");
+    if package_lock_path.exists() {
+        updated |= update_version_in_file(&package_lock_path, &version, true)?;
+    }
+
+    if updated {
+        println!(
+            "cargo:warning=Synchronized gamiscreen-web version to {}",
+            version
+        );
+    }
+
+    Ok(())
+}
+
+fn update_version_in_file(
+    path: &Path,
+    version: &str,
+    update_lock_root: bool,
+) -> Result<bool, String> {
+    let raw = fs::read_to_string(path)
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    let json: Value = serde_json::from_str(&raw)
+        .map_err(|err| format!("failed to parse {}: {err}", path.display()))?;
+
+    let current = json
+        .as_object()
+        .and_then(|obj| obj.get("version"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| format!("{} missing string version field", path.display()))?;
+
+    if current == version {
+        return Ok(false);
+    }
+
+    let mut updated =
+        replace_version_literal(&raw, current, version, 0, path, "top-level version")?;
+
+    if update_lock_root {
+        if let Some(root_version) = json
+            .get("packages")
+            .and_then(|v| v.as_object())
+            .and_then(|map| map.get(""))
+            .and_then(|v| v.as_object())
+            .and_then(|obj| obj.get("version"))
+            .and_then(|v| v.as_str())
+        {
+            if root_version != version {
+                let packages_pos = updated
+                    .find("\"packages\"")
+                    .ok_or_else(|| format!("{} missing packages section", path.display()))?;
+                let empty_key_pos = updated[packages_pos..]
+                    .find("\"\": {")
+                    .map(|idx| packages_pos + idx)
+                    .ok_or_else(|| {
+                        format!("could not locate root package entry in {}", path.display())
+                    })?;
+                updated = replace_version_literal(
+                    &updated,
+                    root_version,
+                    version,
+                    empty_key_pos,
+                    path,
+                    "root package version",
+                )?;
+            }
+        }
+    }
+
+    fs::write(path, updated).map_err(|err| format!("failed to write {}: {err}", path.display()))?;
+
+    Ok(true)
+}
+
+fn replace_version_literal(
+    source: &str,
+    current: &str,
+    desired: &str,
+    search_start: usize,
+    path: &Path,
+    context: &str,
+) -> Result<String, String> {
+    let needle = format!("\"version\": \"{}\"", current);
+    let haystack = &source[search_start..];
+    let relative = haystack.find(&needle).ok_or_else(|| {
+        format!(
+            "could not find {context} ({}) in {}",
+            needle,
+            path.display()
+        )
+    })?;
+    let pos = search_start + relative;
+    let mut result =
+        String::with_capacity(source.len() + desired.len().saturating_sub(current.len()));
+    result.push_str(&source[..pos]);
+    result.push_str(&format!("\"version\": \"{}\"", desired));
+    result.push_str(&source[pos + needle.len()..]);
+    Ok(result)
 }
 
 fn watch_dir_recursively(root: &Path, ignore_dirs: &[&str]) {

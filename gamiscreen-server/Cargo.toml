@@ -17,12 +17,12 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 futures = "0.3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = "1.0.145"
 serde_yaml = "0.9"
 tower-http = { version = "0.6.6", features = ["cors", "trace", "fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-time = { version = "0.3", features = ["macros", "serde"] }
+time = { version = "0.3.44", features = ["macros", "serde"] }
 diesel = { version = "2.1.6", features = ["sqlite", "chrono", "r2d2"] }
 diesel_migrations = "2.1.0"
 chrono = { version = "0.4.42", features = ["serde"] }
@@ -41,6 +41,7 @@ gamiscreen-shared = { path = "../gamiscreen-shared" }
 
 [build-dependencies]
 gamiscreen-shared = { path = "../gamiscreen-shared", features = ["ts"] }
+serde_json = "1"
 
 
 [dev-dependencies]
