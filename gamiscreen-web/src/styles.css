@@ -169,6 +169,10 @@ dialog::-webkit-scrollbar {
   padding: 8px 0;
 }
 
+.usageControls button {
+  flex: 0 0 auto;
+}
+
 .usageBar {
   flex: 1;
   display: flex;

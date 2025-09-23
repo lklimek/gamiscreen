@@ -1,5 +1,19 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getAuthClaims, getRemaining, listChildren, listChildRewards, listChildTasks, listChildUsage, RewardHistoryItemDto, rewardMinutes, submitTask, TaskWithStatusDto, UsageSeriesDto } from '../api'
+
+const MINUTES_PER_HOUR = 60
+const MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR
+const MINUTES_PER_WEEK = 7 * MINUTES_PER_DAY
+
+const USAGE_PRESETS = [
+  { key: '10m', label: '10 min', days: 1, bucketMinutes: 10 },
+  { key: '1h', label: '1 hour', days: 7, bucketMinutes: MINUTES_PER_HOUR },
+  { key: '1d', label: '1 day', days: 30, bucketMinutes: MINUTES_PER_DAY },
+  { key: '1w', label: '1 week', days: 180, bucketMinutes: MINUTES_PER_WEEK },
+] as const
+
+type UsagePreset = (typeof USAGE_PRESETS)[number]
+type UsagePresetKey = UsagePreset['key']
 
 export function ChildDetailsPage(props: { childId: string }) {
   const { childId } = props
@@ -19,14 +33,17 @@ export function ChildDetailsPage(props: { childId: string }) {
   const [usage, setUsage] = useState<UsageSeriesDto | null>(null)
   const [usageLoading, setUsageLoading] = useState(false)
   const [usageError, setUsageError] = useState<string | null>(null)
+  const [usagePresetKey, setUsagePresetKey] = useState<UsagePresetKey>('1d')
+  const usagePreset = useMemo<UsagePreset>(() => {
+    return USAGE_PRESETS.find(p => p.key === usagePresetKey) ?? USAGE_PRESETS[0]
+  }, [usagePresetKey])
   const [page, setPage] = useState(1)
   const perPage = 10
-  const usageDays = 7
-  const usageBucketMinutes = 24 * 60
   const [rewardsOpen, setRewardsOpen] = useState(true)
   const [rewardsLoading, setRewardsLoading] = useState(false)
   // Track locally submitted tasks to avoid duplicate submissions until page reload or approval
   const [submitted, setSubmitted] = useState<Set<string>>(new Set())
+  const usageRequestIdRef = useRef(0)
 
   async function load() {
     setLoading(true)
@@ -78,21 +95,32 @@ export function ChildDetailsPage(props: { childId: string }) {
   }
 
   useEffect(() => { loadRewards(page) }, [childId, page])
-  async function loadUsageData() {
+  const loadUsageData = useCallback(async () => {
+    if (!usagePreset) return
+    const requestId = ++usageRequestIdRef.current
+    setUsageLoading(true)
+    setUsageError(null)
     try {
-      setUsageLoading(true)
-      setUsageError(null)
-      const data = await listChildUsage(childId, { days: usageDays, bucket_minutes: usageBucketMinutes })
-      setUsage(data)
+      const data = await listChildUsage(childId, { days: usagePreset.days, bucket_minutes: usagePreset.bucketMinutes })
+      if (usageRequestIdRef.current === requestId) {
+        setUsage(data)
+      }
     } catch (e: any) {
-      const msg = e?.message || 'Failed to load usage'
-      setUsageError(typeof msg === 'string' ? msg : 'Failed to load usage')
+      if (usageRequestIdRef.current === requestId) {
+        const msg = e?.message || 'Failed to load usage'
+        setUsageError(typeof msg === 'string' ? msg : 'Failed to load usage')
+      }
     } finally {
-      setUsageLoading(false)
+      if (usageRequestIdRef.current === requestId) {
+        setUsageLoading(false)
+      }
     }
-  }
+  }, [childId, usagePreset])
 
-  useEffect(() => { loadUsageData() }, [childId])
+  useEffect(() => {
+    setUsage(null)
+    loadUsageData()
+  }, [childId, usagePresetKey, loadUsageData])
   useEffect(() => {
     const id = setInterval(() => { load() }, 60_000)
     return () => clearInterval(id)
@@ -167,7 +195,7 @@ export function ChildDetailsPage(props: { childId: string }) {
       </div>
       <div className="card" style={{ padding: '12px' }}>
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3 className="title" style={{ fontSize: 16, margin: 0 }}>Usage (last {usageDays} days)</h3>
+          <h3 className="title" style={{ fontSize: 16, margin: 0 }}>Usage</h3>
           <button
             className="secondary outline iconButton"
             onClick={loadUsageData}
@@ -178,6 +206,24 @@ export function ChildDetailsPage(props: { childId: string }) {
             ↻
           </button>
         </div>
+        <div className="row usageControls" style={{ gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+          {USAGE_PRESETS.map(preset => {
+            const active = preset.key === usagePreset.key
+            return (
+              <button
+                key={preset.key}
+                className={active ? 'contrast' : 'secondary'}
+                onClick={() => {
+                  if (!active) setUsagePresetKey(preset.key)
+                }}
+                disabled={usageLoading && active}
+                aria-pressed={active}
+              >
+                {preset.label}
+              </button>
+            )
+          })}
+        </div>
         {usageError && <p className="error">{usageError}</p>}
         {usageLoading && !usage && <p className="subtitle">Loading usage…</p>}
         {usage && usage.buckets.length > 0 && (
@@ -186,9 +232,9 @@ export function ChildDetailsPage(props: { childId: string }) {
         {!usageLoading && usage && usage.buckets.length === 0 && (
           <p className="subtitle">No usage recorded for this period.</p>
         )}
-        {usage && (
+        {usage && usage.buckets.length > 0 && (
           <p className="subtitle">
-            Total {usage.total_minutes} minutes used across the last {usageDays} days.
+            Total {formatMinutes(usage.total_minutes)} minutes between {formatSeriesRange(usage)}. Buckets of {formatBucketDuration(usage.bucket_minutes)}.
           </p>
         )}
       </div>
@@ -399,17 +445,19 @@ function UsageChart(props: { series: UsageSeriesDto }) {
   const { series } = props
   const buckets = series.buckets
   if (!buckets.length) return null
+  const bucketMinutes = series.bucket_minutes || 0
   const max = buckets.reduce((acc, bucket) => Math.max(acc, bucket.minutes), 0)
+  const showValues = buckets.length <= 40
+  const showBreakdown = buckets.length <= 60
 
   return (
     <div className="col" style={{ gap: 12 }}>
       <div className="usageChart" role="list" aria-label="Usage minutes per period">
         {buckets.map(bucket => {
           const date = new Date(bucket.start)
-          const shortLabel = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-          const detailLabel = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', weekday: 'short' })
+          const { short: shortLabel, detail: detailLabel } = getBucketLabels(date, bucketMinutes)
           const ratio = max > 0 ? bucket.minutes / max : 0
-          const percent = ratio === 0 ? 0 : Math.min(100, Math.max(12, ratio * 100))
+          const percent = ratio === 0 ? 0 : Math.min(100, Math.max(10, ratio * 100))
           const heightStyle = bucket.minutes === 0 ? '4px' : `${percent}%`
           return (
             <div
@@ -424,25 +472,101 @@ function UsageChart(props: { series: UsageSeriesDto }) {
                 data-empty={bucket.minutes === 0}
                 style={{ height: heightStyle }}
               >
-                {bucket.minutes > 0 && <span>{bucket.minutes}</span>}
+                {showValues && bucket.minutes > 0 && <span>{bucket.minutes}</span>}
               </div>
               <div className="usageBarLabel">{shortLabel}</div>
             </div>
           )
         })}
       </div>
-      <ul className="usageBreakdown">
-        {buckets.map(bucket => {
-          const date = new Date(bucket.start)
-          const label = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', weekday: 'short' })
-          return (
-            <li key={`summary-${bucket.start}`}>
-              <span>{label}</span>
-              <span>{bucket.minutes} min</span>
-            </li>
-          )
-        })}
-      </ul>
+      {showBreakdown ? (
+        <ul className="usageBreakdown">
+          {buckets.map(bucket => {
+            const date = new Date(bucket.start)
+            const { detail } = getBucketLabels(date, bucketMinutes)
+            return (
+              <li key={`summary-${bucket.start}`}>
+                <span>{detail}</span>
+                <span>{bucket.minutes} min</span>
+              </li>
+            )
+          })}
+        </ul>
+      ) : (
+        <p className="subtitle">
+          Showing {buckets.length} buckets of {formatBucketDuration(bucketMinutes)}.
+        </p>
+      )}
     </div>
   )
+}
+
+function formatMinutes(value: number): string {
+  return new Intl.NumberFormat().format(value)
+}
+
+function formatSeriesRange(series: UsageSeriesDto): string {
+  const start = new Date(series.start)
+  const endExclusive = new Date(series.end)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(endExclusive.getTime())) return '—'
+  const endInclusive = new Date(endExclusive.getTime() - 60 * 1000)
+  const durationMinutes = Math.max(0, Math.round((endInclusive.getTime() - start.getTime()) / (60 * 1000)))
+  const includeTime = durationMinutes <= MINUTES_PER_DAY
+  const sameYear = start.getFullYear() === endInclusive.getFullYear()
+  const baseDateOptions: Intl.DateTimeFormatOptions = includeTime
+    ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', weekday: 'short' }
+    : { month: 'short', day: 'numeric', year: sameYear ? undefined : 'numeric' }
+  const endOptions: Intl.DateTimeFormatOptions = includeTime
+    ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', weekday: 'short' }
+    : { month: 'short', day: 'numeric', year: sameYear ? undefined : 'numeric' }
+  const startLabel = start.toLocaleString(undefined, baseDateOptions)
+  const endLabel = endInclusive.toLocaleString(undefined, endOptions)
+  return `${startLabel} – ${endLabel}`
+}
+
+function formatBucketDuration(minutes: number): string {
+  if (minutes <= 0) return 'unknown'
+  if (minutes % MINUTES_PER_WEEK === 0 && minutes >= MINUTES_PER_WEEK) {
+    const weeks = minutes / MINUTES_PER_WEEK
+    return weeks === 1 ? '1 week' : `${weeks} weeks`
+  }
+  if (minutes % MINUTES_PER_DAY === 0 && minutes >= MINUTES_PER_DAY) {
+    const days = minutes / MINUTES_PER_DAY
+    return days === 1 ? '1 day' : `${days} days`
+  }
+  if (minutes % MINUTES_PER_HOUR === 0 && minutes >= MINUTES_PER_HOUR) {
+    const hours = minutes / MINUTES_PER_HOUR
+    return hours === 1 ? '1 hour' : `${hours} hours`
+  }
+  return `${minutes} minutes`
+}
+
+function getBucketLabels(start: Date, bucketMinutes: number): { short: string, detail: string } {
+  if (Number.isNaN(start.getTime()) || bucketMinutes <= 0) {
+    return { short: '—', detail: '—' }
+  }
+  const endExclusive = new Date(start.getTime() + bucketMinutes * 60 * 1000)
+  const endInclusive = new Date(endExclusive.getTime() - 60 * 1000)
+
+  const short = (() => {
+    if (bucketMinutes < MINUTES_PER_HOUR) {
+      return start.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    }
+    if (bucketMinutes < MINUTES_PER_DAY) {
+      return start.toLocaleString(undefined, { weekday: 'short', hour: 'numeric' })
+    }
+    return start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  })()
+
+  const includeTime = bucketMinutes < MINUTES_PER_DAY
+  const sameYear = start.getFullYear() === endInclusive.getFullYear()
+  const detailStartOptions: Intl.DateTimeFormatOptions = includeTime
+    ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', weekday: 'short' }
+    : { month: 'short', day: 'numeric', year: sameYear ? undefined : 'numeric' }
+  const detailEndOptions: Intl.DateTimeFormatOptions = includeTime
+    ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', weekday: 'short' }
+    : { month: 'short', day: 'numeric', year: sameYear ? undefined : 'numeric' }
+  const detail = `${start.toLocaleString(undefined, detailStartOptions)} – ${endInclusive.toLocaleString(undefined, detailEndOptions)}`
+
+  return { short, detail }
 }
