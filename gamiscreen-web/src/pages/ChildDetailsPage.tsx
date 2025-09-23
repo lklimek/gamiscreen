@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { getAuthClaims, getRemaining, listChildren, listChildRewards, listChildTasks, listChildUsage, RewardHistoryItemDto, rewardMinutes, submitTask, TaskWithStatusDto } from '../api'
-import type { UsageSeriesDto } from '../api'
-import { MINUTES_PER_DAY, MINUTES_PER_HOUR, MINUTES_PER_WEEK, UsageChart, formatBucketDuration, formatMinutes, formatSeriesRange } from '../components/UsageChart'
+import { getAuthClaims, getRemaining, listChildren, listChildRewards, listChildTasks, listChildUsage, RewardHistoryItemDto, rewardMinutes, submitTask, TaskWithStatusDto, UsageSeriesDto } from '../api'
+import { MINUTES_PER_DAY, MINUTES_PER_HOUR, MINUTES_PER_WEEK, UsageChart } from '../components/UsageChart'
 
 const USAGE_PRESETS = [
-  { key: '10m', label: '10 min', days: 1, bucketMinutes: 10 },
-  { key: '1h', label: '1 hour', days: 7, bucketMinutes: MINUTES_PER_HOUR },
-  { key: '1d', label: '1 day', days: 30, bucketMinutes: MINUTES_PER_DAY },
-  { key: '1w', label: '1 week', days: 180, bucketMinutes: MINUTES_PER_WEEK },
+  { key: '10m', label: '10 min', bucketMinutes: 10, windowMinutes: 4 * MINUTES_PER_HOUR },
+  { key: '1h', label: '1 hour', bucketMinutes: MINUTES_PER_HOUR, windowMinutes: MINUTES_PER_DAY },
+  { key: '1d', label: '1 day', bucketMinutes: MINUTES_PER_DAY, windowMinutes: 14 * MINUTES_PER_DAY },
+  { key: '1w', label: '1 week', bucketMinutes: MINUTES_PER_WEEK, windowMinutes: 26 * MINUTES_PER_WEEK },
 ] as const
 
 type UsagePreset = (typeof USAGE_PRESETS)[number]
@@ -95,13 +94,21 @@ export function ChildDetailsPage(props: { childId: string }) {
   useEffect(() => { loadRewards(page) }, [childId, page])
   const loadUsageData = useCallback(async () => {
     if (!usagePreset) return
+    const fetchDays = Math.max(1, Math.ceil(usagePreset.windowMinutes / MINUTES_PER_DAY))
+    const targetBuckets = Math.max(1, Math.ceil(usagePreset.windowMinutes / usagePreset.bucketMinutes))
     const requestId = ++usageRequestIdRef.current
     setUsageLoading(true)
     setUsageError(null)
     try {
-      const data = await listChildUsage(childId, { days: usagePreset.days, bucket_minutes: usagePreset.bucketMinutes })
+      const data = await listChildUsage(childId, { days: fetchDays, bucket_minutes: usagePreset.bucketMinutes })
       if (usageRequestIdRef.current === requestId) {
-        setUsage(data)
+        const trimmedBuckets = data.buckets.slice(-targetBuckets)
+        const trimmedTotal = trimmedBuckets.reduce((acc, bucket) => acc + bucket.minutes, 0)
+        setUsage({
+          ...data,
+          buckets: trimmedBuckets,
+          total_minutes: trimmedTotal,
+        })
       }
     } catch (e: any) {
       if (usageRequestIdRef.current === requestId) {
@@ -190,51 +197,6 @@ export function ChildDetailsPage(props: { childId: string }) {
             {remaining ?? '—'} min
           </div>
         </div>
-      </div>
-      <div className="card" style={{ padding: '12px' }}>
-        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3 className="title" style={{ fontSize: 16, margin: 0 }}>Usage</h3>
-          <button
-            className="secondary outline iconButton"
-            onClick={loadUsageData}
-            disabled={usageLoading}
-            aria-label="Refresh usage"
-            title={usageLoading ? 'Refreshing…' : 'Refresh'}
-          >
-            ↻
-          </button>
-        </div>
-        <div className="row usageControls" style={{ gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-          {USAGE_PRESETS.map(preset => {
-            const active = preset.key === usagePreset.key
-            return (
-              <button
-                key={preset.key}
-                className={active ? 'contrast' : 'secondary'}
-                onClick={() => {
-                  if (!active) setUsagePresetKey(preset.key)
-                }}
-                disabled={usageLoading && active}
-                aria-pressed={active}
-              >
-                {preset.label}
-              </button>
-            )
-          })}
-        </div>
-        {usageError && <p className="error">{usageError}</p>}
-        {usageLoading && !usage && <p className="subtitle">Loading usage…</p>}
-        {usage && usage.buckets.length > 0 && (
-          <UsageChart series={usage} />
-        )}
-        {!usageLoading && usage && usage.buckets.length === 0 && (
-          <p className="subtitle">No usage recorded for this period.</p>
-        )}
-        {usage && usage.buckets.length > 0 && (
-          <p className="subtitle">
-            Total {formatMinutes(usage.total_minutes)} minutes between {formatSeriesRange(usage)}. Buckets of {formatBucketDuration(usage.bucket_minutes)}.
-          </p>
-        )}
       </div>
       <div className="card" style={{ padding: '12px' }}>
         <h3 className="title" style={{ fontSize: 16, marginBottom: 8 }}>Tasks</h3>
@@ -335,6 +297,46 @@ export function ChildDetailsPage(props: { childId: string }) {
           </form>
         </div>
       )}
+      <div className="card" style={{ padding: '12px' }}>
+        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 className="title" style={{ fontSize: 16, margin: 0 }}>Usage</h3>
+          <button
+            className="secondary outline iconButton"
+            onClick={loadUsageData}
+            disabled={usageLoading}
+            aria-label="Refresh usage"
+            title={usageLoading ? 'Refreshing…' : 'Refresh'}
+          >
+            ↻
+          </button>
+        </div>
+        <div className="row usageControls" style={{ gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+          {USAGE_PRESETS.map(preset => {
+            const active = preset.key === usagePreset.key
+            return (
+              <button
+                key={preset.key}
+                className={active ? 'contrast' : 'secondary'}
+                onClick={() => {
+                  if (!active) setUsagePresetKey(preset.key)
+                }}
+                disabled={usageLoading && active}
+                aria-pressed={active}
+              >
+                {preset.label}
+              </button>
+            )
+          })}
+        </div>
+        {usageError && <p className="error">{usageError}</p>}
+        {usageLoading && !usage && <p className="subtitle">Loading usage…</p>}
+        {usage && usage.buckets.length > 0 && (
+          <UsageChart series={usage} />
+        )}
+        {!usageLoading && usage && usage.buckets.length === 0 && (
+          <p className="subtitle">No usage recorded for this period.</p>
+        )}
+      </div>
       <div className="card" style={{ padding: '12px' }}>
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
           <h3 className="title" style={{ fontSize: 16, margin: 0 }}>Reward History</h3>

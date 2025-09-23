@@ -42,7 +42,7 @@ export function UsageChart(props: { series: UsageSeriesDto }) {
           )
         })}
       </div>
-      {showBreakdown ? (
+      {showBreakdown && (
         <ul className="usageBreakdown">
           {buckets.map(bucket => {
             const date = new Date(bucket.start)
@@ -55,53 +55,9 @@ export function UsageChart(props: { series: UsageSeriesDto }) {
             )
           })}
         </ul>
-      ) : (
-        <p className="subtitle">
-          Showing {buckets.length} buckets of {formatBucketDuration(bucketMinutes)}.
-        </p>
       )}
     </div>
   )
-}
-
-export function formatMinutes(value: number): string {
-  return new Intl.NumberFormat().format(value)
-}
-
-export function formatSeriesRange(series: UsageSeriesDto): string {
-  const start = new Date(series.start)
-  const endExclusive = new Date(series.end)
-  if (Number.isNaN(start.getTime()) || Number.isNaN(endExclusive.getTime())) return '—'
-  const endInclusive = new Date(endExclusive.getTime() - 60 * 1000)
-  const durationMinutes = Math.max(0, Math.round((endInclusive.getTime() - start.getTime()) / (60 * 1000)))
-  const includeTime = durationMinutes <= MINUTES_PER_DAY
-  const sameYear = start.getFullYear() === endInclusive.getFullYear()
-  const baseDateOptions: Intl.DateTimeFormatOptions = includeTime
-    ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', weekday: 'short' }
-    : { month: 'short', day: 'numeric', year: sameYear ? undefined : 'numeric' }
-  const endOptions: Intl.DateTimeFormatOptions = includeTime
-    ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', weekday: 'short' }
-    : { month: 'short', day: 'numeric', year: sameYear ? undefined : 'numeric' }
-  const startLabel = start.toLocaleString(undefined, baseDateOptions)
-  const endLabel = endInclusive.toLocaleString(undefined, endOptions)
-  return `${startLabel} – ${endLabel}`
-}
-
-export function formatBucketDuration(minutes: number): string {
-  if (minutes <= 0) return 'unknown'
-  if (minutes % MINUTES_PER_WEEK === 0 && minutes >= MINUTES_PER_WEEK) {
-    const weeks = minutes / MINUTES_PER_WEEK
-    return weeks === 1 ? '1 week' : `${weeks} weeks`
-  }
-  if (minutes % MINUTES_PER_DAY === 0 && minutes >= MINUTES_PER_DAY) {
-    const days = minutes / MINUTES_PER_DAY
-    return days === 1 ? '1 day' : `${days} days`
-  }
-  if (minutes % MINUTES_PER_HOUR === 0 && minutes >= MINUTES_PER_HOUR) {
-    const hours = minutes / MINUTES_PER_HOUR
-    return hours === 1 ? '1 hour' : `${hours} hours`
-  }
-  return `${minutes} minutes`
 }
 
 function getBucketLabels(start: Date, bucketMinutes: number): { short: string, detail: string } {
