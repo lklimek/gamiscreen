@@ -21,7 +21,7 @@ pub trait Platform: Send + Sync {
     /// Install background service/agent for this platform.
     ///
     /// On Linux, this installs polkit rules and a user systemd unit.
-    /// On Windows, this registers a per-user Scheduled Task that runs on logon.
+    /// On Windows, this path is deprecated; callers should use the `service` commands instead.
     async fn install(&self, user: Option<String>) -> Result<(), AppError>;
     /// Uninstall background service/agent for this platform.
     async fn uninstall(&self, user: Option<String>) -> Result<(), AppError>;

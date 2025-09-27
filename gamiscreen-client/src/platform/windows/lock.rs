@@ -1,18 +1,20 @@
 use crate::AppError;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
-use tracing::{debug, warn};
+use tracing::{debug, error, info, trace, warn};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::WindowsAndMessaging::HMENU;
 
 /// Locks the current workstation immediately.
 pub async fn lock_now() -> Result<(), AppError> {
+    info!("Windows: lock requested via LockWorkStation");
     let ok = unsafe { windows_sys::Win32::System::Shutdown::LockWorkStation() };
     if ok == 0 {
-        Err(AppError::Io(std::io::Error::other(
-            "LockWorkStation failed",
-        )))
+        let err = std::io::Error::last_os_error();
+        error!(os_error = err.raw_os_error(), %err, "LockWorkStation failed");
+        Err(AppError::Io(err))
     } else {
+        info!("Windows: workstation lock succeeded");
         Ok(())
     }
 }
@@ -21,7 +23,9 @@ pub async fn lock_now() -> Result<(), AppError> {
 pub async fn is_session_locked() -> Result<bool, AppError> {
     ensure_session_watcher();
     let state = SESSION_LOCKED.get().expect("watcher init");
-    Ok(state.load(Ordering::Relaxed))
+    let locked = state.load(Ordering::Relaxed);
+    trace!(locked, "Windows: queried session lock state");
+    Ok(locked)
 }
 
 static SESSION_LOCKED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
@@ -29,13 +33,19 @@ static WATCHER_THREAD: OnceLock<std::thread::JoinHandle<()>> = OnceLock::new();
 
 fn ensure_session_watcher() {
     if SESSION_LOCKED.get().is_some() {
+        trace!("Windows: session watcher already initialised");
         return;
     }
     let state = Arc::new(AtomicBool::new(false));
-    let state_clone = state.clone();
+    let state_clone = Arc::clone(&state);
+    info!("Windows: starting session watcher thread");
     let handle = std::thread::spawn(move || run_session_watcher(state_clone));
-    SESSION_LOCKED.set(state).ok();
-    WATCHER_THREAD.set(handle).ok();
+    if SESSION_LOCKED.set(state).is_err() {
+        warn!("Windows: session watcher state already set unexpectedly");
+    }
+    if WATCHER_THREAD.set(handle).is_err() {
+        warn!("Windows: session watcher thread handle already set unexpectedly");
+    }
 }
 
 extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -55,17 +65,16 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
             let active_id = unsafe { WTSGetActiveConsoleSessionId() };
             if active_id == u32::MAX {
                 // No active console session; ignore but log
-                tracing::trace!(
+                trace!(
                     event_session_id,
                     "WTS: no active console session; ignoring event"
                 );
                 return 0;
             }
             if event_session_id != active_id {
-                tracing::trace!(
+                trace!(
                     event_session_id,
-                    active_id,
-                    "WTS: event for other session; ignoring"
+                    active_id, "WTS: event for other session; ignoring"
                 );
                 return 0;
             }
@@ -75,7 +84,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                 _ => return 0,
             };
             unsafe { (*ptr).store(locked, Ordering::Relaxed) };
-            tracing::debug!(
+            debug!(
                 locked,
                 session_id = active_id,
                 "WTS: session lock state updated"
@@ -122,6 +131,7 @@ fn run_session_watcher(state: Arc<AtomicBool>) {
             warn!("Windows: RegisterClassW failed; session watcher not started");
             return;
         }
+        info!("Windows: session watcher window class registered");
         let hwnd: HWND = CreateWindowExW(
             0,
             class_name.as_ptr(),
@@ -140,16 +150,20 @@ fn run_session_watcher(state: Arc<AtomicBool>) {
             warn!("Windows: CreateWindowExW failed; session watcher not started");
             return;
         }
+        info!(?hwnd, "Windows: session watcher window created");
         // Stash pointer to AtomicBool in window user data for use in wnd_proc
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, Arc::into_raw(state) as isize);
         // Register for session change notifications for all sessions
         let ok = WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_ALL_SESSIONS);
         if ok == 0 {
             warn!("Windows: WTSRegisterSessionNotification failed; will not receive lock events");
+        } else {
+            info!("Windows: session watcher registered for WTS notifications");
         }
 
         // Message loop
         let mut msg: MSG = core::mem::zeroed();
+        info!("Windows: session watcher message loop running");
         loop {
             let r = GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0);
             if r > 0 {
@@ -163,6 +177,7 @@ fn run_session_watcher(state: Arc<AtomicBool>) {
                 break;
             }
         }
+        info!("Windows: session watcher thread exiting");
     }
 }
 

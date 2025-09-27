@@ -8,9 +8,10 @@ use crate::AppError;
 
 use super::Platform;
 
-pub mod install;
 pub mod lock;
 pub mod notify;
+pub mod service;
+pub mod service_cli;
 
 /// Windows implementation of the cross-platform interface.
 pub struct WindowsPlatform {
@@ -127,25 +128,18 @@ impl Platform for WindowsPlatform {
         std::process::exit(0);
     }
 
-    async fn install(&self, user: Option<String>) -> Result<(), AppError> {
-        // Ignore provided user on Windows and install for current user
-        if let Some(u) = user {
-            let cur = std::env::var("USERNAME").unwrap_or_default();
-            if !u.is_empty() && u.to_lowercase() != cur.to_lowercase() {
-                warn!(requested=%u, current=%cur, "Windows install ignores --user; installing for current user");
-            }
-        }
-        install::install_for_current_user(true).await
+    async fn install(&self, _user: Option<String>) -> Result<(), AppError> {
+        warn!("Windows per-user install path invoked; directing to service commands");
+        Err(AppError::Config(
+            "Windows per-user install has been removed; use `gamiscreen-client service install` instead.".into(),
+        ))
     }
 
-    async fn uninstall(&self, user: Option<String>) -> Result<(), AppError> {
-        if let Some(u) = user {
-            let cur = std::env::var("USERNAME").unwrap_or_default();
-            if !u.is_empty() && u.to_lowercase() != cur.to_lowercase() {
-                warn!(requested=%u, current=%cur, "Windows uninstall ignores --user; uninstalling for current user");
-            }
-        }
-        install::uninstall_for_current_user().await
+    async fn uninstall(&self, _user: Option<String>) -> Result<(), AppError> {
+        warn!("Windows per-user uninstall path invoked; directing to service commands");
+        Err(AppError::Config(
+            "Windows per-user uninstall has been removed; use the Windows service commands instead.".into(),
+        ))
     }
 }
 

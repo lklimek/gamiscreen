@@ -49,7 +49,7 @@ MVP will be shipped in three parts, in order: Server → Web App → Linux Clien
     - [x] Centralized error handling and JSON parsing
   - [x] Minimal styling; mobile-friendly for parent phone
   - [x] Handle auth token (simple input stored in `localStorage`)
-  - [ ] Manual test checklist documented in `README.md`
+  - [x] Manual test checklist documented in `README.md`
   - [x] Tasks can also have negative time. In web, such tasks should be visually marked (like, it's a deduction, not a reward).
 
 ## Linux Client (MVP)
@@ -85,9 +85,37 @@ MVP will be shipped in three parts, in order: Server → Web App → Linux Clien
 - [x] Config & docs
   - [x] Document `warn_before_lock_secs` in `gamiscreen-client/config.example.yaml` and `docs/INSTALL.md`.
   - [x] Add short “How it works” note in `README.md` (10s pre‑lock warning and visible countdown).
-- [ ] Windows (planned)
-  - [ ] Reuse `notify-rust` Windows backend; document caveats (AppUserModelID/Start Menu shortcut requirements for toasts), and fall back to log-only when unavailable.
-  - [ ] Parity plan for session lock integration on Windows.
+
+## Windows Service Migration
+
+- [ ] CLI alignment
+  - [x] Restructure clap commands into `agent`, `login`, `install`, `uninstall`, plus Windows-only `service` and `session-agent`.
+  - [x] Extract the shared main loop into a reusable `app::agent::run` so both CLI paths and the service spawn reuse it.
+  - [x] Update help text/docs to steer Windows admins to `service` commands and Linux users to existing flows.
+- [ ] Service host
+  - [x] Implement `--service` entry point that registers with SCM, handles session-change controls, and supervises per-session workers.
+  - [x] Provide graceful shutdown semantics and restart/backoff for crashed workers.
+- [ ] Session agent mode
+  - [ ] Teach the CLI to run as `session-agent` command with IPC (named pipe/Event) back to the service.
+  - [ ] Ensure keyring access stays per-user and exits cleanly when no token/config is found.
+- [ ] Installer / uninstaller
+  - [ ] Stage binaries under `%ProgramFiles%\GamiScreen\Client` and create data/log directories under `%ProgramData%`.
+  - [ ] Register/unregister the Windows Service, add the Event Log source, and gate with admin privilege checks.
+- [ ] Worker lifecycle
+  - [ ] Use `WTSQueryUserToken` + `CreateProcessAsUser` to spawn session agents on logon/unlock.
+  - [ ] Track `SESSION_LOGOFF`/disconnect events and terminate agents promptly.
+- [ ] Logging & diagnostics
+  - [ ] Emit service diagnostics to the Windows Event Log and to rotating file logs.
+  - [ ] Surface missing token/config conditions with throttled warnings.
+- [ ] Self-update compatibility
+  - [ ] Verify the session-agent command self-update keeps the service binary intact.
+  - [ ] Add smoke test covering staged update while the service is running.
+- [ ] Testing & CI
+  - [ ] Add Windows CI coverage (GitHub Actions runner) for service install/start/stop scripts.
+  - [ ] Provide a manual QA checklist for multi-user PCs.
+- [ ] Documentation
+  - [ ] Sync `docs/INSTALL.md` with Windows instructions.
+  - [ ] Expand `docs/WINDOWS.md` with troubleshooting guidance.
 
 ## Nice-to-Haves (post-MVP)
 

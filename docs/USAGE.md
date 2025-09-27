@@ -25,3 +25,14 @@ Notes
 - Stores a device token in the system keyring and writes `~/.config/gamiscreen/client.yaml` with `server_url`, `child_id`, and `device_id`.
 
 See also: docs/INSTALL.md for full installation and systemd setup.
+
+### Running the agent manually
+
+- `gamiscreen-client agent` (default) starts the foreground agent in the current session.
+- `gamiscreen-client install`/`uninstall` manage the Linux systemd + polkit setup when run on Linux (with `--user` when invoked as root).
+
+## Windows Service Workflow (CLI)
+
+- Use `gamiscreen-client service install` to register the Windows Service for all users.
+- Use `gamiscreen-client session-agent` only when the service needs to spawn a child session worker manually (normally the service handles this).
+- Keep using `gamiscreen-client login` from each Windows account to provision tokens before the service launches the session agent.

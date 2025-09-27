@@ -64,6 +64,7 @@ windows-sys = { version = "0.61.0", features = [
     "Win32_System_Shutdown",
     "Win32_System_Memory",
     "Win32_Foundation",
+    "Win32_System_Services",
 ] }
 keyring = { version = "3", features = ["windows-native"] }
 

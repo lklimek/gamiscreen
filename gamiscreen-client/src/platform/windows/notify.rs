@@ -10,14 +10,14 @@ impl Notifier {
     }
 
     pub async fn show_countdown(&mut self, total_secs: u64) {
-        info!("[COUNTDOWN] {} s do wylogowania (Windows)", total_secs);
+        info!(total_secs, "Windows: countdown notification opened");
     }
 
     pub async fn update(&mut self, seconds_left: u64) {
-        debug!("[COUNTDOWN UPDATE] {} s left (Windows)", seconds_left);
+        debug!(seconds_left, "Windows: countdown notification updated");
     }
 
     pub async fn close(&mut self) {
-        debug!("[COUNTDOWN CLOSED] (Windows)");
+        debug!("Windows: countdown notification closed");
     }
 }
