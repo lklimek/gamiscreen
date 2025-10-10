@@ -9,39 +9,15 @@ services:
     ports:
       - "5151:5151"
     environment:
-      - RUST_LOG=info
+      - RUST_LOG=info,gamiscreen_server=debug
       - CONFIG_PATH=/etc/gamiscreen/config.yaml
       - DB_PATH=/var/lib/gamiscreen/app.db
     volumes:
-      # Provide your server config from the host. Use an explicit bind to avoid
-      # Docker creating a directory if the source file is missing.
-      - type: bind
-        source: ./gamiscreen-server/config.yaml
-        target: /etc/gamiscreen/config.yaml
-        read_only: true
-        bind:
-          create_host_path: false
+      # Mount the configuration directory as read-only
+      - gamiscreen-config:/etc/gamiscreen:ro
       # Persist the SQLite database in a named volume
       - gamiscreen-data:/var/lib/gamiscreen
 
-  gamiscreen-proxy:
-    image: caddy:2.8-alpine
-    container_name: gamiscreen-proxy
-    restart: unless-stopped
-    depends_on:
-      - gamiscreen-server
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./reverse-proxy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    environment:
-      - CERT_CN=${CERT_CN:-localhost}
-
-
 volumes:
+  gamiscreen-config:
   gamiscreen-data:
-  caddy-data:
-  caddy-config:
