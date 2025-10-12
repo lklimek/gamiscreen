@@ -61,8 +61,24 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    push_subscriptions (id) {
+        id -> Integer,
+        tenant_id -> Text,
+        child_id -> Text,
+        endpoint -> Text,
+        p256dh -> Text,
+        auth -> Text,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+        last_success_at -> Nullable<Timestamp>,
+        last_error -> Nullable<Text>,
+    }
+}
+
 diesel::joinable!(rewards -> children (child_id));
 diesel::joinable!(rewards -> tasks (task_id));
+diesel::joinable!(push_subscriptions -> children (child_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     children,
@@ -71,5 +87,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     sessions,
     task_completions,
     task_submissions,
+    push_subscriptions,
     usage_minutes,
 );

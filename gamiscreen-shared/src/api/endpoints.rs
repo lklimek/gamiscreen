@@ -94,3 +94,25 @@ pub fn child_device_heartbeat(
 pub fn version(base: &str) -> String {
     base_join(base, &format!("{}/version", API_V1_PREFIX))
 }
+
+pub fn child_push_subscribe(base: &str, tenant_id: &str, child_id: &str) -> String {
+    base_join(
+        base,
+        &format!(
+            "{}/children/{}/push/subscriptions",
+            tenant_scope(tenant_id),
+            enc(child_id)
+        ),
+    )
+}
+
+pub fn child_push_unsubscribe(base: &str, tenant_id: &str, child_id: &str) -> String {
+    base_join(
+        base,
+        &format!(
+            "{}/children/{}/push/subscriptions/unsubscribe",
+            tenant_scope(tenant_id),
+            enc(child_id)
+        ),
+    )
+}

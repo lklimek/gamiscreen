@@ -1,6 +1,11 @@
 jwt_secret: "change-this-to-a-long-random-secret"
 dev_cors_origin: "http://localhost:5173"  # optional; only for development
 listen_port: 5151  # optional; server listens on this port if set
+push:
+  enabled: false  # set to true once VAPID keys are configured
+  vapid_public: "replace-with-base64url-vapid-public-key"
+  vapid_private: "replace-with-base64url-vapid-private-key"
+  contact_email: "mailto:admin@example.com"
 users:
   - username: "parent"
     # bcrypt hash for password "secret123" (example only; change it!)

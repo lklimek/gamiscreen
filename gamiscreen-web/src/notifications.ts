@@ -97,3 +97,4 @@ export async function maybeNotifyRemaining(
     console.warn('Failed to show notification', err);
   }
 }
+export { getVapidPublicKey, isWebPushConfigured } from './env';

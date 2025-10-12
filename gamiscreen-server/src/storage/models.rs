@@ -1,5 +1,5 @@
 use crate::storage::schema::{
-    children, rewards, task_completions, task_submissions, tasks, usage_minutes,
+    children, push_subscriptions, rewards, task_completions, task_submissions, tasks, usage_minutes,
 };
 use chrono::NaiveDateTime;
 use diesel::prelude::*;
@@ -119,4 +119,32 @@ pub struct TaskSubmission {
 pub struct NewTaskSubmission<'a> {
     pub child_id: &'a str,
     pub task_id: &'a str,
+}
+
+#[derive(Debug, Clone, Queryable, Identifiable, Associations, Selectable)]
+#[diesel(table_name = push_subscriptions)]
+#[diesel(belongs_to(Child, foreign_key = child_id))]
+pub struct PushSubscription {
+    pub id: i32,
+    pub tenant_id: String,
+    pub child_id: String,
+    pub endpoint: String,
+    pub p256dh: String,
+    pub auth: String,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+    pub last_success_at: Option<NaiveDateTime>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = push_subscriptions)]
+pub struct NewPushSubscription<'a> {
+    pub tenant_id: &'a str,
+    pub child_id: &'a str,
+    pub endpoint: &'a str,
+    pub p256dh: &'a str,
+    pub auth: &'a str,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
 }

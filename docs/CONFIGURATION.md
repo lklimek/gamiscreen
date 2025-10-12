@@ -12,6 +12,11 @@ Top-level fields
 - `jwt_secret` (string): long random secret for signing JWTs.
 - `dev_cors_origin` (string, optional): allowed origin for development (e.g., `http://localhost:5173`).
 - `listen_port` (number, optional): port to listen on if provided; otherwise `PORT` env or 5151.
+- `push` (object, optional): Web Push settings.
+  - `enabled` (bool): turn Web Push delivery on/off (`false` by default).
+  - `vapid_public` (string, optional): Base64URL-encoded VAPID public key.
+  - `vapid_private` (string, optional): Base64URL-encoded VAPID private key (keep secret).
+  - `contact_email` (string, optional): contact URI (e.g., `mailto:admin@example.com`) advertised in push messages.
 - `users` (array): list of user accounts.
   - `username` (string)
   - `password_hash` (string): bcrypt hash of the password.
@@ -34,6 +39,30 @@ Environment variables
 - `PORT`: listen port (overrides `listen_port` if set). Default: 5151.
 - `RUST_LOG`: log level (e.g., `info`, `debug`).
 - `SKIP_WEB_BUILD`: when building the server crate, skips automatic web build; useful in CI.
+- `PUSH_ENABLED`: override `push.enabled` (`true` / `false`).
+- `PUSH_VAPID_PUBLIC`: override `push.vapid_public`.
+- `PUSH_VAPID_PRIVATE`: override `push.vapid_private`.
+- `PUSH_CONTACT_EMAIL`: override `push.contact_email`.
+
+Secrets management
+- Store long-term secrets (e.g., `jwt_secret`, `PUSH_VAPID_PRIVATE`) outside of version control—use deployment-time environment variables or secret managers.
+- Provide `.env` templates per environment (e.g., `.env.production`) and load them in container/orchestrator manifests.
+- Rotate VAPID keys periodically; update both config and gamiscreen-web build (public key) together to avoid mismatches.
+- In multi-tenant setups, prefer per-tenant secrets managed by the orchestration layer rather than sharing a single key set.
+
+### Generating VAPID keys
+
+Use the [`web-push`](https://github.com/web-push-libs/web-push) CLI (ships with the npm package) to generate a VAPID key pair:
+
+```bash
+npx web-push generate-vapid-keys
+```
+
+The command prints two Base64URL strings:
+- `Public Key` → copy into `config.yaml` under `push.vapid_public` and expose as `VITE_VAPID_PUB_KEY` (or `window.gamiscreenVapidPublicKey`) for the web app.
+- `Private Key` → copy into `push.vapid_private` (and supply via `PUSH_VAPID_PRIVATE` in production). Keep this value secret; treat it like any other long-term credential.
+
+Optionally provide a contact address—e.g. configure `push.contact_email: "mailto:admin@example.com"` or set `PUSH_CONTACT_EMAIL`. Some push services surface this in diagnostics.
 
 Notes
 - On first start, the server seeds the database with `children` and `tasks` from the config.

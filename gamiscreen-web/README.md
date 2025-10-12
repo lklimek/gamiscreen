@@ -47,6 +47,7 @@ Pages / Flow
 Config
 - `VITE_API_BASE_URL` (optional): base URL for API (e.g., `http://localhost:3000`). When omitted, calls same-origin.
 - Proxy env vars (`VITE_DEV_PROXY`, `VITE_API_PROXY_TARGET`) available for local dev convenience.
+- `VITE_VAPID_PUB_KEY` (optional): Base64URL VAPID public key exposed to the app for Web Push registration (fallback available via `window.gamiscreenVapidPublicKey`).
 
 Styling
 - Uses Pico defaults (no custom button/input styles). Minor layout helpers remain.

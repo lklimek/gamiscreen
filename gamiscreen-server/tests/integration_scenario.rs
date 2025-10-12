@@ -151,6 +151,7 @@ async fn start_server(
     let child_hash = bcrypt::hash(child_pwd, bcrypt::DEFAULT_COST).unwrap();
     let config = server::AppConfig {
         config_version: env!("CARGO_PKG_VERSION").to_string(),
+        push: None,
         tenant_id: TENANT_ID.into(),
         children: vec![
             Child {

@@ -90,6 +90,27 @@ pub struct HeartbeatResp {
     pub remaining_minutes: i32,
 }
 
+// Web Push subscription management
+#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct PushSubscribeReq {
+    pub endpoint: String,
+    pub p256dh: String,
+    pub auth: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct PushSubscribeResp {
+    pub subscription_id: i32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct PushUnsubscribeReq {
+    pub endpoint: String,
+}
+
 // Client registration
 #[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]

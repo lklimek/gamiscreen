@@ -16,6 +16,8 @@ pub struct AppConfig {
     pub users: Vec<UserConfig>,
     pub dev_cors_origin: Option<String>,
     pub listen_port: Option<u16>,
+    #[serde(default)]
+    pub push: Option<PushConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -24,6 +26,15 @@ pub struct UserConfig {
     pub password_hash: String, // bcrypt hash
     pub role: Role,
     pub child_id: Option<String>, // required when role == child
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(default)]
+pub struct PushConfig {
+    pub enabled: bool,
+    pub vapid_public: Option<String>,
+    pub vapid_private: Option<String>,
+    pub contact_email: Option<String>,
 }
 
 #[derive(Debug)]
@@ -66,14 +77,16 @@ impl AppConfig {
     pub fn load_from_path<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
         migrate_config(path.as_ref())?;
         let text = fs::read_to_string(&path)?;
-        let cfg: AppConfig = serde_yaml::from_str(&text)?;
+        let mut cfg: AppConfig = serde_yaml::from_str(&text)?;
+        apply_env_overrides(&mut cfg);
         Ok(cfg)
     }
 }
 
 type MigrationFn = fn(&mut Mapping) -> bool;
 
-const MIGRATIONS: &[(&str, MigrationFn)] = &[("0.7.0", migrate_to_0_7_0)];
+const MIGRATIONS: &[(&str, MigrationFn)] =
+    &[("0.7.0", migrate_to_0_7_0), ("0.9.0", migrate_to_0_9_0)];
 
 fn migrate_config(path: &Path) -> Result<(), ConfigError> {
     let text = fs::read_to_string(path)?;
@@ -171,6 +184,40 @@ fn migrate_to_0_7_0(map: &mut Mapping) -> bool {
     changed
 }
 
+fn migrate_to_0_9_0(map: &mut Mapping) -> bool {
+    let push_key = Value::String("push".to_string());
+    if map.contains_key(&push_key) {
+        return false;
+    }
+
+    let mut push_map = Mapping::new();
+    push_map.insert(Value::String("enabled".to_string()), Value::Bool(false));
+
+    map.insert(push_key, Value::Mapping(push_map));
+    true
+}
+
+fn apply_env_overrides(cfg: &mut AppConfig) {
+    if let Ok(val) = env::var("PUSH_VAPID_PUBLIC") {
+        let push = cfg.push.get_or_insert_with(Default::default);
+        push.vapid_public = Some(val);
+    }
+    if let Ok(val) = env::var("PUSH_VAPID_PRIVATE") {
+        let push = cfg.push.get_or_insert_with(Default::default);
+        push.vapid_private = Some(val);
+    }
+    if let Ok(val) = env::var("PUSH_CONTACT_EMAIL") {
+        let push = cfg.push.get_or_insert_with(Default::default);
+        push.contact_email = Some(val);
+    }
+    if let Ok(val) = env::var("PUSH_ENABLED") {
+        if let Ok(parsed) = val.parse::<bool>() {
+            let push = cfg.push.get_or_insert_with(Default::default);
+            push.enabled = parsed;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,11 +262,26 @@ tasks:
                 .and_then(Value::as_str),
             Some("first")
         );
-        assert_eq!(
-            mapping
-                .get(&Value::String("config_version".into()))
-                .and_then(Value::as_str),
-            Some(env!("CARGO_PKG_VERSION"))
+        let version = mapping
+            .get(&Value::String("config_version".into()))
+            .and_then(Value::as_str)
+            .and_then(|s| Version::parse(s).ok());
+        let current = Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
+        assert!(
+            version.as_ref() == Some(&current)
+                || version
+                    .as_ref()
+                    .map(|v| v.major == current.major && v.minor == current.minor)
+                    .unwrap_or(false),
+            "unexpected config_version: {:?}",
+            version
         );
+
+        assert!(matches!(
+            mapping
+                .get(&Value::String("push".into()))
+                .and_then(Value::as_mapping),
+            Some(push_map) if push_map.get(&Value::String("enabled".into())) == Some(&Value::Bool(false))
+        ));
     }
 }

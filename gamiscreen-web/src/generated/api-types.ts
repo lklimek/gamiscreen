@@ -21,6 +21,12 @@ export type HeartbeatReq = { minutes: Array<number>, };
 
 export type HeartbeatResp = { remaining_minutes: number, };
 
+export type PushSubscribeReq = { endpoint: string, p256dh: string, auth: string, };
+
+export type PushSubscribeResp = { subscription_id: number, };
+
+export type PushUnsubscribeReq = { endpoint: string, };
+
 export type ClientRegisterReq = { child_id: string | null, device_id: string, };
 
 export type ClientRegisterResp = { token: string, child_id: string, device_id: string, };

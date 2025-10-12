@@ -128,6 +128,61 @@ MVP will be shipped in three parts, in order: Server → Web App → Linux Clien
 - [ ] Android and Windows clients
 - [ ] Graphs: rewards and usage history
 
+## Web Push Integration
+
+### Configuration & Keys
+
+- [x] Generate VAPID key pair (`public`, `private`) and add to server configuration (`AppConfig` + env overrides).
+- [x] Expose VAPID public key to gamiscreen-web build (e.g., `VITE_VAPID_PUB_KEY`).
+- [x] Document secrets management for production (rotation, `.env` templates).
+
+### Database & Models
+
+- [x] Add Diesel migration for `push_subscriptions` table (`id`, `child_id`, `endpoint`, `p256dh`, `auth`, `created_at`, `updated_at`, `last_success_at`, `last_error`).
+- [x] Extend storage layer with insert/update/delete/list helpers for push subscriptions.
+- [x] Ensure cleanup of orphaned subscriptions when child is removed.
+
+### Shared API & Types
+
+- [x] Define `PushSubscribeReq`, `PushSubscribeResp`, `PushUnsubscribeReq` in `gamiscreen-shared` and regenerate TS bindings.
+- [x] Update ACL helpers to cover new endpoints.
+
+### Server Endpoints
+
+- [x] Implement `POST /children/{child}/push/subscriptions` to register a subscription (parent for child or child self).
+- [x] Implement `POST /children/{child}/push/subscriptions/unsubscribe` to remove a subscription.
+- [x] Add validation to limit subscriptions per child and deduplicate by endpoint.
+
+### Push Delivery Service
+
+- [x] Introduce service module wrapping `web-push` crate with VAPID keys.
+- [x] Map `ServerEvent` variants to push payloads (minimum JSON).
+- [x] Integrate with existing event flow: fire push when `remaining_updated` is ≤5 minutes, and other critical events as needed.
+- [x] Handle delivery results (remove subscription on 404/410, log errors, update `last_success_at`).
+- [x] Add throttling/backoff to avoid repeated sends when remaining stays ≤5.
+
+### Frontend (gamiscreen-web)
+
+- [ ] Replace current in-app notification prompt with Web Push registration flow.
+- [ ] Use `serviceWorker.ready.pushManager.subscribe` with VAPID public key and post subscription to server.
+- [ ] Handle unsubscription on logout or user action.
+- [ ] Update service worker to listen for `push` events and display notifications; handle `notificationclick` to reopen app.
+- [ ] Provide UI state to reflect subscription status/errors.
+- [ ] Implement client-side countdown/alarm for near-expiry time (no push required for steady minute decrements).
+
+### Client & Compatibility
+
+- [ ] Keep SSE for existing clients (web/tab + gamiscreen-client); ensure push is optional enhancement.
+- [ ] Document limitations (requires HTTPS, browser support, user permission).
+
+### Testing & Deployment
+
+- [ ] Unit tests for storage methods and push payload builder.
+- [ ] Integration test for subscription endpoints (auth + persistence).
+- [ ] Manual scenario: enable push, trigger remaining=5, verify notification with app closed.
+- [ ] Update deployment scripts to provide VAPID keys and rebuild frontend.
+- [ ] Document rollback strategy (disable push via config flag if necessary).
+
 ## Acceptance Criteria (MVP)
 
 - [ ] Parent can reward minutes via Web App; server updates child balance

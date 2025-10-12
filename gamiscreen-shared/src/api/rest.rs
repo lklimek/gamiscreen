@@ -215,3 +215,47 @@ pub async fn server_version(base: &str) -> Result<VersionInfoDto, RestError> {
         .map_err(|e| RestError::Http(e.to_string()))?;
     handle_json(res).await
 }
+
+pub async fn push_subscribe(
+    base: &str,
+    tenant_id: &str,
+    child_id: &str,
+    bearer: &str,
+    req: &PushSubscribeReq,
+) -> Result<PushSubscribeResp, RestError> {
+    let client = mk_client()?;
+    let url = ep::child_push_subscribe(base, tenant_id, child_id);
+    let res = client
+        .post(url)
+        .bearer_auth(bearer)
+        .json(req)
+        .send()
+        .await
+        .map_err(|e| RestError::Http(e.to_string()))?;
+    handle_json(res).await
+}
+
+pub async fn push_unsubscribe(
+    base: &str,
+    tenant_id: &str,
+    child_id: &str,
+    bearer: &str,
+    req: &PushUnsubscribeReq,
+) -> Result<(), RestError> {
+    let client = mk_client()?;
+    let url = ep::child_push_unsubscribe(base, tenant_id, child_id);
+    let res = client
+        .post(url)
+        .bearer_auth(bearer)
+        .json(req)
+        .send()
+        .await
+        .map_err(|e| RestError::Http(e.to_string()))?;
+    if res.status().is_success() {
+        Ok(())
+    } else {
+        let status = res.status().as_u16();
+        let body = res.text().await.unwrap_or_default();
+        Err(RestError::Status { status, body })
+    }
+}

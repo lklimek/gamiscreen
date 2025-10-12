@@ -1,6 +1,7 @@
 mod acl;
 pub mod auth;
 mod config;
+mod push;
 
 use crate::server::auth::AuthCtx;
 use axum::http::{HeaderName, HeaderValue};
@@ -19,6 +20,7 @@ use gamiscreen_shared::api;
 use gamiscreen_shared::api::ChildDto;
 use gamiscreen_shared::jwt;
 use mime_guess::from_path;
+use push::PushService;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, MutexGuard, broadcast};
@@ -26,6 +28,8 @@ use tokio_util::sync::CancellationToken;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::{Span, info_span};
 use uuid::Uuid;
+
+const MAX_PUSH_SUBSCRIPTIONS_PER_CHILD: i64 = 10;
 
 type ChildCacheMap =
     std::sync::Arc<Mutex<std::collections::HashMap<String, std::sync::Arc<Mutex<Option<i32>>>>>>;
@@ -40,17 +44,20 @@ pub struct AppState {
     notif_tx: broadcast::Sender<ServerEvent>,
     // Global shutdown token to allow canceling long-lived streams (e.g., SSE)
     pub shutdown: CancellationToken,
+    push: Option<PushService>,
 }
 
 impl AppState {
     pub fn new(config: AppConfig, store: crate::storage::Store) -> Self {
         let (notif_tx, _rx) = broadcast::channel(64);
+        let push = PushService::from_config(&config);
         Self {
             config,
             store,
             children_cache: Default::default(),
             notif_tx,
             shutdown: CancellationToken::new(),
+            push,
         }
     }
 
@@ -76,14 +83,21 @@ impl AppState {
         let current = self.remaining_minutes(child_id, guard).await?;
 
         if current != prev {
-            // Broadcast remaining update to interested websocket clients
-            let _ = self.notif_tx.send(ServerEvent::RemainingUpdated {
+            let event = ServerEvent::RemainingUpdated {
                 child_id: child_id.to_string(),
                 remaining_minutes: current,
-            });
+            };
+            self.dispatch_event(event);
         }
 
         Ok(current)
+    }
+
+    fn dispatch_event(&self, event: ServerEvent) {
+        let _ = self.notif_tx.send(event.clone());
+        if let Some(push) = &self.push {
+            push.dispatch_event(self.store.clone(), event);
+        }
     }
 
     pub async fn remaining_minutes(
@@ -141,6 +155,14 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/children/{id}/device/{device_id}/heartbeat",
             post(api_device_heartbeat),
+        )
+        .route(
+            "/children/{id}/push/subscriptions",
+            post(api_push_subscribe),
+        )
+        .route(
+            "/children/{id}/push/subscriptions/unsubscribe",
+            post(api_push_unsubscribe),
         )
         .route("/children/{id}/register", post(api_child_register))
         .route("/children/{id}/tasks", get(api_list_child_tasks))
@@ -511,6 +533,83 @@ async fn api_child_reward(
     }))
 }
 
+async fn api_push_subscribe(
+    State(state): State<AppState>,
+    Path(p): Path<ChildPathId>,
+    Json(body): Json<api::PushSubscribeReq>,
+) -> Result<Json<api::PushSubscribeResp>, AppError> {
+    if body.endpoint.trim().is_empty() {
+        return Err(AppError::bad_request("endpoint is required"));
+    }
+    if body.p256dh.trim().is_empty() {
+        return Err(AppError::bad_request("p256dh is required"));
+    }
+    if body.auth.trim().is_empty() {
+        return Err(AppError::bad_request("auth is required"));
+    }
+
+    let exists = state
+        .store
+        .child_exists(&p.id)
+        .await
+        .map_err(AppError::internal)?;
+    if !exists {
+        return Err(AppError::not_found(format!("child not found: {}", p.id)));
+    }
+
+    let tenant_id = state.config.tenant_id.as_str();
+
+    let existing = state
+        .store
+        .get_push_subscription_by_endpoint(tenant_id, &body.endpoint)
+        .await
+        .map_err(AppError::internal)?;
+
+    if existing
+        .as_ref()
+        .map(|sub| sub.child_id != p.id)
+        .unwrap_or(true)
+    {
+        let count = state
+            .store
+            .push_subscription_count_for_child(tenant_id, &p.id)
+            .await
+            .map_err(AppError::internal)?;
+        if count >= MAX_PUSH_SUBSCRIPTIONS_PER_CHILD {
+            return Err(AppError::bad_request(format!(
+                "subscription limit ({}) reached for child {}",
+                MAX_PUSH_SUBSCRIPTIONS_PER_CHILD, p.id
+            )));
+        }
+    }
+
+    let record = state
+        .store
+        .upsert_push_subscription(tenant_id, &p.id, &body.endpoint, &body.p256dh, &body.auth)
+        .await
+        .map_err(AppError::internal)?;
+
+    Ok(Json(api::PushSubscribeResp {
+        subscription_id: record.id,
+    }))
+}
+
+async fn api_push_unsubscribe(
+    State(state): State<AppState>,
+    Path(p): Path<ChildPathId>,
+    Json(body): Json<api::PushUnsubscribeReq>,
+) -> Result<StatusCode, AppError> {
+    if body.endpoint.trim().is_empty() {
+        return Err(AppError::bad_request("endpoint is required"));
+    }
+    state
+        .store
+        .delete_push_subscription(state.config.tenant_id.as_str(), &p.id, &body.endpoint)
+        .await
+        .map_err(AppError::internal)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[derive(Deserialize)]
 struct PageOpts {
     page: Option<usize>,
@@ -763,9 +862,8 @@ async fn api_approve_submission(
             .await?;
         // Notify parents about updated count
         if let Ok(c) = state.store.pending_submissions_count().await {
-            let _ = state
-                .notif_tx
-                .send(ServerEvent::PendingCount { count: c as u32 });
+            let event = ServerEvent::PendingCount { count: c as u32 };
+            state.dispatch_event(event);
         }
     }
     Ok(StatusCode::NO_CONTENT)
@@ -782,9 +880,8 @@ async fn api_discard_submission(
         .await
         .map_err(AppError::internal)?;
     if let Ok(c) = state.store.pending_submissions_count().await {
-        let _ = state
-            .notif_tx
-            .send(ServerEvent::PendingCount { count: c as u32 });
+        let event = ServerEvent::PendingCount { count: c as u32 };
+        state.dispatch_event(event);
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -818,9 +915,8 @@ async fn api_submit_task(
         .await
         .map_err(AppError::internal)?;
     if let Ok(c) = state.store.pending_submissions_count().await {
-        let _ = state
-            .notif_tx
-            .send(ServerEvent::PendingCount { count: c as u32 });
+        let event = ServerEvent::PendingCount { count: c as u32 };
+        state.dispatch_event(event);
     }
     Ok(StatusCode::NO_CONTENT)
 }

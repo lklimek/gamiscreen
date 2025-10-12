@@ -7,9 +7,10 @@ use ts_rs::TS;
 #[cfg(feature = "ts")]
 use super::{
     AuthReq, AuthResp, ChildDto, ClientRegisterReq, ClientRegisterResp, HeartbeatReq,
-    HeartbeatResp, NotificationItemDto, NotificationsCountDto, RemainingDto, RewardHistoryItemDto,
-    RewardReq, RewardResp, SubmitTaskReq, TaskDto, TaskWithStatusDto, UpdateArtifactDto,
-    UpdateItemDto, UpdateManifestDto, UsageBucketDto, UsageSeriesDto, VersionInfoDto,
+    HeartbeatResp, NotificationItemDto, NotificationsCountDto, PushSubscribeReq, PushSubscribeResp,
+    PushUnsubscribeReq, RemainingDto, RewardHistoryItemDto, RewardReq, RewardResp, SubmitTaskReq,
+    TaskDto, TaskWithStatusDto, UpdateArtifactDto, UpdateItemDto, UpdateManifestDto,
+    UsageBucketDto, UsageSeriesDto, VersionInfoDto,
 };
 
 #[cfg(feature = "ts")]
@@ -54,6 +55,9 @@ pub fn export_types(path: impl AsRef<Path>) -> std::io::Result<()> {
     write_decl(RewardResp::decl())?;
     write_decl(HeartbeatReq::decl())?;
     write_decl(HeartbeatResp::decl())?;
+    write_decl(PushSubscribeReq::decl())?;
+    write_decl(PushSubscribeResp::decl())?;
+    write_decl(PushUnsubscribeReq::decl())?;
     write_decl(ClientRegisterReq::decl())?;
     write_decl(ClientRegisterResp::decl())?;
     write_decl(RewardHistoryItemDto::decl())?;

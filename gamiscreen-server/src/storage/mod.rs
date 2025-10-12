@@ -1,10 +1,15 @@
 pub mod models;
 pub mod schema;
 
+use chrono::Utc;
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
-use models::{Child, NewChild, NewReward, NewSession, NewTask, Session, Task};
+use models::{
+    Child, NewChild, NewPushSubscription, NewReward, NewSession, NewTask, PushSubscription,
+    Session, Task,
+};
+use tracing::trace;
 
 #[derive(Clone)]
 pub struct Store {
@@ -104,6 +109,224 @@ impl Store {
                 .order(display_name.asc())
                 .load::<Child>(&mut conn)
                 .map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    pub async fn upsert_push_subscription(
+        &self,
+        tenant_id: &str,
+        child_id: &str,
+        endpoint: &str,
+        p256dh: &str,
+        auth: &str,
+    ) -> Result<PushSubscription, String> {
+        use schema::push_subscriptions::dsl as ps;
+        let pool = self.pool.clone();
+        let tenant_owned = tenant_id.to_string();
+        let child_owned = child_id.to_string();
+        let endpoint_owned = endpoint.to_string();
+        let p256dh_owned = p256dh.to_string();
+        let auth_owned = auth.to_string();
+        trace!(
+            child_id = %child_owned,
+            endpoint = %endpoint_owned,
+            "upsert_push_subscription starting"
+        );
+        tokio::task::spawn_blocking(move || -> Result<PushSubscription, String> {
+            let mut conn = pool.get().map_err(|e| e.to_string())?;
+            configure_sqlite_conn(&mut conn).map_err(|e| format!("pragma error: {e}"))?;
+            let now = Utc::now().naive_utc();
+            let new_row = NewPushSubscription {
+                tenant_id: &tenant_owned,
+                child_id: &child_owned,
+                endpoint: &endpoint_owned,
+                p256dh: &p256dh_owned,
+                auth: &auth_owned,
+                created_at: now,
+                updated_at: now,
+            };
+            diesel::insert_into(ps::push_subscriptions)
+                .values(&new_row)
+                .on_conflict(ps::endpoint)
+                .do_update()
+                .set((
+                    ps::tenant_id.eq(&tenant_owned),
+                    ps::child_id.eq(&child_owned),
+                    ps::p256dh.eq(&p256dh_owned),
+                    ps::auth.eq(&auth_owned),
+                    ps::updated_at.eq(now),
+                    ps::last_error.eq::<Option<String>>(None::<String>),
+                    ps::last_success_at
+                        .eq::<Option<chrono::NaiveDateTime>>(None::<chrono::NaiveDateTime>),
+                ))
+                .execute(&mut conn)
+                .map_err(|e| e.to_string())?;
+            let row = ps::push_subscriptions
+                .filter(ps::tenant_id.eq(&tenant_owned))
+                .filter(ps::endpoint.eq(&endpoint_owned))
+                .first::<PushSubscription>(&mut conn)
+                .map_err(|e| e.to_string())?;
+            Ok(row)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    pub async fn list_push_subscriptions_for_child(
+        &self,
+        tenant_id: &str,
+        child_id: &str,
+    ) -> Result<Vec<PushSubscription>, String> {
+        use schema::push_subscriptions::dsl as ps;
+        let pool = self.pool.clone();
+        let tenant_owned = tenant_id.to_string();
+        let child_owned = child_id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<Vec<PushSubscription>, String> {
+            let mut conn = pool.get().map_err(|e| e.to_string())?;
+            configure_sqlite_conn(&mut conn).map_err(|e| format!("pragma error: {e}"))?;
+            let rows = ps::push_subscriptions
+                .filter(ps::tenant_id.eq(&tenant_owned))
+                .filter(ps::child_id.eq(&child_owned))
+                .order(ps::created_at.asc())
+                .load::<PushSubscription>(&mut conn)
+                .map_err(|e| e.to_string())?;
+            Ok(rows)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    pub async fn list_all_push_subscriptions(
+        &self,
+        tenant_id: &str,
+    ) -> Result<Vec<PushSubscription>, String> {
+        use schema::push_subscriptions::dsl as ps;
+        let pool = self.pool.clone();
+        let tenant_owned = tenant_id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<Vec<PushSubscription>, String> {
+            let mut conn = pool.get().map_err(|e| e.to_string())?;
+            configure_sqlite_conn(&mut conn).map_err(|e| format!("pragma error: {e}"))?;
+            let rows = ps::push_subscriptions
+                .filter(ps::tenant_id.eq(&tenant_owned))
+                .order(ps::created_at.asc())
+                .load::<PushSubscription>(&mut conn)
+                .map_err(|e| e.to_string())?;
+            Ok(rows)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    pub async fn push_subscription_count_for_child(
+        &self,
+        tenant_id: &str,
+        child_id: &str,
+    ) -> Result<i64, String> {
+        use schema::push_subscriptions::dsl as ps;
+        let pool = self.pool.clone();
+        let tenant_owned = tenant_id.to_string();
+        let child_owned = child_id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<i64, String> {
+            let mut conn = pool.get().map_err(|e| e.to_string())?;
+            configure_sqlite_conn(&mut conn).map_err(|e| format!("pragma error: {e}"))?;
+            let count = ps::push_subscriptions
+                .filter(ps::tenant_id.eq(&tenant_owned))
+                .filter(ps::child_id.eq(&child_owned))
+                .count()
+                .get_result::<i64>(&mut conn)
+                .map_err(|e| e.to_string())?;
+            Ok(count)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    pub async fn get_push_subscription_by_endpoint(
+        &self,
+        tenant_id: &str,
+        endpoint: &str,
+    ) -> Result<Option<PushSubscription>, String> {
+        use schema::push_subscriptions::dsl as ps;
+        let pool = self.pool.clone();
+        let tenant_owned = tenant_id.to_string();
+        let endpoint_owned = endpoint.to_string();
+        tokio::task::spawn_blocking(move || -> Result<Option<PushSubscription>, String> {
+            let mut conn = pool.get().map_err(|e| e.to_string())?;
+            configure_sqlite_conn(&mut conn).map_err(|e| format!("pragma error: {e}"))?;
+            let row = ps::push_subscriptions
+                .filter(ps::tenant_id.eq(&tenant_owned))
+                .filter(ps::endpoint.eq(&endpoint_owned))
+                .first::<PushSubscription>(&mut conn)
+                .optional()
+                .map_err(|e| e.to_string())?;
+            Ok(row)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    pub async fn delete_push_subscription(
+        &self,
+        tenant_id: &str,
+        child_id: &str,
+        endpoint: &str,
+    ) -> Result<bool, String> {
+        use schema::push_subscriptions::dsl as ps;
+        let pool = self.pool.clone();
+        let tenant_owned = tenant_id.to_string();
+        let child_owned = child_id.to_string();
+        let endpoint_owned = endpoint.to_string();
+        tokio::task::spawn_blocking(move || -> Result<bool, String> {
+            let mut conn = pool.get().map_err(|e| e.to_string())?;
+            configure_sqlite_conn(&mut conn).map_err(|e| format!("pragma error: {e}"))?;
+            let deleted = diesel::delete(
+                ps::push_subscriptions
+                    .filter(ps::tenant_id.eq(&tenant_owned))
+                    .filter(ps::child_id.eq(&child_owned))
+                    .filter(ps::endpoint.eq(&endpoint_owned)),
+            )
+            .execute(&mut conn)
+            .map_err(|e| e.to_string())?;
+            Ok(deleted > 0)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    pub async fn mark_push_delivery_result(
+        &self,
+        id: i32,
+        success: bool,
+        error: Option<&str>,
+    ) -> Result<(), String> {
+        use schema::push_subscriptions::dsl as ps;
+        let pool = self.pool.clone();
+        let error_owned = error.map(|s| s.to_string());
+        tokio::task::spawn_blocking(move || -> Result<(), String> {
+            let mut conn = pool.get().map_err(|e| e.to_string())?;
+            configure_sqlite_conn(&mut conn).map_err(|e| format!("pragma error: {e}"))?;
+            let now = Utc::now().naive_utc();
+            if success {
+                diesel::update(ps::push_subscriptions.filter(ps::id.eq(id)))
+                    .set((
+                        ps::updated_at.eq(now),
+                        ps::last_success_at.eq(Some(now)),
+                        ps::last_error.eq::<Option<String>>(None::<String>),
+                    ))
+                    .execute(&mut conn)
+                    .map_err(|e| e.to_string())?;
+            } else {
+                diesel::update(ps::push_subscriptions.filter(ps::id.eq(id)))
+                    .set((
+                        ps::updated_at.eq(now),
+                        ps::last_error.eq(error_owned.as_deref()),
+                    ))
+                    .execute(&mut conn)
+                    .map_err(|e| e.to_string())?;
+            }
+            Ok(())
         })
         .await
         .map_err(|e| e.to_string())?
