@@ -14,7 +14,7 @@ Config
   3) XDG: `~/.config/gamiscreen/client.yaml`
 - Example: see `gamiscreen-client/config.example.yaml`.
 - Fields:
-  - `server_url`: Base URL to GamiScreen server (e.g., http://127.0.0.1:5151)
+  - `server_url`: Base URL to GamiScreen server (e.g., https://your-server.example or http://127.0.0.1:5151)
   - Derived: `child_id`, `device_id`, heartbeat interval (60s), and the 45-second countdown warning are hardcoded or pulled from the provisioned JWT; they no longer appear in the config file.
 
 Run as systemd user service

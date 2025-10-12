@@ -1,7 +1,8 @@
 # Example config for gamiscreen-client
 # Place as: ~/.config/gamiscreen/client.yaml
-
-server_url: "http://127.0.0.1:5151"
+# Replace with your server origin. Remote deployments typically use HTTPS.
+# For local development against an unsecured server, you can keep http://localhost:5151.
+server_url: "https://your-server.example"
 # Child/device identifiers now come from the JWT returned during `gamiscreen-client login`.
 # Heartbeats run every 60 seconds with a built-in 45 second pre-lock countdown.
 # Locks via org.freedesktop.login1 Manager (DBus). Ensure polkit rule installed.

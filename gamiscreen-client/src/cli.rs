@@ -33,7 +33,7 @@ pub enum Command {
     Agent,
     /// Log in to the server and save token in the keyring
     Login {
-        /// Server URL (e.g., http://127.0.0.1:5151). Falls back to config or prompt.
+        /// Server URL (e.g., https://your-server.example or http://127.0.0.1:5151). Falls back to config or prompt.
         #[arg(long)]
         server: Option<String>,
         /// Username. Falls back to prompt.
