@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import packageInfo from '../package.json'
-import { getAuthClaims, getServerVersion, getToken, notificationsCount, renewToken, setToken } from './api'
+import { getAuthClaims, getServerVersion, getToken, notificationsCount, pushUnsubscribe, renewToken, setToken } from './api'
 
 const API_V1_PREFIX = '/api/v1'
 import { ChildDetailsPage } from './pages/ChildDetailsPage'
 import { LoginPage } from './pages/LoginPage'
 import { NotificationsPage } from './pages/NotificationsPage'
+import { SettingsPage } from './pages/SettingsPage'
 import { StatusPage } from './pages/StatusPage'
+import { NotificationSettings, getNotificationSettings, saveNotificationSettings } from './notifications'
 
-type Route = 'status' | 'login' | 'child' | 'notifications'
+type Route = 'status' | 'login' | 'child' | 'notifications' | 'settings'
 
 function useHashRoute(): [Route, (r: Route, opts?: { childId?: string }) => void, { childId?: string }] {
   const parse = () => {
@@ -58,13 +60,35 @@ export function App() {
     return isStandalone || isIOSStandalone
   })
   const [serverVersion, setServerVersion] = useState<string | null>(null)
+  const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(() => getNotificationSettings())
+
+  const cleanupPushSubscription = useCallback(async () => {
+    try {
+      if (!('serviceWorker' in navigator)) return
+      const registration = await navigator.serviceWorker.ready
+      const subscription = await registration.pushManager.getSubscription()
+      if (!subscription) return
+      const cl = getAuthClaims()
+      if (cl?.child_id) {
+        try {
+          await pushUnsubscribe(cl.child_id, subscription.endpoint)
+        } catch (err) {
+          console.warn('Failed to unregister push subscription on server', err)
+        }
+      }
+      await subscription.unsubscribe().catch(() => { })
+    } catch (err) {
+      console.warn('Failed to cleanup push subscription', err)
+    }
+  }, [])
 
   const logout = useCallback(() => {
+    cleanupPushSubscription()
     setToken(null)
     setTokenState(null)
     setRefreshingToken(false)
     nav('login')
-  }, [nav])
+  }, [cleanupPushSubscription, nav])
 
   const handleLogin = useCallback(
     (t: string) => {
@@ -231,7 +255,7 @@ export function App() {
     if (!hasToken && route !== 'login') nav('login')
     if (authReady) {
       const cl = getAuthClaims()
-      if (cl?.role === 'child' && cl.child_id && route !== 'child') {
+    if (cl?.role === 'child' && cl.child_id && route !== 'child' && route !== 'settings') {
         nav('child', { childId: cl.child_id })
       }
     }
@@ -270,6 +294,30 @@ export function App() {
     }
   }, [])
 
+  useEffect(() => {
+    const handler = () => setNotificationSettings(getNotificationSettings())
+    window.addEventListener('gamiscreen:notification-settings-changed', handler as EventListener)
+    return () => window.removeEventListener('gamiscreen:notification-settings-changed', handler as EventListener)
+  }, [])
+
+  const handleNotificationSettingsChange = useCallback((next: NotificationSettings) => {
+    saveNotificationSettings(next)
+    setNotificationSettings(getNotificationSettings())
+  }, [])
+
+  const installAvailable = !installed && !!installEvt
+
+  const triggerInstall = useCallback(async () => {
+    if (!installEvt) return
+    try {
+      await installEvt.prompt()
+    } catch (err) {
+      console.warn('Install prompt failed', err)
+    } finally {
+      setInstallEvt(null)
+    }
+  }, [installEvt])
+
   const content = useMemo(() => {
     if (!hasToken) {
       return <LoginPage onLogin={handleLogin} />
@@ -279,6 +327,19 @@ export function App() {
         <div className="col" style={{ alignItems: 'center', gap: 12 }}>
           <span className="subtitle">Renewing session…</span>
         </div>
+      )
+    }
+    if (route === 'settings') {
+      return (
+        <SettingsPage
+          installed={installed}
+          installAvailable={installAvailable}
+          onInstall={triggerInstall}
+          notificationSettings={notificationSettings}
+          onSettingsChange={handleNotificationSettingsChange}
+          role={claims?.role}
+          childId={claims?.child_id || undefined}
+        />
       )
     }
     if (isChild && claims?.child_id) {
@@ -291,7 +352,7 @@ export function App() {
       return <NotificationsPage />
     }
     return <StatusPage />
-  }, [authReady, claims?.child_id, handleLogin, hasToken, isChild, params.childId, route])
+  }, [authReady, claims?.child_id, claims?.role, handleLogin, handleNotificationSettingsChange, hasToken, installAvailable, installed, isChild, notificationSettings, params.childId, route, triggerInstall])
 
   return (
     <main className="container">
@@ -328,6 +389,10 @@ export function App() {
                     <span aria-hidden="true" style={{ marginRight: 8 }}>📊</span>
                     Status
                   </a>
+                  <a href="#settings" onClick={() => setMenuOpen(false)} style={{ display: 'block', padding: '8px 12px', textDecoration: 'none' }}>
+                    <span aria-hidden="true" style={{ marginRight: 8 }}>⚙️</span>
+                    Settings
+                  </a>
                   <a href="#logout" onClick={(e) => { e.preventDefault(); setMenuOpen(false); logout(); }} style={{ display: 'block', padding: '8px 12px', textDecoration: 'none' }}>
                     <span aria-hidden="true" style={{ marginRight: 8 }}>🚪</span>
                     Logout
@@ -348,9 +413,9 @@ export function App() {
           Server&nbsp;v{serverVersion ?? '…'} · Web&nbsp;v{webVersion} · Tenant&nbsp;{claims?.tenant_id ?? '—'}
         </p>
       </footer>
-      {!installed && installEvt && (
+      {installAvailable && (
         <footer style={{ textAlign: 'center', fontSize: 12, marginTop: 12 }}>
-          <a href="#install" onClick={async (e) => { e.preventDefault(); const ev = installEvt; try { await ev.prompt(); } catch { } }}>Install app</a>
+          <a href="#install" onClick={async (e) => { e.preventDefault(); await triggerInstall(); }}>Install app</a>
         </footer>
       )}
     </main>

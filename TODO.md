@@ -163,12 +163,12 @@ MVP will be shipped in three parts, in order: Server → Web App → Linux Clien
 
 ### Frontend (gamiscreen-web)
 
-- [ ] Replace current in-app notification prompt with Web Push registration flow.
-- [ ] Use `serviceWorker.ready.pushManager.subscribe` with VAPID public key and post subscription to server.
-- [ ] Handle unsubscription on logout or user action.
-- [ ] Update service worker to listen for `push` events and display notifications; handle `notificationclick` to reopen app.
-- [ ] Provide UI state to reflect subscription status/errors.
-- [ ] Implement client-side countdown/alarm for near-expiry time (no push required for steady minute decrements).
+- [x] Replace current in-app notification prompt with Web Push registration flow.
+- [x] Use `serviceWorker.ready.pushManager.subscribe` with VAPID public key and post subscription to server.
+- [x] Handle unsubscription on logout or user action.
+- [x] Update service worker to listen for `push` events and display notifications; handle `notificationclick` to reopen app.
+- [x] Provide UI state to reflect subscription status/errors.
+- [x] Implement client-side countdown/alarm for near-expiry time (no push required for steady minute decrements).
 
 ### Client & Compatibility
 

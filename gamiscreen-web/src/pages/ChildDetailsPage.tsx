@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getAuthClaims, getRemaining, listChildren, listChildRewards, listChildTasks, listChildUsage, RewardHistoryItemDto, rewardMinutes, submitTask, TaskWithStatusDto, UsageSeriesDto } from '../api'
-import { currentNotificationPermission, maybeNotifyRemaining, requestNotificationPermission, supportsNotifications, type PermissionState } from '../notifications'
+import { currentNotificationPermission, getNotificationSettings, maybeNotifyRemaining, requestNotificationPermission, supportsNotifications, type NotificationSettings, type PermissionState } from '../notifications'
 import { MINUTES_PER_DAY, MINUTES_PER_HOUR, MINUTES_PER_WEEK, UsageChart } from '../components/UsageChart'
 
 const USAGE_BASE_PRESETS = [
@@ -53,6 +53,8 @@ export function ChildDetailsPage(props: { childId: string }) {
   const isChild = claims?.role === 'child'
   const notificationsSupported = supportsNotifications()
   const [notificationPermission, setNotificationPermission] = useState<PermissionState>(() => currentNotificationPermission())
+  const [notificationPrefs, setNotificationPrefs] = useState<NotificationSettings>(() => getNotificationSettings())
+  const alarmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [tasks, setTasks] = useState<TaskWithStatusDto[]>([])
   const [confirm, setConfirm] = useState<null | { mode: 'task', task: TaskWithStatusDto } | { mode: 'custom', minutes: number }>(null)
   const [taskNote, setTaskNote] = useState('')
@@ -101,7 +103,14 @@ export function ChildDetailsPage(props: { childId: string }) {
       return
     }
     setNotificationPermission(currentNotificationPermission())
+    setNotificationPrefs(getNotificationSettings())
   }, [notificationsSupported])
+
+  useEffect(() => {
+    const handler = (e: any) => setNotificationPrefs(e?.detail || getNotificationSettings())
+    window.addEventListener('gamiscreen:notification-settings-changed', handler as EventListener)
+    return () => window.removeEventListener('gamiscreen:notification-settings-changed', handler as EventListener)
+  }, [])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -172,8 +181,62 @@ export function ChildDetailsPage(props: { childId: string }) {
     if (!isChild) return
     if (notificationPermission !== 'granted') return
     if (typeof remaining !== 'number') return
+    const prefs = getNotificationSettings()
+    setNotificationPrefs(prefs)
     void maybeNotifyRemaining(childId, remaining, displayName)
   }, [isChild, notificationPermission, remaining, childId, displayName])
+
+  useEffect(() => {
+    if (!isChild) return
+    if (notificationPermission !== 'granted') {
+      if (alarmTimerRef.current) {
+        clearTimeout(alarmTimerRef.current)
+        alarmTimerRef.current = null
+      }
+      return
+    }
+    if (typeof remaining !== 'number' || remaining <= 0) {
+      if (alarmTimerRef.current) {
+        clearTimeout(alarmTimerRef.current)
+        alarmTimerRef.current = null
+      }
+      return
+    }
+
+    const prefs = notificationPrefs
+    if (!prefs.enabled) {
+      if (alarmTimerRef.current) {
+        clearTimeout(alarmTimerRef.current)
+        alarmTimerRef.current = null
+      }
+      return
+    }
+
+    if (remaining > prefs.thresholdMinutes) {
+      if (alarmTimerRef.current) {
+        clearTimeout(alarmTimerRef.current)
+        alarmTimerRef.current = null
+      }
+      return
+    }
+
+    const now = new Date()
+    const millisUntilNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds()
+    const delay = Math.max(0, millisUntilNextMinute + (remaining - 1) * 60 * 1000)
+
+    if (alarmTimerRef.current) clearTimeout(alarmTimerRef.current)
+    alarmTimerRef.current = setTimeout(() => {
+      maybeNotifyRemaining(childId, 0, displayName)
+      alarmTimerRef.current = null
+    }, delay)
+
+    return () => {
+      if (alarmTimerRef.current) {
+        clearTimeout(alarmTimerRef.current)
+        alarmTimerRef.current = null
+      }
+    }
+  }, [childId, displayName, isChild, notificationPermission, notificationPrefs, remaining])
   async function loadRewards(nextPage = page) {
     try {
       setRewardsLoading(true)

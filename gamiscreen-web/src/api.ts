@@ -20,6 +20,7 @@ import type {
   UsageBucketDto,
   UsageSeriesDto,
   VersionInfoDto,
+  PushSubscribeResp,
 } from './generated/api-types'
 
 export type {
@@ -222,6 +223,44 @@ export async function approveSubmission(id: number) {
 
 export async function discardSubmission(id: number) {
   return request<void>(tenantPath(`notifications/task-submissions/${id}/discard`), { method: 'POST' })
+}
+
+function arrayBufferToBase64Url(buffer: ArrayBuffer | null): string | null {
+  if (!buffer) return null
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let i = 0; i < bytes.byteLength; i += 1) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  const base64 = btoa(binary)
+  return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '')
+}
+
+export async function pushSubscribe(childId: string, subscription: PushSubscription) {
+  const json = subscription.toJSON()
+  const p256dh =
+    arrayBufferToBase64Url(subscription.getKey('p256dh')) || (json.keys && json.keys.p256dh) || null
+  const auth =
+    arrayBufferToBase64Url(subscription.getKey('auth')) || (json.keys && json.keys.auth) || null
+  if (!p256dh || !auth) {
+    throw new Error('Push subscription is missing encryption keys')
+  }
+  const body = {
+    endpoint: subscription.endpoint,
+    p256dh,
+    auth,
+  }
+  return request<PushSubscribeResp>(`${tenantPath(`children/${encodeURIComponent(childId)}/push/subscriptions`)}`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function pushUnsubscribe(childId: string, endpoint: string) {
+  return request(`${tenantPath(`children/${encodeURIComponent(childId)}/push/subscriptions/unsubscribe`)}`, {
+    method: 'POST',
+    body: JSON.stringify({ endpoint }),
+  })
 }
 
 export async function getServerVersion(): Promise<string> {

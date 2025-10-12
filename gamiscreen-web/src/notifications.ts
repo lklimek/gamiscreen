@@ -1,7 +1,65 @@
 export type PermissionState = NotificationPermission | 'unsupported';
+export type NotificationSettings = {
+  enabled: boolean;
+  thresholdMinutes: number;
+};
 
 const notifiedChildren = new Map<string, boolean>();
 let requestingPermission = false;
+const SETTINGS_KEY = 'gamiscreen.notifications.settings';
+const DEFAULT_SETTINGS: NotificationSettings = { enabled: false, thresholdMinutes: 5 };
+
+let cachedSettings: NotificationSettings = readSettings();
+
+function readSettings(): NotificationSettings {
+  if (typeof window === 'undefined') return { ...DEFAULT_SETTINGS };
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return { ...DEFAULT_SETTINGS };
+    const parsed = JSON.parse(raw);
+    const enabled = parsed?.enabled === true;
+    const threshold = Number(parsed?.thresholdMinutes);
+    return {
+      enabled,
+      thresholdMinutes: Number.isFinite(threshold) && threshold > 0 ? Math.round(threshold) : DEFAULT_SETTINGS.thresholdMinutes,
+    };
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+function persistSettings(settings: NotificationSettings) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch { /* ignore */ }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (event) => {
+    if (event.key === SETTINGS_KEY) {
+      cachedSettings = readSettings();
+      notifiedChildren.clear();
+      window.dispatchEvent(new CustomEvent('gamiscreen:notification-settings-changed', { detail: getNotificationSettings() }));
+    }
+  });
+}
+
+export function getNotificationSettings(): NotificationSettings {
+  return { ...cachedSettings };
+}
+
+export function saveNotificationSettings(settings: NotificationSettings) {
+  cachedSettings = {
+    enabled: !!settings.enabled,
+    thresholdMinutes: Math.max(1, Math.round(settings.thresholdMinutes)),
+  };
+  persistSettings(cachedSettings);
+  notifiedChildren.clear();
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('gamiscreen:notification-settings-changed', { detail: getNotificationSettings() }));
+  }
+}
 
 function hasWindow(): boolean {
   return typeof window !== 'undefined';
@@ -59,7 +117,15 @@ export async function maybeNotifyRemaining(
 ): Promise<void> {
   if (!supportsNotifications()) return;
 
-  if (minutes <= 0 || minutes > 5) {
+  const settings = getNotificationSettings();
+  if (!settings.enabled) {
+    notifiedChildren.delete(childId);
+    return;
+  }
+
+  const threshold = Math.max(1, settings.thresholdMinutes);
+
+  if (minutes <= 0 || minutes > threshold) {
     notifiedChildren.delete(childId);
     return;
   }
