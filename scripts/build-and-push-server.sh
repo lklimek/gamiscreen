@@ -4,7 +4,7 @@ set -euo pipefail
 # Determine repository root
 ROOT_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE_REPO="lklimek/gamiscreen-server"
-PRIMARY_TAG="${1:-latest}"
+PRIMARY_TAG="${1:-}"
 
 # Extract version from the workspace Cargo.toml
 VERSION="$(awk '
@@ -20,6 +20,15 @@ VERSION="$(awk '
 if [[ -z "${VERSION}" ]]; then
   echo "Failed to read version from Cargo.toml" >&2
   exit 1
+fi
+
+# Derive a reasonable default tag when none is supplied explicitly.
+if [[ -z "${PRIMARY_TAG}" ]]; then
+  if [[ "${VERSION}" == *-* ]]; then
+    PRIMARY_TAG="${VERSION##*-}"
+  else
+    PRIMARY_TAG="latest"
+  fi
 fi
 
 TAGS=("${IMAGE_REPO}:${PRIMARY_TAG}")
