@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getAuthClaims, getRemaining, listChildren, listChildRewards, listChildTasks, listChildUsage, RewardHistoryItemDto, rewardMinutes, submitTask, TaskWithStatusDto, UsageSeriesDto } from '../api'
+import { currentNotificationPermission, maybeNotifyRemaining, requestNotificationPermission, supportsNotifications, type PermissionState } from '../notifications'
 import { MINUTES_PER_DAY, MINUTES_PER_HOUR, MINUTES_PER_WEEK, UsageChart } from '../components/UsageChart'
 
 const USAGE_BASE_PRESETS = [
@@ -50,6 +51,8 @@ export function ChildDetailsPage(props: { childId: string }) {
   const claims = getAuthClaims()
   const isParent = claims?.role === 'parent'
   const isChild = claims?.role === 'child'
+  const notificationsSupported = supportsNotifications()
+  const [notificationPermission, setNotificationPermission] = useState<PermissionState>(() => currentNotificationPermission())
   const [tasks, setTasks] = useState<TaskWithStatusDto[]>([])
   const [confirm, setConfirm] = useState<null | { mode: 'task', task: TaskWithStatusDto } | { mode: 'custom', minutes: number }>(null)
   const [taskNote, setTaskNote] = useState('')
@@ -77,12 +80,28 @@ export function ChildDetailsPage(props: { childId: string }) {
   const [submitted, setSubmitted] = useState<Set<string>>(new Set())
   const usageRequestIdRef = useRef(0)
 
+  const handleEnableNotifications = useCallback(async () => {
+    const permission = await requestNotificationPermission()
+    setNotificationPermission(permission)
+    if (permission === 'granted' && typeof remaining === 'number') {
+      void maybeNotifyRemaining(childId, remaining, displayName)
+    }
+  }, [childId, displayName, remaining])
+
   useEffect(() => {
     if (!usageOptions.length) return
     if (!usageOptions.some(p => p.key === usagePresetKey)) {
       setUsagePresetKey(usageOptions[0].key)
     }
   }, [usageOptions, usagePresetKey])
+
+  useEffect(() => {
+    if (!notificationsSupported) {
+      setNotificationPermission('unsupported')
+      return
+    }
+    setNotificationPermission(currentNotificationPermission())
+  }, [notificationsSupported])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -148,6 +167,13 @@ export function ChildDetailsPage(props: { childId: string }) {
     window.addEventListener('gamiscreen:remaining-updated', handler as EventListener)
     return () => window.removeEventListener('gamiscreen:remaining-updated', handler as EventListener)
   }, [childId])
+
+  useEffect(() => {
+    if (!isChild) return
+    if (notificationPermission !== 'granted') return
+    if (typeof remaining !== 'number') return
+    void maybeNotifyRemaining(childId, remaining, displayName)
+  }, [isChild, notificationPermission, remaining, childId, displayName])
   async function loadRewards(nextPage = page) {
     try {
       setRewardsLoading(true)
@@ -264,6 +290,19 @@ export function ChildDetailsPage(props: { childId: string }) {
           </div>
         </div>
       </div>
+      {isChild && notificationsSupported && notificationPermission !== 'granted' && (
+        <div className="card" style={{ padding: '12px' }}>
+          <h3 className="title" style={{ fontSize: 16, marginBottom: 8 }}>Notifications</h3>
+          <p className="subtitle">Enable notifications to get an alert 5 minutes before time runs out.</p>
+          {notificationPermission === 'default' ? (
+            <button type="button" className="acceptButton" onClick={handleEnableNotifications}>
+              Enable notifications
+            </button>
+          ) : (
+            <p className="error">Notifications are blocked in this browser. Update browser settings to enable them.</p>
+          )}
+        </div>
+      )}
       <div className="card" style={{ padding: '12px' }}>
         <h3 className="title" style={{ fontSize: 16, marginBottom: 8 }}>Tasks</h3>
         <div className="col" style={{ gap: 6 }}>
