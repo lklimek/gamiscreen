@@ -150,16 +150,6 @@ export function SettingsPage(props: Props) {
     }
   }, [busy, canConfigurePush, childId, localSettings, notificationsDisabledReason, updateSettings])
 
-  const handleThresholdChange = useCallback(
-    (value: number) => {
-      const minutes = Math.max(1, Math.min(60, Math.round(value)))
-      updateSettings({ ...localSettings, thresholdMinutes: minutes })
-      setStatusMessage(`Notifications will alert below ${minutes} minutes.`)
-      setErrorMessage(null)
-    },
-    [localSettings, updateSettings],
-  )
-
   const installSection = (
     <section className="card" style={{ padding: 16 }}>
       <h2 className="title" style={{ marginTop: 0 }}>Install App</h2>
@@ -214,18 +204,6 @@ export function SettingsPage(props: Props) {
           {canConfigurePush && localSettings.enabled && hasSubscription && (
             <p className="subtitle">Notifications are active on this device.</p>
           )}
-          <label className="col" style={{ marginTop: 16, gap: 6 }}>
-            <span>Alert when remaining minutes fall below</span>
-            <input
-              type="number"
-              min={1}
-              max={60}
-              value={localSettings.thresholdMinutes}
-              disabled={!localSettings.enabled || !canConfigurePush || busy}
-              onChange={(e) => handleThresholdChange(parseInt(e.target.value, 10))}
-              style={{ width: '10ch' }}
-            />
-          </label>
           {statusMessage && <p className="subtitle">{statusMessage}</p>}
           {errorMessage && <p className="error">{errorMessage}</p>}
         </>

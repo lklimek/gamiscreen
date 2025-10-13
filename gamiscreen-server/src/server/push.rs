@@ -27,9 +27,9 @@ struct PushServiceInner {
 }
 
 struct RemainingSnapshot {
-    remaining: i32,
-    at: DateTime<Utc>,
-    last_send: Option<DateTime<Utc>>,
+    last_seen: DateTime<Utc>,
+    last_remaining: i32,
+    sent_threshold: bool,
 }
 
 impl PushService {
@@ -86,9 +86,6 @@ impl PushServiceInner {
                 child_id,
                 remaining_minutes,
             } => {
-                if *remaining_minutes <= 0 {
-                    return Ok(());
-                }
                 if !self
                     .should_push_remaining(child_id, *remaining_minutes)
                     .await
@@ -217,56 +214,34 @@ impl PushServiceInner {
     async fn should_push_remaining(&self, child_id: &str, remaining: i32) -> bool {
         let mut map = self.recent_remaining.lock().await;
         let now = Utc::now();
-        match map.get(child_id) {
-            None => {
-                map.insert(
-                    child_id.to_string(),
-                    RemainingSnapshot {
-                        remaining,
-                        at: now,
-                        last_send: Some(now),
-                    },
-                );
-                true
-            }
-            Some(prev) => {
-                let prev_remaining = prev.remaining;
-                let prev_time = prev.at;
-                let last_send = prev.last_send;
-                // Expected drop based on elapsed wall-clock minutes
-                let elapsed_secs = (now - prev_time).num_seconds().max(0) as f64;
-                let elapsed_minutes = elapsed_secs / 60.0;
-                let drop = (prev_remaining - remaining) as f64;
-                let expected_drop = elapsed_minutes;
-                let tolerance = (expected_drop * 0.05).max(0.25); // 5% tolerance, minimum 0.25 minute (~15s)
+        let entry = map
+            .entry(child_id.to_string())
+            .or_insert(RemainingSnapshot {
+                last_seen: now,
+                last_remaining: remaining,
+                sent_threshold: false,
+            });
 
-                let increased = remaining > prev_remaining;
-                let out_of_range = (drop - expected_drop).abs() > tolerance;
+        entry.last_seen = now;
+        let prev_remaining = entry.last_remaining;
+        entry.last_remaining = remaining;
 
-                let mut snapshot = RemainingSnapshot {
-                    remaining,
-                    at: now,
-                    last_send,
-                };
-
-                // Allow decreased notifications only if last push was sufficiently long ago (>=1 minute)
-                let allow_drop = out_of_range
-                    && match last_send {
-                        Some(ts) => (now - ts).num_minutes() >= 1,
-                        None => true,
-                    };
-
-                if increased || allow_drop {
-                    snapshot.last_send = Some(now);
-                    map.insert(child_id.to_string(), snapshot);
-                    true
-                } else {
-                    // Update snapshot timestamps so elapsed time remains accurate, but keep last_send unchanged.
-                    snapshot.last_send = last_send;
-                    map.insert(child_id.to_string(), snapshot);
-                    false
-                }
-            }
+        let increased = remaining > prev_remaining;
+        if increased {
+            entry.sent_threshold = remaining <= 5;
+            return true;
         }
+
+        if remaining > 5 || remaining <= 0 {
+            entry.sent_threshold = false;
+            return false;
+        }
+
+        if !entry.sent_threshold && remaining <= 5 {
+            entry.sent_threshold = true;
+            return true;
+        }
+
+        false
     }
 }

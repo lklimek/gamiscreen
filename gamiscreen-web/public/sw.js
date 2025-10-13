@@ -73,6 +73,8 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
+importScripts('notification-format.js');
+
 self.addEventListener('push', (event) => {
   const data = (() => {
     try {
@@ -91,29 +93,13 @@ self.addEventListener('push', (event) => {
   if (!data) return;
 
   const promise = (async () => {
-    const title = data.title || 'Gamiscreen';
-    let body = data.body || '';
-    let url = '#status';
+    const formatter = self.__gamiscreenFormatNotification;
+    const formatted =
+      typeof formatter === 'function' ? formatter(data) : null;
 
-    if (data.type === 'pending_count' && typeof data.count === 'number') {
-      body =
-        data.count > 0
-          ? `${data.count} notification${data.count === 1 ? '' : 's'} pending.`
-          : 'All notifications resolved.';
-      url = '#notifications';
-    } else if (data.type === 'remaining_updated') {
-      const minutes = data.remaining_minutes;
-      const child = data.child_id;
-      if (typeof minutes === 'number') {
-        body =
-          minutes >= 0
-            ? `${minutes} minute${minutes === 1 ? '' : 's'} remaining — ${child || 'child'}.`
-            : `0 minutes remaining — ${child || 'Child'} is out of time.`;
-      }
-      if (child) {
-        url = `#child/${encodeURIComponent(child)}`;
-      }
-    }
+    const title = formatted?.title || data.title || 'Gamiscreen';
+    const body = formatted?.body || data.body || '';
+    const url = formatted?.url || data.url || '#status';
 
     if (!body) return;
 

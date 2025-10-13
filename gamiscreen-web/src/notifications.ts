@@ -1,13 +1,17 @@
 export type PermissionState = NotificationPermission | 'unsupported';
 export type NotificationSettings = {
   enabled: boolean;
-  thresholdMinutes: number;
 };
 
-const notifiedChildren = new Map<string, boolean>();
-let requestingPermission = false;
+const formatterGlobal = () =>
+  (typeof window !== 'undefined' &&
+    (window as typeof window & {
+      __gamiscreenFormatNotification?: (payload: any) => { title?: string; body?: string } | null;
+    }).__gamiscreenFormatNotification) || null;
+
 const SETTINGS_KEY = 'gamiscreen.notifications.settings';
-const DEFAULT_SETTINGS: NotificationSettings = { enabled: false, thresholdMinutes: 5 };
+const DEFAULT_SETTINGS: NotificationSettings = { enabled: false };
+let requestingPermission = false;
 
 let cachedSettings: NotificationSettings = readSettings();
 
@@ -17,11 +21,8 @@ function readSettings(): NotificationSettings {
     const raw = localStorage.getItem(SETTINGS_KEY);
     if (!raw) return { ...DEFAULT_SETTINGS };
     const parsed = JSON.parse(raw);
-    const enabled = parsed?.enabled === true;
-    const threshold = Number(parsed?.thresholdMinutes);
     return {
-      enabled,
-      thresholdMinutes: Number.isFinite(threshold) && threshold > 0 ? Math.round(threshold) : DEFAULT_SETTINGS.thresholdMinutes,
+      enabled: parsed?.enabled === true,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -32,15 +33,20 @@ function persistSettings(settings: NotificationSettings) {
   if (typeof window === 'undefined') return;
   try {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-  } catch { /* ignore */ }
+  } catch {
+    // ignore storage errors
+  }
 }
 
 if (typeof window !== 'undefined') {
   window.addEventListener('storage', (event) => {
     if (event.key === SETTINGS_KEY) {
       cachedSettings = readSettings();
-      notifiedChildren.clear();
-      window.dispatchEvent(new CustomEvent('gamiscreen:notification-settings-changed', { detail: getNotificationSettings() }));
+      window.dispatchEvent(
+        new CustomEvent('gamiscreen:notification-settings-changed', {
+          detail: getNotificationSettings(),
+        }),
+      );
     }
   });
 }
@@ -52,12 +58,14 @@ export function getNotificationSettings(): NotificationSettings {
 export function saveNotificationSettings(settings: NotificationSettings) {
   cachedSettings = {
     enabled: !!settings.enabled,
-    thresholdMinutes: Math.max(1, Math.round(settings.thresholdMinutes)),
   };
   persistSettings(cachedSettings);
-  notifiedChildren.clear();
   if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('gamiscreen:notification-settings-changed', { detail: getNotificationSettings() }));
+    window.dispatchEvent(
+      new CustomEvent('gamiscreen:notification-settings-changed', {
+        detail: getNotificationSettings(),
+      }),
+    );
   }
 }
 
@@ -107,72 +115,4 @@ export async function requestNotificationPermission(): Promise<PermissionState> 
   }
 }
 
-function notificationTitle(displayName: string | undefined, minutes: number): string {
-  const namePart = displayName ? `${displayName}` : 'Remaining time';
-  if (minutes === 1) {
-    return `${namePart}: 1 minute left`;
-  }
-  return `${namePart}: ${minutes} minutes left`;
-}
-
-function notificationBody(minutes: number): string {
-  if (minutes === 1) {
-    return '1 minute remaining — wrap up or ask for more time.';
-  }
-  return `${minutes} minutes remaining — please get ready to finish up.`;
-}
-
-export async function maybeNotifyRemaining(
-  childId: string,
-  minutes: number,
-  displayName?: string,
-): Promise<void> {
-  if (!supportsNotifications()) return;
-
-  const settings = getNotificationSettings();
-  if (!settings.enabled) {
-    notifiedChildren.delete(childId);
-    return;
-  }
-
-  const threshold = Math.max(1, settings.thresholdMinutes);
-
-  if (minutes <= 0 || minutes > threshold) {
-    notifiedChildren.delete(childId);
-    return;
-  }
-
-  if (Notification.permission !== 'granted') return;
-  if (notifiedChildren.get(childId)) return;
-
-  const title = notificationTitle(displayName, minutes);
-  const options: NotificationOptions = {
-    body: notificationBody(minutes),
-    tag: `remaining-${childId}`,
-    requireInteraction: false,
-    icon: '/icons/icon-192x192.png',
-    badge: '/icons/icon-192x192.png',
-  };
-
-  try {
-    if (hasNavigator() && navigator.serviceWorker) {
-      const registration = await navigator.serviceWorker.getRegistration();
-      if (registration) {
-        await registration.showNotification(title, options);
-        notifiedChildren.set(childId, true);
-        return;
-      }
-    }
-    } catch (err) {
-      console.warn('Failed to show notification via service worker', err);
-    }
-
-  try {
-    // Fallback do bezpośredniego Notification API
-    new Notification(title, options);
-    notifiedChildren.set(childId, true);
-  } catch (err) {
-    console.warn('Failed to show notification', err);
-  }
-}
 export { getVapidPublicKey, isWebPushConfigured } from './env';
