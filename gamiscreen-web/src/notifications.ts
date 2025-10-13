@@ -61,6 +61,18 @@ export function saveNotificationSettings(settings: NotificationSettings) {
   }
 }
 
+export function base64UrlToUint8Array(base64String: string): Uint8Array {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const buffer = new ArrayBuffer(raw.length);
+  const output = new Uint8Array(buffer);
+  for (let i = 0; i < raw.length; i += 1) {
+    output[i] = raw.charCodeAt(i);
+  }
+  return output;
+}
+
 function hasWindow(): boolean {
   return typeof window !== 'undefined';
 }
@@ -105,9 +117,9 @@ function notificationTitle(displayName: string | undefined, minutes: number): st
 
 function notificationBody(minutes: number): string {
   if (minutes === 1) {
-    return 'Only 1 minute of screen time remains. Wrap up or ask for more time.';
+    return '1 minute remaining — wrap up or ask for more time.';
   }
-  return `Only ${minutes} minutes of screen time remain. Please get ready to finish up.`;
+  return `${minutes} minutes remaining — please get ready to finish up.`;
 }
 
 export async function maybeNotifyRemaining(

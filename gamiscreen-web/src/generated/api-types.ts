@@ -21,6 +21,8 @@ export type HeartbeatReq = { minutes: Array<number>, };
 
 export type HeartbeatResp = { remaining_minutes: number, };
 
+export type ConfigResp = { push_public_key: string | null, };
+
 export type PushSubscribeReq = { endpoint: string, p256dh: string, auth: string, };
 
 export type PushSubscribeResp = { subscription_id: number, };

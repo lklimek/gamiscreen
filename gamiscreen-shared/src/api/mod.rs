@@ -111,6 +111,12 @@ pub struct PushUnsubscribeReq {
     pub endpoint: String,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct ConfigResp {
+    pub push_public_key: Option<String>,
+}
+
 // Client registration
 #[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]

@@ -116,3 +116,7 @@ pub fn child_push_unsubscribe(base: &str, tenant_id: &str, child_id: &str) -> St
         ),
     )
 }
+
+pub fn tenant_config(base: &str, tenant_id: &str) -> String {
+    base_join(base, &format!("{}/config", tenant_scope(tenant_id)))
+}

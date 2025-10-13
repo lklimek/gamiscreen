@@ -107,8 +107,8 @@ self.addEventListener('push', (event) => {
       if (typeof minutes === 'number') {
         body =
           minutes >= 0
-            ? `Remaining time for ${child || 'child'}: ${minutes} minute${minutes === 1 ? '' : 's'}.`
-            : `${child || 'Child'} is out of time.`;
+            ? `${minutes} minute${minutes === 1 ? '' : 's'} remaining — ${child || 'child'}.`
+            : `0 minutes remaining — ${child || 'Child'} is out of time.`;
       }
       if (child) {
         url = `#child/${encodeURIComponent(child)}`;

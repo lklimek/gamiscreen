@@ -4,6 +4,7 @@ import type {
   ChildDto,
   ClientRegisterReq,
   ClientRegisterResp,
+  ConfigResp,
   HeartbeatReq,
   HeartbeatResp,
   JwtClaims,
@@ -29,6 +30,7 @@ export type {
   ChildDto,
   ClientRegisterReq,
   ClientRegisterResp,
+  ConfigResp,
   HeartbeatReq,
   HeartbeatResp,
   JwtClaims,
@@ -261,6 +263,10 @@ export async function pushUnsubscribe(childId: string, endpoint: string) {
     method: 'POST',
     body: JSON.stringify({ endpoint }),
   })
+}
+
+export async function getConfig() {
+  return request<ConfigResp>(tenantPath('config'))
 }
 
 export async function getServerVersion(): Promise<string> {

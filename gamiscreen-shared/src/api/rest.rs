@@ -259,3 +259,19 @@ pub async fn push_unsubscribe(
         Err(RestError::Status { status, body })
     }
 }
+
+pub async fn get_config(
+    base: &str,
+    tenant_id: &str,
+    bearer: &str,
+) -> Result<ConfigResp, RestError> {
+    let client = mk_client()?;
+    let url = ep::tenant_config(base, tenant_id);
+    let res = client
+        .get(url)
+        .bearer_auth(bearer)
+        .send()
+        .await
+        .map_err(|e| RestError::Http(e.to_string()))?;
+    handle_json(res).await
+}

@@ -17,7 +17,7 @@ use axum::{
 use bcrypt::verify;
 pub use config::{AppConfig, Role, UserConfig};
 use gamiscreen_shared::api;
-use gamiscreen_shared::api::ChildDto;
+use gamiscreen_shared::api::{ChildDto, ConfigResp};
 use gamiscreen_shared::jwt;
 use mime_guess::from_path;
 use push::PushService;
@@ -170,6 +170,7 @@ pub fn router(state: AppState) -> Router {
             "/children/{id}/tasks/{task_id}/submit",
             post(api_submit_task),
         )
+        .route("/config", get(api_config))
         .with_state(state.clone())
         // IMPORTANT: Last-added layer runs first on request. We want:
         // require_bearer -> enforce_acl -> set_auth_span_fields -> handler
@@ -608,6 +609,25 @@ async fn api_push_unsubscribe(
         .await
         .map_err(AppError::internal)?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn api_config(
+    State(state): State<AppState>,
+    Extension(_auth): Extension<AuthCtx>,
+) -> Result<Json<ConfigResp>, AppError> {
+    let push_key = state
+        .config
+        .push
+        .as_ref()
+        .filter(|cfg| cfg.enabled)
+        .and_then(|cfg| cfg.vapid_public.as_ref())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+
+    Ok(Json(ConfigResp {
+        push_public_key: push_key,
+    }))
 }
 
 #[derive(Deserialize)]

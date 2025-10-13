@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { getAuthClaims, getRemaining, listChildren, listChildRewards, listChildTasks, listChildUsage, RewardHistoryItemDto, rewardMinutes, submitTask, TaskWithStatusDto, UsageSeriesDto } from '../api'
-import { currentNotificationPermission, getNotificationSettings, maybeNotifyRemaining, requestNotificationPermission, supportsNotifications, type NotificationSettings, type PermissionState } from '../notifications'
+import { getAuthClaims, getConfig, getRemaining, listChildren, listChildRewards, listChildTasks, listChildUsage, pushSubscribe, RewardHistoryItemDto, rewardMinutes, submitTask, TaskWithStatusDto, UsageSeriesDto } from '../api'
+import { base64UrlToUint8Array, currentNotificationPermission, getNotificationSettings, getVapidPublicKey, maybeNotifyRemaining, saveNotificationSettings, requestNotificationPermission, supportsNotifications, type NotificationSettings, type PermissionState } from '../notifications'
 import { MINUTES_PER_DAY, MINUTES_PER_HOUR, MINUTES_PER_WEEK, UsageChart } from '../components/UsageChart'
 
 const USAGE_BASE_PRESETS = [
@@ -83,10 +83,44 @@ export function ChildDetailsPage(props: { childId: string }) {
   const usageRequestIdRef = useRef(0)
 
   const handleEnableNotifications = useCallback(async () => {
-    const permission = await requestNotificationPermission()
-    setNotificationPermission(permission)
-    if (permission === 'granted' && typeof remaining === 'number') {
-      void maybeNotifyRemaining(childId, remaining, displayName)
+    try {
+      const permission = await requestNotificationPermission()
+      setNotificationPermission(permission)
+      if (permission !== 'granted') return
+
+      const config = await getConfig().catch(() => null)
+      const vapid = config?.push_public_key || getVapidPublicKey()
+      if (!vapid) {
+        console.warn('push notifications unavailable: missing public key')
+        return
+      }
+
+      const registration = await navigator.serviceWorker.ready
+      let subscription = await registration.pushManager.getSubscription()
+      if (!subscription) {
+        const applicationServerKey = base64UrlToUint8Array(vapid).buffer as ArrayBuffer
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey,
+        })
+      }
+
+      const claims = getAuthClaims()
+      const activeChild = claims?.child_id || childId
+      if (activeChild) {
+        await pushSubscribe(activeChild, subscription)
+      }
+
+      const prefs = getNotificationSettings()
+      const nextPrefs = { ...prefs, enabled: true }
+      saveNotificationSettings(nextPrefs)
+      setNotificationPrefs(nextPrefs)
+
+      if (typeof remaining === 'number') {
+        void maybeNotifyRemaining(childId, remaining, displayName)
+      }
+    } catch (err) {
+      console.warn('Failed to enable notifications', err)
     }
   }, [childId, displayName, remaining])
 

@@ -76,6 +76,7 @@ fn allow_parent(method: &Method, rest: &[&str]) -> Result<(), AppError> {
         ["children", _, "push", "subscriptions", "unsubscribe"] if *method == Method::POST => {
             Ok(())
         }
+        ["config"] if *method == Method::GET => Ok(()),
         _ => Err(AppError::forbidden()),
     }
 }
@@ -101,6 +102,7 @@ fn allow_child(method: &Method, rest: &[&str], claims: &JwtClaims) -> Result<(),
         ["children", child, "push", "subscriptions", "unsubscribe"] if *method == Method::POST => {
             ensure_child(claims, child)
         }
+        ["config"] if *method == Method::GET => Ok(()),
         _ => Err(AppError::forbidden()),
     }
 }
