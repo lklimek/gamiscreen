@@ -118,7 +118,31 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const targetUrl = event.notification?.data?.url || '#status';
+  const fallbackUrl = (() => {
+    try {
+      return new URL('/#status', self.registration.scope).href;
+    } catch {
+      return '#status';
+    }
+  })();
+
+  const targetUrl = (() => {
+    const rawTarget = event.notification?.data?.url;
+    if (!rawTarget || typeof rawTarget !== 'string') return fallbackUrl;
+    // Absolute URLs (https:, http:, mailto:, etc.) should be used as-is.
+    if (/^[a-zA-Z][a-zA-Z\d+\-.]*:/.test(rawTarget)) return rawTarget;
+    try {
+      if (rawTarget.startsWith('#')) {
+        return new URL(`/${rawTarget}`, self.registration.scope).href;
+      }
+      if (rawTarget.startsWith('/')) {
+        return new URL(rawTarget, self.registration.scope).href;
+      }
+      return fallbackUrl;
+    } catch {
+      return fallbackUrl;
+    }
+  })();
 
   const openClient = async () => {
     const allClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });

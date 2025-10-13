@@ -57,4 +57,11 @@ build_args+=(
 
 "${build_args[@]}"
 
+
+echo "Pushed to:"
+for tag in "${TAGS[@]}"; do
+  echo "  ${tag}"
+done
+
 echo "Done."
+
