@@ -749,7 +749,7 @@ impl Store {
     }
 
     pub async fn compute_remaining(&self, child: &str) -> Result<i32, String> {
-        use diesel::dsl::{count_distinct, sum};
+        use diesel::dsl::sum;
         let pool = self.pool.clone();
         let child_owned = child.to_string();
         tokio::task::spawn_blocking(move || -> Result<i32, String> {
@@ -762,8 +762,10 @@ impl Store {
                 .map_err(|e| e.to_string())?;
             let used: i64 = schema::usage_minutes::dsl::usage_minutes
                 .filter(schema::usage_minutes::dsl::child_id.eq(&child_owned))
-                .select(count_distinct(schema::usage_minutes::dsl::minute_ts))
-                .first::<i64>(&mut conn)
+                .select(schema::usage_minutes::dsl::minute_ts)
+                .distinct()
+                .count()
+                .get_result::<i64>(&mut conn)
                 .map_err(|e| e.to_string())?;
             // Allow remaining time to go negative when usage exceeds rewards
             let remaining = (rewards_sum.unwrap_or(0) - used) as i32;

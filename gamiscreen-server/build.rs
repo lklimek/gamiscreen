@@ -177,35 +177,31 @@ fn update_version_in_file(
     let mut updated =
         replace_version_literal(&raw, current, version, 0, path, "top-level version")?;
 
-    if update_lock_root {
-        if let Some(root_version) = json
+    if update_lock_root
+        && let Some(root_version) = json
             .get("packages")
             .and_then(|v| v.as_object())
             .and_then(|map| map.get(""))
             .and_then(|v| v.as_object())
             .and_then(|obj| obj.get("version"))
             .and_then(|v| v.as_str())
-        {
-            if root_version != version {
-                let packages_pos = updated
-                    .find("\"packages\"")
-                    .ok_or_else(|| format!("{} missing packages section", path.display()))?;
-                let empty_key_pos = updated[packages_pos..]
-                    .find("\"\": {")
-                    .map(|idx| packages_pos + idx)
-                    .ok_or_else(|| {
-                        format!("could not locate root package entry in {}", path.display())
-                    })?;
-                updated = replace_version_literal(
-                    &updated,
-                    root_version,
-                    version,
-                    empty_key_pos,
-                    path,
-                    "root package version",
-                )?;
-            }
-        }
+        && root_version != version
+    {
+        let packages_pos = updated
+            .find("\"packages\"")
+            .ok_or_else(|| format!("{} missing packages section", path.display()))?;
+        let empty_key_pos = updated[packages_pos..]
+            .find("\"\": {")
+            .map(|idx| packages_pos + idx)
+            .ok_or_else(|| format!("could not locate root package entry in {}", path.display()))?;
+        updated = replace_version_literal(
+            &updated,
+            root_version,
+            version,
+            empty_key_pos,
+            path,
+            "root package version",
+        )?;
     }
 
     fs::write(path, updated).map_err(|err| format!("failed to write {}: {err}", path.display()))?;

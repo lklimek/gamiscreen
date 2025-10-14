@@ -50,7 +50,7 @@ pub async fn run(config_path: Option<PathBuf>) -> Result<(), AppError> {
             token = new_token;
             claims = new_claims;
         }
-        Err(RestError::Status { status, .. }) if status == 401 => {
+        Err(RestError::Status { status: 401, .. }) => {
             return Err(AppError::Http(
                 "token renewal failed with unauthorized; please log in again".into(),
             ));
@@ -95,14 +95,16 @@ pub async fn run(config_path: Option<PathBuf>) -> Result<(), AppError> {
     let mut handle = tokio::spawn(async move {
         let _ = main_loop(
             cancel_child,
-            cfg_cloned,
-            token_cloned,
-            claims_cloned,
-            child_id_cloned,
-            device_id_cloned,
-            relocker_cloned,
-            plat_cloned,
-            countdown_task,
+            MainLoopContext {
+                cfg: cfg_cloned,
+                token: token_cloned,
+                claims: claims_cloned,
+                child_id: child_id_cloned,
+                device_id: device_id_cloned,
+                relocker: relocker_cloned,
+                platform: plat_cloned,
+                countdown_task,
+            },
         )
         .await;
     });
@@ -124,8 +126,7 @@ pub async fn run(config_path: Option<PathBuf>) -> Result<(), AppError> {
     Ok(())
 }
 
-async fn main_loop(
-    cancel: tokio_util::sync::CancellationToken,
+struct MainLoopContext {
     cfg: ClientConfig,
     token: String,
     claims: JwtClaims,
@@ -134,7 +135,22 @@ async fn main_loop(
     relocker: ReLocker,
     platform: Arc<dyn platform::Platform>,
     countdown_task: CountdownTask,
+}
+
+async fn main_loop(
+    cancel: tokio_util::sync::CancellationToken,
+    ctx: MainLoopContext,
 ) -> Result<(), AppError> {
+    let MainLoopContext {
+        cfg,
+        token,
+        claims,
+        child_id,
+        device_id,
+        relocker,
+        platform,
+        countdown_task,
+    } = ctx;
     let mut failures: u32 = 0;
     let mut unsent_minutes: BTreeSet<i64> = BTreeSet::new();
     let fail_fuse_secs = HEARTBEAT_INTERVAL_SECS * 5;

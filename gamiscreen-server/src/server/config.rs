@@ -210,11 +210,11 @@ fn apply_env_overrides(cfg: &mut AppConfig) {
         let push = cfg.push.get_or_insert_with(Default::default);
         push.contact_email = Some(val);
     }
-    if let Ok(val) = env::var("PUSH_ENABLED") {
-        if let Ok(parsed) = val.parse::<bool>() {
-            let push = cfg.push.get_or_insert_with(Default::default);
-            push.enabled = parsed;
-        }
+    if let Ok(val) = env::var("PUSH_ENABLED")
+        && let Ok(parsed) = val.parse::<bool>()
+    {
+        let push = cfg.push.get_or_insert_with(Default::default);
+        push.enabled = parsed;
     }
 }
 

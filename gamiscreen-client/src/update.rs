@@ -164,24 +164,17 @@ fn eq_hex_constant_time(a: &str, b: &str) -> bool {
 fn extract_single_from_zip(zip_path: &Path, out_path: &Path) -> Result<(), AppError> {
     let f = File::open(zip_path).map_err(AppError::Io)?;
     let mut zip = zip::ZipArchive::new(f)
-        .map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::Other, format!("zip open error: {}", e))
-        })
+        .map_err(|e| std::io::Error::other(format!("zip open error: {}", e)))
         .map_err(AppError::Io)?;
-    if zip.len() == 0 {
-        return Err(AppError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "zip archive empty",
-        )));
+    if zip.is_empty() {
+        return Err(AppError::Io(std::io::Error::other("zip archive empty")));
     }
     // Find first non-directory entry index
     let mut chosen_idx: Option<usize> = None;
     for i in 0..zip.len() {
         let f = zip
             .by_index(i)
-            .map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::Other, format!("zip entry error: {}", e))
-            })
+            .map_err(|e| std::io::Error::other(format!("zip entry error: {}", e)))
             .map_err(AppError::Io)?;
         if !f.is_dir() {
             chosen_idx = Some(i);
@@ -190,16 +183,13 @@ fn extract_single_from_zip(zip_path: &Path, out_path: &Path) -> Result<(), AppEr
         // `f` drops here before next iteration
     }
     let Some(idx) = chosen_idx else {
-        return Err(AppError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
+        return Err(AppError::Io(std::io::Error::other(
             "no file entries in zip",
         )));
     };
     let mut file = zip
         .by_index(idx)
-        .map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::Other, format!("zip entry error: {}", e))
-        })
+        .map_err(|e| std::io::Error::other(format!("zip entry error: {}", e)))
         .map_err(AppError::Io)?;
 
     // Write to out_path
@@ -293,12 +283,10 @@ async fn collect_candidates(
             for b in assets.iter() {
                 if b.get("name").and_then(|v| v.as_str()) == Some(sha_name.as_str())
                     && let Some(url2) = b.get("browser_download_url").and_then(|v| v.as_str())
+                    && let Ok(resp) = gh.get(url2).send().await
+                    && let Ok(text) = resp.text().await
                 {
-                    if let Ok(resp) = gh.get(url2).send().await {
-                        if let Ok(text) = resp.text().await {
-                            sha256 = text.split_whitespace().next().unwrap_or("").to_string();
-                        }
-                    }
+                    sha256 = text.split_whitespace().next().unwrap_or("").to_string();
                 }
             }
             if sha256.is_empty() {

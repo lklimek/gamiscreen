@@ -98,10 +98,10 @@ fn parse_authority(authority: &str) -> (&str, Option<u16>) {
         if let Some(end) = authority.find(']') {
             let host = &authority[..=end];
             let rest = &authority[end + 1..];
-            if let Some(port_str) = rest.strip_prefix(':') {
-                if let Ok(port) = port_str.parse::<u16>() {
-                    return (host, Some(port));
-                }
+            if let Some(port_str) = rest.strip_prefix(':')
+                && let Ok(port) = port_str.parse::<u16>()
+            {
+                return (host, Some(port));
             }
             return (host, None);
         }
@@ -110,10 +110,11 @@ fn parse_authority(authority: &str) -> (&str, Option<u16>) {
 
     if let Some(idx) = authority.rfind(':') {
         let port_part = &authority[idx + 1..];
-        if !port_part.is_empty() && port_part.chars().all(|c| c.is_ascii_digit()) {
-            if let Ok(port) = port_part.parse::<u16>() {
-                return (&authority[..idx], Some(port));
-            }
+        if !port_part.is_empty()
+            && port_part.chars().all(|c| c.is_ascii_digit())
+            && let Ok(port) = port_part.parse::<u16>()
+        {
+            return (&authority[..idx], Some(port));
         }
     }
 

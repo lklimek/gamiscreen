@@ -184,10 +184,10 @@ fn validate_claims(state: &AppState, claims: &JwtClaims) -> Result<(), AppError>
                     child_id
                 )));
             }
-            if let Some(device_id) = claims.device_id.as_deref() {
-                if device_id.trim().is_empty() {
-                    return Err(AppError::bad_request("device_id cannot be empty"));
-                }
+            if let Some(device_id) = claims.device_id.as_deref()
+                && device_id.trim().is_empty()
+            {
+                return Err(AppError::bad_request("device_id cannot be empty"));
             }
         }
     }

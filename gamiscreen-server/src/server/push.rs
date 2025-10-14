@@ -185,21 +185,15 @@ impl PushServiceInner {
                     err,
                     web_push::WebPushError::EndpointNotFound(_)
                         | web_push::WebPushError::EndpointNotValid(_)
-                ) {
-                    if let Err(e) = store
-                        .delete_push_subscription(
-                            &self.tenant_id,
-                            &subscription.child_id,
-                            &endpoint,
-                        )
-                        .await
-                    {
-                        warn!(
-                            endpoint = %endpoint,
-                            error = %e,
-                            "push: failed to remove stale subscription"
-                        );
-                    }
+                ) && let Err(e) = store
+                    .delete_push_subscription(&self.tenant_id, &subscription.child_id, &endpoint)
+                    .await
+                {
+                    warn!(
+                        endpoint = %endpoint,
+                        error = %e,
+                        "push: failed to remove stale subscription"
+                    );
                 }
 
                 return Err(err_str);
