@@ -38,26 +38,55 @@ export function LoginPage(props: { onLogin: (token: string) => void }) {
   }
 
   return (
-    <form className="col" onSubmit={onSubmit}>
+    <form
+      className="col"
+      onSubmit={onSubmit}
+      autoComplete="on"
+      method="post"
+      action="/login"
+      id="login-form"
+      name="login-form"
+    >
       {showServerInput && (
-        <label className="col">
+        <label className="col" htmlFor="server-url">
           <span>Server URL (API)</span>
           <input
             inputMode="url"
+            name="server-url"
+            id="server-url"
+            data-lpignore="true"
             placeholder="https://your-server.example.com"
             value={serverUrl}
             onChange={e => setServerUrl(e.target.value)}
-          />
+            />
           <small>Only needed when using GitHub Pages.</small>
         </label>
       )}
-      <label className="col">
+      <label className="col" htmlFor="username">
         <span>Username</span>
-        <input value={username} onChange={e=>setUsername(e.target.value)} placeholder="parent" />
+        <input
+          type="text"
+          id="username"
+          name="username"
+          autoComplete="username"
+          autoCapitalize="none"
+          autoCorrect="off"
+          value={username}
+          onChange={e=>setUsername(e.target.value)}
+          placeholder="parent"
+        />
       </label>
-      <label className="col">
+      <label className="col" htmlFor="password">
         <span>Password</span>
-        <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="••••••" />
+        <input
+          type="password"
+          id="password"
+          name="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={e=>setPassword(e.target.value)}
+          placeholder="••••••"
+        />
       </label>
       {error && <div className="error">{error}</div>}
       <div className="row">
