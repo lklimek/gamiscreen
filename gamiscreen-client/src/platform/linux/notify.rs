@@ -126,9 +126,20 @@ fn message_text(remaining_secs: i64) -> NotificationMessage {
     }
 }
 
+const FINAL_WARNING_SECS: u64 = 45;
+
 fn countdown_message(seconds_left: u64) -> NotificationMessage {
+    let formatted = format_duration(seconds_left);
+    if seconds_left > FINAL_WARNING_SECS {
+        return NotificationMessage {
+            summary: format!("Wylogowanie za {}", formatted),
+            body: "Pozostało niewiele czasu. Przygotuj się do zakończenia pracy.".to_string(),
+            log: format!("[CAUTION] {} s do wylogowania", seconds_left),
+        };
+    }
+
     NotificationMessage {
-        summary: format!("Wylogowanie za {} s", seconds_left),
+        summary: format!("Wylogowanie za {}", formatted),
         body: "Zapisz swoją pracę. Czas dobiega końca.".to_string(),
         log: format!("[COUNTDOWN] {} s do wylogowania", seconds_left),
     }
@@ -158,5 +169,15 @@ fn overtime_summary(overdue_secs: u64) -> String {
         }
     } else {
         format!("Czas przekroczony o {} s", seconds)
+    }
+}
+
+fn format_duration(total_secs: u64) -> String {
+    let minutes = total_secs / 60;
+    let seconds = total_secs % 60;
+    match (minutes, seconds) {
+        (0, s) => format!("{} s", s),
+        (m, 0) => format!("{} min", m),
+        (m, s) => format!("{} min {} s", m, s),
     }
 }

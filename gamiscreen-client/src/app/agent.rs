@@ -1,11 +1,12 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
 use gamiscreen_shared::api::{self, rest::RestError};
 use gamiscreen_shared::jwt::{self, JwtClaims};
-use tokio::time::{Instant, sleep};
+use tokio::time::{Instant, Sleep, sleep};
 use tracing::{debug, error, info, warn};
 
 use crate::config::ClientConfig;
@@ -16,6 +17,7 @@ const RELOCK_INITIAL_DELAY_SECS: u64 = 60;
 const RELOCK_DELAY_DECREMENT_PER_MINUTE: u64 = 10;
 pub const HEARTBEAT_INTERVAL_SECS: u64 = 60;
 pub const WARN_BEFORE_LOCK_SECS: u64 = 45;
+pub const CAUTION_BEFORE_LOCK_SECS: u64 = 5 * 60;
 
 /// Entry point for the interactive agent in the current session.
 pub async fn run(config_path: Option<PathBuf>) -> Result<(), AppError> {
@@ -82,8 +84,12 @@ pub async fn run(config_path: Option<PathBuf>) -> Result<(), AppError> {
         relocker.attach_sse(h).await;
     }
 
-    let countdown_task =
-        CountdownTask::new(HEARTBEAT_INTERVAL_SECS, WARN_BEFORE_LOCK_SECS, plat.clone());
+    let countdown_task = CountdownTask::new(
+        HEARTBEAT_INTERVAL_SECS,
+        WARN_BEFORE_LOCK_SECS,
+        CAUTION_BEFORE_LOCK_SECS,
+        plat.clone(),
+    );
 
     let cancel = tokio_util::sync::CancellationToken::new();
     let cfg_cloned = cfg.clone();
@@ -265,66 +271,188 @@ fn read_token_from_keyring(server_url: &str) -> Result<String, AppError> {
 }
 
 struct CountdownTask {
-    when_tx: tokio::sync::mpsc::Sender<tokio::time::Instant>,
+    cmd_tx: tokio::sync::mpsc::Sender<CountdownCommand>,
     notify_secs: u64,
-    interval_secs: u64,
 }
 
 impl CountdownTask {
     fn new(
         interval_secs: u64,
         warn_before_lock_secs: u64,
+        caution_before_lock_secs: u64,
         platform: Arc<dyn platform::Platform>,
     ) -> Self {
         let far_in_future = Instant::now() + Duration::from_secs(interval_secs * 1000);
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(10);
+        let platform_for_task = platform.clone();
         tokio::spawn(async move {
-            let mut when_notify = far_in_future;
+            let mut schedule: Option<CountdownSchedule> = None;
+            let mut timer: Pin<Box<Sleep>> = Box::pin(tokio::time::sleep_until(far_in_future));
             loop {
                 tokio::select! {
                     new_when = rx.recv() => {
-                        let Some(when) = new_when else {
-                            info!("countdown task: channel closed; exiting");
-                            break;
-                        };
-                        when_notify = when;
-
-                        debug!(?when_notify, "countdown task: new deadline received; closing previous notification");
-                        platform.hide_notification().await;
+                        match new_when {
+                            Some(CountdownCommand::Schedule { left_secs }) => {
+                                platform.hide_notification().await;
+                                let now = Instant::now();
+                                schedule = CountdownSchedule::new(
+                                    now,
+                                    left_secs,
+                                    warn_before_lock_secs,
+                                    caution_before_lock_secs,
+                                );
+                                if let Some(ref sched) = schedule {
+                                    if let Some(next_deadline) = sched.next_deadline(now) {
+                                        timer.as_mut().reset(next_deadline);
+                                    } else {
+                                        timer.as_mut().reset(far_in_future);
+                                    }
+                                } else {
+                                    timer.as_mut().reset(far_in_future);
+                                }
+                            }
+                            Some(CountdownCommand::Cancel) => {
+                                schedule = None;
+                                platform.hide_notification().await;
+                                timer.as_mut().reset(far_in_future);
+                            }
+                            None => {
+                                info!("countdown task: channel closed; exiting");
+                                platform.hide_notification().await;
+                                break;
+                            }
+                        }
                     }
 
-                    _ = tokio::time::sleep_until(when_notify) => {
-                        debug!("countdown task: deadline reached; showing countdown notification");
-                        when_notify = far_in_future;
-                        platform.notify(warn_before_lock_secs).await;
+                    _ = &mut timer => {
+                        if let Some(sched) = schedule.as_mut() {
+                            let now = Instant::now();
+                            match sched.fire(&platform_for_task, now).await {
+                                Some(next_deadline) => {
+                                    timer.as_mut().reset(next_deadline);
+                                }
+                                None => {
+                                    timer.as_mut().reset(far_in_future);
+                                    schedule = None;
+                                }
+                            }
+                        } else {
+                            timer.as_mut().reset(far_in_future);
+                        }
                     }
                 }
             }
         });
 
         Self {
-            when_tx: tx,
+            cmd_tx: tx,
             notify_secs: warn_before_lock_secs,
-            interval_secs,
         }
     }
 
     async fn tick(&self, left_mins: u64) {
-        if left_mins * 60 <= self.notify_secs {
+        let left_secs = left_mins * 60;
+        if left_secs <= self.notify_secs {
             return;
         }
 
-        let when =
-            tokio::time::Instant::now() + Duration::from_secs(left_mins * 60 - self.notify_secs);
-        if let Err(e) = self.when_tx.send(when).await {
+        if let Err(e) = self
+            .cmd_tx
+            .send(CountdownCommand::Schedule { left_secs })
+            .await
+        {
             tracing::warn!(error=%e, "countdown task: failed to send new deadline");
         }
     }
 
     async fn cancel(&self) {
-        let when = Instant::now() + Duration::from_secs(self.interval_secs * 1000);
-        let _ = self.when_tx.send(when).await;
+        if let Err(e) = self.cmd_tx.send(CountdownCommand::Cancel).await {
+            tracing::warn!(error=%e, "countdown task: failed to cancel deadline");
+        }
+    }
+}
+
+enum CountdownCommand {
+    Schedule { left_secs: u64 },
+    Cancel,
+}
+
+struct CountdownSchedule {
+    warn_at: Instant,
+    caution_at: Option<Instant>,
+    warn_secs: u64,
+    caution_display_secs: u64,
+    caution_pending: bool,
+    warn_pending: bool,
+}
+
+impl CountdownSchedule {
+    fn new(now: Instant, left_secs: u64, warn_secs: u64, caution_secs: u64) -> Option<Self> {
+        if left_secs <= warn_secs {
+            return None;
+        }
+        let final_at = now + Duration::from_secs(left_secs);
+        let warn_at = final_at - Duration::from_secs(warn_secs);
+
+        let caution_pending = left_secs > warn_secs;
+        let caution_display_secs = left_secs.min(caution_secs);
+        let caution_at = if caution_pending {
+            if left_secs > caution_secs {
+                Some(final_at - Duration::from_secs(caution_secs))
+            } else {
+                Some(now)
+            }
+        } else {
+            None
+        };
+
+        Some(Self {
+            warn_at,
+            caution_at,
+            warn_secs,
+            caution_display_secs,
+            caution_pending,
+            warn_pending: true,
+        })
+    }
+
+    fn next_deadline(&self, now: Instant) -> Option<Instant> {
+        if self.caution_pending {
+            if let Some(caution_at) = self.caution_at {
+                return Some(caution_at.max(now));
+            }
+        }
+        if self.warn_pending {
+            return Some(self.warn_at.max(now));
+        }
+        None
+    }
+
+    async fn fire(
+        &mut self,
+        platform: &Arc<dyn platform::Platform>,
+        now: Instant,
+    ) -> Option<Instant> {
+        if self.caution_pending {
+            if let Some(caution_at) = self.caution_at {
+                if caution_at <= now {
+                    self.caution_pending = false;
+                    platform
+                        .update_notification(self.caution_display_secs as i64)
+                        .await;
+                    return self.next_deadline(now);
+                }
+            }
+        }
+
+        if self.warn_pending && self.warn_at <= now {
+            self.warn_pending = false;
+            platform.notify(self.warn_secs).await;
+            return self.next_deadline(now);
+        }
+
+        self.next_deadline(now)
     }
 }
 
