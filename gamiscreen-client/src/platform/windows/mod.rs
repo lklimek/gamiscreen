@@ -46,8 +46,8 @@ impl Platform for WindowsPlatform {
         self.notifier.lock().await.show_countdown(total_secs).await;
     }
 
-    async fn update_notification(&self, seconds_left: u64) {
-        self.notifier.lock().await.update(seconds_left).await;
+    async fn update_notification(&self, remaining_secs: i64) {
+        self.notifier.lock().await.update(remaining_secs).await;
     }
 
     async fn hide_notification(&self) {

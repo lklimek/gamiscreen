@@ -13,8 +13,12 @@ impl Notifier {
         info!(total_secs, "Windows: countdown notification opened");
     }
 
-    pub async fn update(&mut self, seconds_left: u64) {
-        debug!(seconds_left, "Windows: countdown notification updated");
+    pub async fn update(&mut self, remaining_secs: i64) {
+        if remaining_secs > 0 {
+            debug!(remaining_secs, "Windows: countdown notification updated");
+        } else {
+            info!(remaining_secs, "Windows: negative time notification");
+        }
     }
 
     pub async fn close(&mut self) {

@@ -203,7 +203,7 @@ async fn main_loop(
                 }
                 if rem <= 0 {
                     warn!("minutes exhausted; enabling re-lock loop");
-                    relocker.enable().await;
+                    relocker.enable(Some(rem)).await;
                 }
             }
             Ok(None) => {}
@@ -215,7 +215,7 @@ async fn main_loop(
                     warn!(
                         "server unreachable threshold exceeded; enabling re-lock loop as failsafe"
                     );
-                    relocker.enable().await;
+                    relocker.enable(None).await;
                     failures = 0;
                 }
             }
@@ -344,20 +344,35 @@ impl ReLocker {
         }
     }
 
-    async fn enable(&self) {
+    async fn enable(&self, remaining_minutes: Option<i32>) {
+        let remaining_secs = remaining_minutes.map(|rem| rem as i64 * 60);
+
         let mut h = self.handle.lock().await;
         if h.is_some() {
+            drop(h);
+            if let Some(secs) = remaining_secs {
+                self.platform.update_notification(secs).await;
+            }
             return;
         }
+
         let platform = self.platform.clone();
+        let remaining_secs_for_task = remaining_secs;
         let handle = tokio::spawn(async move {
             let initial_lock_at = Instant::now();
             if let Err(e) = platform.lock().await {
                 tracing::error!(error=%e, "initial re-lock attempt failed");
             }
+            let mut negative_notified = false;
             loop {
                 match platform.is_session_locked().await {
                     Ok(false) => {
+                        if let Some(secs) = remaining_secs_for_task {
+                            if secs <= 0 && !negative_notified {
+                                platform.update_notification(secs).await;
+                                negative_notified = true;
+                            }
+                        }
                         let wait = Self::relock_delay(initial_lock_at);
                         if !wait.is_zero() {
                             tokio::time::sleep(wait).await;
@@ -366,7 +381,9 @@ impl ReLocker {
                             tracing::error!(error=%e, "re-lock attempt failed");
                         }
                     }
-                    Ok(true) => {}
+                    Ok(true) => {
+                        negative_notified = false;
+                    }
                     Err(e) => {
                         tracing::warn!(error=%e, "re-lock: failed to query lock state");
                     }
@@ -378,10 +395,14 @@ impl ReLocker {
     }
 
     async fn disable(&self) {
-        let mut h = self.handle.lock().await;
-        if let Some(handle) = h.take() {
+        let handle = {
+            let mut h = self.handle.lock().await;
+            h.take()
+        };
+        if let Some(handle) = handle {
             handle.abort();
         }
+        self.platform.hide_notification().await;
     }
 
     async fn attach_sse(&self, hub: &sse::SseHub) {
@@ -401,7 +422,7 @@ impl ReLocker {
                         if remaining_minutes > 0 {
                             relocker.disable().await;
                         } else {
-                            relocker.enable().await;
+                            relocker.enable(Some(remaining_minutes)).await;
                         }
                     }
                     Ok(_) => {}

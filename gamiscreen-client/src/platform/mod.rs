@@ -14,7 +14,7 @@ pub trait Platform: Send + Sync {
     async fn lock(&self) -> Result<(), AppError>;
     async fn is_session_locked(&self) -> Result<bool, AppError>;
     async fn notify(&self, total_secs: u64);
-    async fn update_notification(&self, seconds_left: u64);
+    async fn update_notification(&self, remaining_secs: i64);
     async fn hide_notification(&self);
     /// Generate a stable device identifier for this OS
     fn device_id(&self) -> String;

@@ -58,18 +58,19 @@ impl Notifier {
         }
     }
 
-    pub async fn update(&mut self, seconds_left: u64) {
+    pub async fn update(&mut self, remaining_secs: i64) {
         debug!(
-            seconds = seconds_left,
+            remaining = remaining_secs,
             replace_id = self.replace_id,
             "update: building notification"
         );
         let replace_id = self.replace_id;
         let mut n = notify_rust::Notification::new();
+        let text = message_text(remaining_secs);
         let res = n
             .appname("GamiScreen")
-            .summary(&format!("Wylogowanie za {} s", seconds_left))
-            .body("Zapisz swoją pracę. Czas dobiega końca.")
+            .summary(&text.summary)
+            .body(&text.body)
             .id(replace_id)
             .urgency(notify_rust::Urgency::Critical)
             // Request sound via desktop notification hint
@@ -80,13 +81,13 @@ impl Notifier {
             .await;
         match res {
             Ok(handle) => {
-                debug!(seconds = seconds_left, "update: notification updated");
+                debug!(remaining = remaining_secs, "update: notification updated");
                 self.handle = Some(handle);
             }
             Err(e) => {
                 warn!(error=%e, "notify-rust update failed");
                 self.handle = None;
-                info!("[COUNTDOWN] {} s do wylogowania", seconds_left);
+                info!("{}", text.log);
             }
         }
     }
@@ -107,5 +108,55 @@ impl Notifier {
                 .show_async()
                 .await;
         }
+    }
+}
+
+#[derive(Debug)]
+struct NotificationMessage {
+    summary: String,
+    body: String,
+    log: String,
+}
+
+fn message_text(remaining_secs: i64) -> NotificationMessage {
+    if remaining_secs > 0 {
+        countdown_message(remaining_secs as u64)
+    } else {
+        overtime_message(remaining_secs.saturating_abs() as u64)
+    }
+}
+
+fn countdown_message(seconds_left: u64) -> NotificationMessage {
+    NotificationMessage {
+        summary: format!("Wylogowanie za {} s", seconds_left),
+        body: "Zapisz swoją pracę. Czas dobiega końca.".to_string(),
+        log: format!("[COUNTDOWN] {} s do wylogowania", seconds_left),
+    }
+}
+
+fn overtime_message(overdue_secs: u64) -> NotificationMessage {
+    let summary = overtime_summary(overdue_secs);
+    NotificationMessage {
+        summary,
+        body: "Twoje limity są ujemne. Sesja wkrótce zostanie zablokowana ponownie.".to_string(),
+        log: format!("[TIME-NEGATIVE] przekroczono limit o {} s", overdue_secs),
+    }
+}
+
+fn overtime_summary(overdue_secs: u64) -> String {
+    if overdue_secs == 0 {
+        return "Czas skończył się".to_string();
+    }
+
+    let minutes = overdue_secs / 60;
+    let seconds = overdue_secs % 60;
+    if minutes > 0 {
+        if seconds > 0 {
+            format!("Czas przekroczony o {} min {} s", minutes, seconds)
+        } else {
+            format!("Czas przekroczony o {} min", minutes)
+        }
+    } else {
+        format!("Czas przekroczony o {} s", seconds)
     }
 }
