@@ -1,6 +1,6 @@
 # Docker & Compose
 
-This project ships a multi-stage Docker build for the server and a `docker-compose.yml` with an optional Caddy reverse proxy for HTTPS.
+This project ships a multi-stage Docker build for the server and a lean `docker-compose.yml` that runs the server container directly.
 
 ## Images
 
@@ -29,24 +29,16 @@ Services
     - `RUST_LOG=info`
     - `CONFIG_PATH=/etc/gamiscreen/config.yaml`
     - `DB_PATH=/var/lib/gamiscreen/app.db`
-- `gamiscreen-proxy` (Caddy)
-  - Terminates HTTPS using Caddy’s internal CA (self-signed).
-  - Set hostname via `CERT_CN` env (default `localhost`).
-  - Proxies to `gamiscreen-server:5151`.
-  - Exposes `80` and `443` on the host.
 
 Files
 - `docker-compose.yml`: service definitions and volumes.
-- `reverse-proxy/Caddyfile`: Caddy config. Uses `{$CERT_CN}` to set the hostname.
 - `gamiscreen-server/Dockerfile`: multi-stage build that compiles the web UI and the Rust server.
 
 Production notes
 - Replace the example config and user credentials. Use strong bcrypt hashes.
-- For real TLS certificates, adjust `reverse-proxy/Caddyfile` to use ACME/Let’s Encrypt for your domain instead of `tls internal`.
-- Restrict exposed ports as needed (e.g., expose only 443; keep 5151 internal to the network).
+- Terminate TLS with your infrastructure of choice (reverse proxy, load balancer, ingress controller) in front of the container when exposing it publicly.
+- Restrict exposed ports as needed (e.g., publish 5151 internally within your network VPN/VPC and terminate TLS elsewhere).
 - Consider mounting a host path for database backups instead of a named volume.
 
 Development notes
 - The Dockerfile builds the web UI explicitly, then compiles the Rust server with `SKIP_WEB_BUILD=1` to avoid duplicate work.
-- You can run the server directly on your machine and still use the Caddy proxy container by pointing it at `host.docker.internal:5151` in the Caddyfile if preferred.
-
