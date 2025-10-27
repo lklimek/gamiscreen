@@ -272,7 +272,6 @@ fn read_token_from_keyring(server_url: &str) -> Result<String, AppError> {
 
 struct CountdownTask {
     cmd_tx: tokio::sync::mpsc::Sender<CountdownCommand>,
-    notify_secs: u64,
 }
 
 impl CountdownTask {
@@ -293,15 +292,33 @@ impl CountdownTask {
                 tokio::select! {
                     new_when = rx.recv() => {
                         match new_when {
-                            Some(CountdownCommand::Schedule { left_secs }) => {
-                                platform.hide_notification().await;
+                            Some(CountdownCommand::Update { left_secs }) => {
                                 let now = Instant::now();
-                                schedule = CountdownSchedule::new(
-                                    now,
-                                    left_secs,
-                                    warn_before_lock_secs,
-                                    caution_before_lock_secs,
-                                );
+                                let action = if let Some(ref mut sched) = schedule {
+                                    sched.update(now, left_secs)
+                                } else {
+                                    let (sched, init_action) = CountdownSchedule::new(
+                                        now,
+                                        left_secs,
+                                        warn_before_lock_secs,
+                                        caution_before_lock_secs,
+                                    );
+                                    schedule = Some(sched);
+                                    init_action
+                                };
+
+                                match action {
+                                    Some(CountdownAction::Caution { display_secs }) => {
+                                        platform
+                                            .update_notification(display_secs as i64)
+                                            .await;
+                                    }
+                                    Some(CountdownAction::Clear) => {
+                                        platform.hide_notification().await;
+                                    }
+                                    None => {}
+                                }
+
                                 if let Some(ref sched) = schedule {
                                     if let Some(next_deadline) = sched.next_deadline(now) {
                                         timer.as_mut().reset(next_deadline);
@@ -345,21 +362,14 @@ impl CountdownTask {
             }
         });
 
-        Self {
-            cmd_tx: tx,
-            notify_secs: warn_before_lock_secs,
-        }
+        Self { cmd_tx: tx }
     }
 
     async fn tick(&self, left_mins: u64) {
         let left_secs = left_mins * 60;
-        if left_secs <= self.notify_secs {
-            return;
-        }
-
         if let Err(e) = self
             .cmd_tx
-            .send(CountdownCommand::Schedule { left_secs })
+            .send(CountdownCommand::Update { left_secs })
             .await
         {
             tracing::warn!(error=%e, "countdown task: failed to send new deadline");
@@ -374,59 +384,77 @@ impl CountdownTask {
 }
 
 enum CountdownCommand {
-    Schedule { left_secs: u64 },
+    Update { left_secs: u64 },
     Cancel,
 }
 
 struct CountdownSchedule {
+    final_at: Instant,
     warn_at: Instant,
-    caution_at: Option<Instant>,
     warn_secs: u64,
-    caution_display_secs: u64,
-    caution_pending: bool,
-    warn_pending: bool,
+    caution_secs: u64,
+    caution_notified: bool,
+    warn_notified: bool,
 }
 
 impl CountdownSchedule {
-    fn new(now: Instant, left_secs: u64, warn_secs: u64, caution_secs: u64) -> Option<Self> {
-        if left_secs <= warn_secs {
-            return None;
-        }
-        let final_at = now + Duration::from_secs(left_secs);
-        let warn_at = final_at - Duration::from_secs(warn_secs);
+    fn new(
+        now: Instant,
+        left_secs: u64,
+        warn_secs: u64,
+        caution_secs: u64,
+    ) -> (Self, Option<CountdownAction>) {
+        let mut sched = Self {
+            final_at: now,
+            warn_at: now,
+            warn_secs,
+            caution_secs,
+            caution_notified: false,
+            warn_notified: false,
+        };
+        let action = sched.update(now, left_secs);
+        (sched, action)
+    }
 
-        let caution_pending = left_secs > warn_secs;
-        let caution_display_secs = left_secs.min(caution_secs);
-        let caution_at = if caution_pending {
-            if left_secs > caution_secs {
-                Some(final_at - Duration::from_secs(caution_secs))
-            } else {
-                Some(now)
-            }
+    fn update(&mut self, now: Instant, left_secs: u64) -> Option<CountdownAction> {
+        self.final_at = now + Duration::from_secs(left_secs);
+        self.warn_at = if left_secs > self.warn_secs {
+            self.final_at - Duration::from_secs(self.warn_secs)
         } else {
-            None
+            now
         };
 
-        Some(Self {
-            warn_at,
-            caution_at,
-            warn_secs,
-            caution_display_secs,
-            caution_pending,
-            warn_pending: true,
-        })
+        let mut action = None;
+
+        if left_secs > self.caution_secs {
+            if self.caution_notified {
+                self.caution_notified = false;
+                action = Some(CountdownAction::Clear);
+            } else {
+                self.caution_notified = false;
+            }
+        }
+
+        if left_secs > self.warn_secs {
+            self.warn_notified = false;
+        }
+
+        if left_secs <= self.caution_secs && !self.caution_notified {
+            self.caution_notified = true;
+            action = Some(CountdownAction::Caution {
+                display_secs: left_secs,
+            });
+        }
+
+        action
     }
 
     fn next_deadline(&self, now: Instant) -> Option<Instant> {
-        if self.caution_pending {
-            if let Some(caution_at) = self.caution_at {
-                return Some(caution_at.max(now));
-            }
+        if !self.warn_notified {
+            Some(self.warn_at.max(now))
+        } else {
+            None
         }
-        if self.warn_pending {
-            return Some(self.warn_at.max(now));
-        }
-        None
     }
 
     async fn fire(
@@ -434,26 +462,17 @@ impl CountdownSchedule {
         platform: &Arc<dyn platform::Platform>,
         now: Instant,
     ) -> Option<Instant> {
-        if self.caution_pending {
-            if let Some(caution_at) = self.caution_at {
-                if caution_at <= now {
-                    self.caution_pending = false;
-                    platform
-                        .update_notification(self.caution_display_secs as i64)
-                        .await;
-                    return self.next_deadline(now);
-                }
-            }
-        }
-
-        if self.warn_pending && self.warn_at <= now {
-            self.warn_pending = false;
+        if !self.warn_notified && self.warn_at <= now {
+            self.warn_notified = true;
             platform.notify(self.warn_secs).await;
-            return self.next_deadline(now);
         }
-
         self.next_deadline(now)
     }
+}
+
+enum CountdownAction {
+    Caution { display_secs: u64 },
+    Clear,
 }
 
 #[derive(Clone)]

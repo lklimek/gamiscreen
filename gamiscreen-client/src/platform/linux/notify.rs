@@ -93,20 +93,10 @@ impl Notifier {
     }
 
     pub async fn close(&mut self) {
-        if self.handle.take().is_some() {
-            debug!("close: replacing with short-timeout notification (async hack)");
-            let replace_id = self.replace_id;
-            let mut n = notify_rust::Notification::new();
-            // Replace current notification with an empty, near-immediate timeout one.
-            let _ = n
-                .appname("GamiScreen")
-                .summary("Koniec czasu")
-                .body("Czas dobiegł końca.")
-                .id(replace_id)
-                .urgency(notify_rust::Urgency::Low)
-                .timeout(notify_rust::Timeout::Milliseconds(1))
-                .show_async()
-                .await;
+        if let Some(handle) = self.handle.take() {
+            debug!("close: dismissing active notification");
+            let result = tokio::task::spawn_blocking(move || handle.close()).await;
+            debug!(?result, "close: notification dismissed");
         }
     }
 }
