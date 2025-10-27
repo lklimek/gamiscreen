@@ -11,7 +11,9 @@ use tracing::{debug, error, info, warn};
 use crate::config::ClientConfig;
 use crate::{AppError, platform, sse, update};
 
-pub const RELOCK_INTERVAL: Duration = Duration::from_secs(5);
+const RELOCK_POLL_INTERVAL: Duration = Duration::from_secs(5);
+const RELOCK_INITIAL_DELAY_SECS: u64 = 60;
+const RELOCK_DELAY_DECREMENT_PER_MINUTE: u64 = 10;
 pub const HEARTBEAT_INTERVAL_SECS: u64 = 60;
 pub const WARN_BEFORE_LOCK_SECS: u64 = 45;
 
@@ -349,12 +351,17 @@ impl ReLocker {
         }
         let platform = self.platform.clone();
         let handle = tokio::spawn(async move {
+            let initial_lock_at = Instant::now();
             if let Err(e) = platform.lock().await {
                 tracing::error!(error=%e, "initial re-lock attempt failed");
             }
             loop {
                 match platform.is_session_locked().await {
                     Ok(false) => {
+                        let wait = Self::relock_delay(initial_lock_at);
+                        if !wait.is_zero() {
+                            tokio::time::sleep(wait).await;
+                        }
                         if let Err(e) = platform.lock().await {
                             tracing::error!(error=%e, "re-lock attempt failed");
                         }
@@ -364,7 +371,7 @@ impl ReLocker {
                         tracing::warn!(error=%e, "re-lock: failed to query lock state");
                     }
                 }
-                tokio::time::sleep(RELOCK_INTERVAL).await;
+                tokio::time::sleep(RELOCK_POLL_INTERVAL).await;
             }
         });
         *h = Some(handle);
@@ -417,6 +424,14 @@ impl ReLocker {
         if let Some(h) = s.take() {
             h.abort();
         }
+    }
+
+    fn relock_delay(initial_lock_at: Instant) -> Duration {
+        let elapsed_secs = initial_lock_at.elapsed().as_secs();
+        let elapsed_minutes = elapsed_secs / 60;
+        let decrement = elapsed_minutes.saturating_mul(RELOCK_DELAY_DECREMENT_PER_MINUTE);
+        let remaining = RELOCK_INITIAL_DELAY_SECS.saturating_sub(decrement);
+        Duration::from_secs(remaining)
     }
 }
 
