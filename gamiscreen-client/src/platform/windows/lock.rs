@@ -1,9 +1,11 @@
-use crate::AppError;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
+
 use tracing::{debug, error, info, trace, warn};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::WindowsAndMessaging::HMENU;
+
+use crate::AppError;
 
 /// Locks the current workstation immediately.
 pub async fn lock_now() -> Result<(), AppError> {
@@ -97,6 +99,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
 
 fn run_session_watcher(state: Arc<AtomicBool>) {
     use std::ptr::null_mut;
+
     use windows_sys::Win32::Foundation::HINSTANCE;
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::System::RemoteDesktop::{

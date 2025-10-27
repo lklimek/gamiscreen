@@ -1,6 +1,5 @@
-use tracing::{debug, info, warn};
-
 use notify_rust::Hint;
+use tracing::{debug, info, warn};
 
 #[derive(Debug)]
 pub struct Notifier {

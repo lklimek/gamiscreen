@@ -1,10 +1,12 @@
 use std::io::{self, Write};
 use std::path::PathBuf;
 
+use gamiscreen_shared::api::{self};
+use gamiscreen_shared::auth::Role;
+use gamiscreen_shared::jwt;
+
 use crate::AppError;
 use crate::config::{load_config, resolve_config_path};
-use gamiscreen_shared::api::{self};
-use gamiscreen_shared::{auth::Role, jwt};
 
 pub async fn login(
     server_arg: Option<String>,

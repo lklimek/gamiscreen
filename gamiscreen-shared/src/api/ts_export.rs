@@ -12,7 +12,6 @@ use super::{
     TaskDto, TaskWithStatusDto, UpdateArtifactDto, UpdateItemDto, UpdateManifestDto,
     UsageBucketDto, UsageSeriesDto, VersionInfoDto,
 };
-
 #[cfg(feature = "ts")]
 use crate::{auth::Role, jwt::JwtClaims};
 

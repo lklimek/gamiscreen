@@ -3,31 +3,28 @@ pub mod auth;
 mod config;
 mod push;
 
-use crate::server::auth::AuthCtx;
-use axum::http::{HeaderName, HeaderValue};
-use axum::middleware;
+use axum::extract::{Extension, Path, Query, State};
+use axum::http::{HeaderName, HeaderValue, Method, StatusCode, header};
 use axum::response::Response as AxumResponse;
 use axum::response::sse::{Event, Sse};
-use axum::{
-    Json, Router,
-    extract::{Extension, Path, Query, State},
-    http::{Method, StatusCode, header},
-    routing::{get, post},
-};
+use axum::routing::{get, post};
+use axum::{Json, Router, middleware};
 use bcrypt::verify;
 pub use config::{AppConfig, Role, UserConfig};
-use gamiscreen_shared::api;
 use gamiscreen_shared::api::{ChildDto, ConfigResp};
-use gamiscreen_shared::jwt;
+use gamiscreen_shared::{api, jwt};
 use mime_guess::from_path;
 use push::PushService;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, MutexGuard, broadcast};
 use tokio_util::sync::CancellationToken;
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
+use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
 use tracing::{Span, info_span};
 use uuid::Uuid;
+
+use crate::server::auth::AuthCtx;
 
 const MAX_PUSH_SUBSCRIPTIONS_PER_CHILD: i64 = 10;
 

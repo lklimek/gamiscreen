@@ -1,12 +1,13 @@
 use std::process::Stdio;
 
+use clap::ValueEnum;
 use tokio::process::Command;
 use tracing::{info, warn};
-
-use crate::{AppError, config::ClientConfig};
-use clap::ValueEnum;
 use zbus::proxy::Proxy;
 use zbus_names::{InterfaceName, OwnedBusName};
+
+use crate::AppError;
+use crate::config::ClientConfig;
 
 #[derive(Clone, Debug)]
 pub enum LockBackend {

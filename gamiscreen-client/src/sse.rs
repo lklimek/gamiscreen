@@ -1,9 +1,10 @@
 use futures_util::StreamExt;
+use gamiscreen_shared::jwt::JwtClaims;
 use reqwest_eventsource::{Event, EventSource};
-use tokio::{sync::broadcast, task::JoinSet};
+use tokio::sync::broadcast;
+use tokio::task::JoinSet;
 
 use crate::AppError;
-use gamiscreen_shared::jwt::JwtClaims;
 
 /// Clone-friendly SSE hub with multi-consumer broadcast of server events.
 #[derive(Clone)]

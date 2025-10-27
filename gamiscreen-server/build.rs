@@ -1,13 +1,12 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::{env, fs};
+
 use gamiscreen_shared::api::ts_export;
 use serde_json::Value;
-use std::hash::{Hash, Hasher};
-use std::{
-    collections::hash_map::DefaultHasher,
-    env, fs,
-    io::{Read, Write},
-    path::{Path, PathBuf},
-    process::Command,
-};
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());

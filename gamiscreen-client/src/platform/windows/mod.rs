@@ -4,9 +4,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::warn;
 
-use crate::AppError;
-
 use super::Platform;
+use crate::AppError;
 
 pub mod lock;
 pub mod notify;
@@ -147,8 +146,7 @@ impl Platform for WindowsPlatform {
 
 /// Returns the current user's SID as a string (e.g., "S-1-5-21-...")
 fn current_user_sid_string() -> Option<String> {
-    use windows_sys::Win32::Foundation::LocalFree;
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL};
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree};
     use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
     use windows_sys::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TokenUser};
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};

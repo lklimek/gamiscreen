@@ -1,4 +1,5 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use gamiscreen_shared::api::ServerEvent;
@@ -9,9 +10,9 @@ use web_push::{
     WebPushMessageBuilder,
 };
 
-use crate::storage::{Store, models::PushSubscription};
-
 use super::config::AppConfig;
+use crate::storage::Store;
+use crate::storage::models::PushSubscription;
 
 #[derive(Clone)]
 pub struct PushService {

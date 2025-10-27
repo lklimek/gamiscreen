@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 
+use clap::{Parser, Subcommand};
+
 #[cfg(not(target_os = "windows"))]
 use crate::platform::linux::lock::LockMethod;
-use clap::{Parser, Subcommand};
 
 const HELP_EPILOG: &str = r#"Config resolution order:
   1) --config/-c PATH

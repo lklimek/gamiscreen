@@ -1,11 +1,11 @@
 //! Minimal REST client helpers for consumers (clients).
 
-use super::endpoints as ep;
-use super::*;
-use once_cell::sync::Lazy;
 use std::time::Duration;
 
+use once_cell::sync::Lazy;
 pub use reqwest::StatusCode;
+
+use super::{endpoints as ep, *};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RestError {

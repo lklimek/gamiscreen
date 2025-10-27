@@ -10,9 +10,6 @@ use tokio::task::JoinSet;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
-
-use crate::AppError;
-
 use windows_sys::Win32::Foundation::{GetLastError, NO_ERROR};
 use windows_sys::Win32::System::RemoteDesktop::WTSSESSION_NOTIFICATION;
 use windows_sys::Win32::System::Services::{
@@ -26,6 +23,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WTS_CONSOLE_CONNECT, WTS_CONSOLE_DISCONNECT, WTS_REMOTE_CONNECT, WTS_REMOTE_DISCONNECT,
     WTS_SESSION_LOCK, WTS_SESSION_LOGOFF, WTS_SESSION_LOGON, WTS_SESSION_UNLOCK,
 };
+
+use crate::AppError;
 
 const SERVICE_NAME: &str = "GamiScreenAgent";
 const SERVICE_DISPLAY_WAIT_HINT_MS: u32 = 5_000;

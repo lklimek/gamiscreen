@@ -1,8 +1,9 @@
+use chrono::NaiveDateTime;
+use diesel::prelude::*;
+
 use crate::storage::schema::{
     children, push_subscriptions, rewards, task_completions, task_submissions, tasks, usage_minutes,
 };
-use chrono::NaiveDateTime;
-use diesel::prelude::*;
 
 #[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
 #[diesel(table_name = children)]

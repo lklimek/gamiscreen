@@ -1,9 +1,11 @@
+use std::path::Path;
+use std::{env, fs};
+
 pub use gamiscreen_shared::auth::Role;
 use gamiscreen_shared::domain::{Child, Task};
 use semver::Version;
 use serde::Deserialize;
 use serde_yaml::{Mapping, Value};
-use std::{env, fs, path::Path};
 use tracing::warn;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -220,9 +222,10 @@ fn apply_env_overrides(cfg: &mut AppConfig) {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_yaml::Value;
     use tempfile::NamedTempFile;
+
+    use super::*;
 
     #[test]
     fn migrates_legacy_config_to_current_version() {

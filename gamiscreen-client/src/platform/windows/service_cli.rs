@@ -1,8 +1,8 @@
-use crate::AppError;
-use crate::cli::ServiceCommand;
+use tracing::{info, warn};
 
 use super::service;
-use tracing::{info, warn};
+use crate::AppError;
+use crate::cli::ServiceCommand;
 
 /// Handle Windows service management commands.
 pub async fn handle_service_command(action: ServiceCommand) -> Result<(), AppError> {

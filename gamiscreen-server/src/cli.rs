@@ -1,5 +1,6 @@
-use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+
+use clap::{Parser, Subcommand};
 
 const HELP_EPILOG: &str = r#"Server options can also be provided via environment variables:
   CONFIG_PATH (default: ./config.yaml)

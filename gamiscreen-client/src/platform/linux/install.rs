@@ -1,10 +1,11 @@
 use std::io::Write;
 use std::path::PathBuf;
 
-use crate::AppError;
 use tinytemplate::TinyTemplate;
 use tokio::process::Command;
 use tracing::{info, warn};
+
+use crate::AppError;
 
 // Include templates from files in the repo
 const POLKIT_RULE_PATH_DST: &str = "/etc/polkit-1/rules.d/49-gamiscreen-lock.rules";

@@ -1,13 +1,13 @@
-use super::{AppError, AppState, auth::AuthCtx};
+use axum::extract::{OriginalUri, State};
+use axum::http::{Method, Request};
+use axum::middleware::Next;
 use axum::response::Response;
-use axum::{
-    extract::{OriginalUri, State},
-    http::{Method, Request},
-    middleware::Next,
-};
 use gamiscreen_shared::auth::Role;
 use gamiscreen_shared::jwt::JwtClaims;
 use percent_encoding::percent_decode_str;
+
+use super::auth::AuthCtx;
+use super::{AppError, AppState};
 
 pub async fn enforce_acl(
     State(state): State<AppState>,

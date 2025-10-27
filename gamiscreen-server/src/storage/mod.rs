@@ -412,8 +412,9 @@ impl Store {
                     .load::<Task>(&mut conn)
                     .map_err(|e| e.to_string())?;
                 // Fetch last done per task for child using Diesel aggregates
-                use crate::storage::schema::task_completions::dsl as tc;
                 use diesel::dsl::max;
+
+                use crate::storage::schema::task_completions::dsl as tc;
                 let rows: Vec<(String, Option<chrono::NaiveDateTime>)> = tc::task_completions
                     .filter(tc::child_id.eq(&child))
                     .group_by(tc::task_id)
@@ -684,8 +685,9 @@ impl Store {
         device: &str,
         minutes: &[i64],
     ) -> Result<(), String> {
-        use crate::storage::models::NewUsageMinute;
         use schema::usage_minutes;
+
+        use crate::storage::models::NewUsageMinute;
         if minutes.is_empty() {
             // this is an error condition
             return Err("no minutes provided".to_string());

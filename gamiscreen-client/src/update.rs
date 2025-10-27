@@ -1,14 +1,14 @@
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
-use tempfile::NamedTempFile;
 
 use semver::Version;
 use sha2::{Digest, Sha256};
-// no tokio::process here; restart uses std::process with OS-specific exec/spawn
-use crate::platform;
+use tempfile::NamedTempFile;
 use tracing::{info, warn};
 
+// no tokio::process here; restart uses std::process with OS-specific exec/spawn
+use crate::platform;
 use crate::{AppError, ClientConfig};
 
 pub async fn maybe_self_update(cfg: &ClientConfig) -> Result<(), AppError> {

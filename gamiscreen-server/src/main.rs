@@ -3,6 +3,7 @@ mod cli;
 mod install;
 
 use std::net::SocketAddr;
+
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]

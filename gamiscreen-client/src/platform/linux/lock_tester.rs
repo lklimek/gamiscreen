@@ -1,5 +1,6 @@
-use crate::platform::linux::lock::{LockMethod, lock_using_method};
 use tracing::{error, info};
+
+use crate::platform::linux::lock::{LockMethod, lock_using_method};
 
 pub async fn run_lock_cmd(method: LockMethod) {
     info!("lock tester starting");

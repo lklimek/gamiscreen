@@ -1,4 +1,7 @@
-use std::{fs, io::Write, path::Path};
+use std::fs;
+use std::io::Write;
+use std::path::Path;
+
 use tinytemplate::TinyTemplate;
 
 const EXAMPLE_CONFIG: &str = include_str!("../config.yaml.example");

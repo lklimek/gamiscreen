@@ -3,10 +3,12 @@ pub mod linux;
 #[cfg(target_os = "windows")]
 pub mod windows;
 
-use crate::{AppError, config::ClientConfig};
+use std::sync::Arc;
 
 use async_trait::async_trait;
-use std::sync::Arc;
+
+use crate::AppError;
+use crate::config::ClientConfig;
 
 /// Cross-platform interface for OS-level actions we need.
 #[async_trait]

@@ -8,9 +8,8 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
-use crate::AppError;
-
 use super::Platform;
+use crate::AppError;
 
 /// Linux implementation of the cross-platform interface.
 pub struct LinuxPlatform {

@@ -1,3 +1,7 @@
+use std::io::ErrorKind;
+use std::net::SocketAddr;
+use std::path::Path;
+
 use axum::http::StatusCode;
 use chrono::Utc;
 use gamiscreen_server::{server, storage};
@@ -7,9 +11,6 @@ use reqwest::Client;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use std::io::ErrorKind;
-use std::net::SocketAddr;
-use std::path::Path;
 
 const LOGIN_PATH: &str = "/api/v1/auth/login";
 const RENEW_PATH: &str = "/api/v1/auth/renew";

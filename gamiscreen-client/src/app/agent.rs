@@ -4,7 +4,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-use gamiscreen_shared::api::{self, rest::RestError};
+use gamiscreen_shared::api::rest::RestError;
+use gamiscreen_shared::api::{self};
 use gamiscreen_shared::jwt::{self, JwtClaims};
 use tokio::time::{Instant, Sleep, sleep};
 use tracing::{debug, error, info, warn};
