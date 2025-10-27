@@ -183,6 +183,54 @@ MVP will be shipped in three parts, in order: Server → Web App → Linux Clien
 - [ ] Update deployment scripts to provide VAPID keys and rebuild frontend.
 - [ ] Document rollback strategy (disable push via config flag if necessary).
 
+## Android App (Native)
+
+### Foundations
+
+- [ ] Confirm mobile product requirements (scope, rollout, managed vs unmanaged devices).
+  - Notes captured in `docs/ANDROID.md` (single-child devices, parent-managed rewards, side-load distribution).
+- [ ] Choose `minSdkVersion`/`targetSdkVersion` and define baseline device support matrix.
+  - Current recommendation documented in `docs/ANDROID.md`.
+- [x] Scaffold Android project with Kotlin + Jetpack Compose; add `:app` module to workspace.
+  - Project lives under `android/` with multi-module layout (`app`, `core`, `pwaShell`, `deviceControl`).
+- [x] Establish multi-module Gradle structure (`:pwaShell`, `:core`, `:deviceControl`) and shared dependency management.
+  - Version catalog in `android/gradle/libs.versions.toml` centralises Compose and Kotlin dependencies.
+- [ ] Configure CI Gradle build, lint (Detekt/Ktlint), and unit test steps in existing pipeline.
+
+### Phase 1 - PWA Shell
+
+- [ ] Implement single-activity Compose UI hosting a `WebView` that loads gamiscreen-web PWA.
+- [ ] Enable required WebView settings (JS, storage, service workers, safe browsing) and inject user agent tweaks if needed.
+- [ ] Persist auth/session data: hook WebView cookie store into native secure storage for tokens.
+- [ ] Handle navigation (back button, deep links, external URLs) and expose error/offline UI.
+- [ ] Provide `JavascriptInterface` bridge with no-op native hooks to unblock future features.
+- [ ] Support file uploads and camera intents invoked from the PWA.
+- [ ] Instrument crash/analytics reporting (Firebase Crashlytics + optional analytics).
+
+### Phase 2 - Device Control
+
+- [ ] Research and document Device Policy Manager / Device Owner requirements and enrollment flow.
+- [ ] Prototype Lock Task (kiosk) mode enabling/disabling with fallback when privileges missing.
+- [ ] Implement service to trigger immediate lock/unlock using `DevicePolicyManager` API.
+- [ ] Schedule background workers for minute heartbeats aligned with battery optimization rules.
+- [ ] Mirror desktop warning UX with native notifications/countdown overlay.
+- [ ] Add failsafe to lock when server unreachable beyond configured threshold.
+
+### Shared Logic Integration
+
+- [ ] Compile Rust core logic for Android via `cargo-ndk` or `gradle-rust-plugin`.
+- [ ] Define JNI/UniFFI bindings for accounting and countdown functions consumed by Kotlin layer.
+- [ ] Move shared business rules into Rust crate; keep UI/device handling in Kotlin modules.
+- [ ] Wire Kotlin workers to invoke Rust logic on background dispatcher and handle errors.
+
+### Testing & Release
+
+- [ ] Instrumentation tests for WebView wrapper (login flow, offline handling, deep links).
+- [ ] Unit tests for Kotlin↔Rust bridge, lock state machine, and failsafe timer.
+- [ ] Manual QA checklist covering device enrollment, reward sync, lock/unlock, recovery.
+- [ ] Prepare Play Store internal testing track, signing keys, and release notes template.
+- [ ] Document release versioning strategy aligned with other clients and backend.
+
 ## Acceptance Criteria (MVP)
 
 - [ ] Parent can reward minutes via Web App; server updates child balance
