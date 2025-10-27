@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::os::windows::ffi::OsStrExt;
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -14,17 +14,17 @@ use tracing::{debug, error, info, trace, warn};
 use crate::AppError;
 
 use windows_sys::Win32::Foundation::{GetLastError, NO_ERROR};
-use windows_sys::Win32::System::RemoteDesktop::{
-    WTS_CONSOLE_CONNECT, WTS_CONSOLE_DISCONNECT, WTS_REMOTE_CONNECT, WTS_REMOTE_DISCONNECT,
-    WTS_SESSION_LOCK, WTS_SESSION_LOGOFF, WTS_SESSION_LOGON, WTS_SESSION_UNLOCK,
-    WTSSESSION_NOTIFICATION,
-};
+use windows_sys::Win32::System::RemoteDesktop::WTSSESSION_NOTIFICATION;
 use windows_sys::Win32::System::Services::{
     RegisterServiceCtrlHandlerExW, SERVICE_ACCEPT_SESSIONCHANGE, SERVICE_ACCEPT_SHUTDOWN,
     SERVICE_ACCEPT_STOP, SERVICE_CONTROL_INTERROGATE, SERVICE_CONTROL_SESSIONCHANGE,
     SERVICE_CONTROL_SHUTDOWN, SERVICE_CONTROL_STOP, SERVICE_RUNNING, SERVICE_START_PENDING,
     SERVICE_STATUS, SERVICE_STATUS_HANDLE, SERVICE_STOP_PENDING, SERVICE_STOPPED,
     SERVICE_TABLE_ENTRYW, SERVICE_WIN32_OWN_PROCESS, SetServiceStatus, StartServiceCtrlDispatcherW,
+};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    WTS_CONSOLE_CONNECT, WTS_CONSOLE_DISCONNECT, WTS_REMOTE_CONNECT, WTS_REMOTE_DISCONNECT,
+    WTS_SESSION_LOCK, WTS_SESSION_LOGOFF, WTS_SESSION_LOGON, WTS_SESSION_UNLOCK,
 };
 
 const SERVICE_NAME: &str = "GamiScreenAgent";
@@ -79,7 +79,7 @@ fn service_main_impl() -> Result<(), AppError> {
             ctx_ptr,
         )
     };
-    if handle == 0 {
+    if handle.is_null() {
         let err = last_error();
         error!(service = SERVICE_NAME, os_error = err.raw_os_error(), %err, "RegisterServiceCtrlHandlerExW failed");
         unsafe {
@@ -215,7 +215,7 @@ fn map_session_event(event_type: u32) -> Option<SessionEventKind> {
 }
 
 struct ServiceContext {
-    handle: AtomicIsize,
+    handle: AtomicPtr<c_void>,
     status: Mutex<SERVICE_STATUS>,
     tx: mpsc::Sender<ServiceEvent>,
 }
@@ -232,14 +232,14 @@ impl ServiceContext {
             dwWaitHint: SERVICE_DISPLAY_WAIT_HINT_MS,
         };
         Self {
-            handle: AtomicIsize::new(0),
+            handle: AtomicPtr::new(std::ptr::null_mut()),
             status: Mutex::new(status),
             tx,
         }
     }
 
     fn set_handle(&self, handle: SERVICE_STATUS_HANDLE) {
-        self.handle.store(handle, Ordering::Release);
+        self.handle.store(handle as *mut c_void, Ordering::Release);
     }
 
     fn update_status<F>(&self, update: F)
@@ -256,8 +256,8 @@ impl ServiceContext {
             }
             unsafe {
                 let handle = self.handle.load(Ordering::Acquire);
-                if handle != 0 {
-                    if SetServiceStatus(handle, &mut *status) == 0 {
+                if !handle.is_null() {
+                    if SetServiceStatus(handle as SERVICE_STATUS_HANDLE, &mut *status) == 0 {
                         let err = last_error();
                         warn!(error=%err, "SetServiceStatus failed");
                     }
@@ -270,8 +270,8 @@ impl ServiceContext {
         if let Ok(mut status) = self.status.lock() {
             unsafe {
                 let handle = self.handle.load(Ordering::Acquire);
-                if handle != 0 {
-                    if SetServiceStatus(handle, &mut *status) == 0 {
+                if !handle.is_null() {
+                    if SetServiceStatus(handle as SERVICE_STATUS_HANDLE, &mut *status) == 0 {
                         let err = last_error();
                         warn!(error=%err, "SetServiceStatus failed while interrogating");
                     }
@@ -578,11 +578,13 @@ struct SessionEvent {
     kind: SessionEventKind,
 }
 
+#[derive(Clone, Copy)]
 enum SessionEventKind {
     Activate(SessionActivateReason),
     Deactivate(SessionDeactivateReason),
 }
 
+#[derive(Clone, Copy)]
 enum SessionActivateReason {
     Logon,
     Unlock,
@@ -590,6 +592,7 @@ enum SessionActivateReason {
     RemoteConnect,
 }
 
+#[derive(Clone, Copy)]
 enum SessionDeactivateReason {
     Logoff,
     Lock,

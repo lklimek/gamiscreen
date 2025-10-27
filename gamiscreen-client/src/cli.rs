@@ -60,6 +60,7 @@ pub enum Command {
     },
     #[cfg(target_os = "windows")]
     /// Windows service management commands
+    #[command(subcommand)]
     Service(ServiceCommand),
     #[cfg(target_os = "windows")]
     /// Run the Windows session agent worker (spawned by the service)

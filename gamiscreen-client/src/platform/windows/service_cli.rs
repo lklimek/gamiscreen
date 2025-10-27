@@ -1,6 +1,7 @@
 use crate::AppError;
+use crate::cli::ServiceCommand;
 
-use super::{ServiceCommand, service};
+use super::service;
 use tracing::{info, warn};
 
 /// Handle Windows service management commands.
