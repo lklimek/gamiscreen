@@ -55,6 +55,7 @@ android/
   - `./gradlew lint`
   - `./gradlew test`
   - `./gradlew assembleDebug` (PR validation) and `bundleRelease` (release pipeline).
+- Standardize on OpenJDK **21.0.8** for local builds and CI runners (AGP 8.6+ compatible).
 - Configure static analysis: Detekt + Ktlint integration; fail the build on violations.
 - Set up Firebase Crashlytics + Analytics (config placeholders until keys provided).
 - Define signing strategy:
