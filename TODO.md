@@ -189,8 +189,8 @@ MVP will be shipped in three parts, in order: Server → Web App → Linux Clien
 
 - [x] Confirm mobile product requirements (scope, rollout, managed vs unmanaged devices).
   - Clarified in `docs/ANDROID.md` (single-child devices, parent-managed rewards, side-load distribution, Hilt adoption).
-- [ ] Choose `minSdkVersion`/`targetSdkVersion` and define baseline device support matrix.
-  - Current recommendation documented in `docs/ANDROID.md`.
+- [x] Choose `minSdkVersion`/`targetSdkVersion` and define baseline device support matrix.
+  - Locked to `minSdkVersion` 31 (Android 12) and `targetSdkVersion` 34; documented in `docs/ANDROID.md`.
 - [x] Scaffold Android project with Kotlin + Jetpack Compose; add `:app` module to workspace.
   - Project lives under `android/` with multi-module layout (`app`, `core`, `pwaShell`, `deviceControl`).
 - [x] Establish multi-module Gradle structure (`:pwaShell`, `:core`, `:deviceControl`) and shared dependency management.
