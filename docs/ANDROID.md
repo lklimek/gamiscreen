@@ -11,10 +11,13 @@ This document captures the initial technical decisions and open questions for th
 - Offline tolerance should match the Linux client: lock after configurable grace period when the backend is unreachable.
 - Devices are dedicated family hardware; assume full administrative access (device-owner capable) with no BYOD constraints.
 - Distribution starts via side-loaded APKs; Play Store submission can be revisited after field validation.
+- WearOS/TV support is out of scope.
+- Hardware buttons will not be locked (e.g., volume buttons).
+- No Kiosk mode implementation.
 
 ## Platform Targets
 
-- `minSdkVersion`: **26 (Android 8.0 Oreo)** – retains ~95% of active devices, keeps access to modern WebView features, and avoids legacy TLS issues. Evaluate raising to 28 if enterprise signing or scoped storage concerns arise.
+- `minSdkVersion`: **31 (Android 12)** – aligns with modern WebView/privacy requirements, grants access to updated Device Policy APIs, and reduces legacy testing burden. Devices below Android 12 are out of scope.
 - `targetSdkVersion`: **34 (Android 14)** – required for Play Store by 2024 and ensures compatibility with current privacy restrictions.
 - Compile SDK: 34 (Android 14).
 - Build variants:
@@ -23,15 +26,11 @@ This document captures the initial technical decisions and open questions for th
 
 ## Device Support Matrix
 
-| Form Factor                 | Notes                                                                               |
-| --------------------------- | ----------------------------------------------------------------------------------- |
-| Phones (5–6.5")             | Primary target; portrait-first UI.                                                  |
-| Small tablets (7–9")        | Ensure layouts scale; allow landscape usage.                                        |
-| Large tablets / Chromebooks | Treat as stretch goal; verify WebView + kiosk mode compatibility under Android 13+. |
-
-Open items:
-- Confirm whether WearOS/TV support is out of scope (recommended to defer).
-- Validate hardware button lock requirements (e.g., volume buttons during kiosk mode).
+| Form Factor                 | Notes                                        |
+| --------------------------- | -------------------------------------------- |
+| Phones (5–6.5")             | Primary target; portrait-first UI.           |
+| Small tablets (7–9")        | Ensure layouts scale; allow landscape usage. |
+| Large tablets / Chromebooks | Treat as stretch goal.                       |
 
 ## Project & Module Layout
 
@@ -45,7 +44,7 @@ android/
 
 - Keep Gradle version catalog (`gradle/libs.versions.toml`) at the root for dependency management.
 - Use Jetpack Compose for UI; rely on Material 3 components.
-- Dependency injection via Hilt or Koin (decision pending; Hilt recommended for first-party support).
+- Dependency injection will use **Hilt** (Dagger) for first-party Jetpack support, generated graphs, and better long-term maintainability.
 - Define shared configuration (API host, feature flags) in `core`.
 - Introduce strict lint/Detekt rules to match repository quality standards.
 

@@ -187,8 +187,8 @@ MVP will be shipped in three parts, in order: Server → Web App → Linux Clien
 
 ### Foundations
 
-- [ ] Confirm mobile product requirements (scope, rollout, managed vs unmanaged devices).
-  - Notes captured in `docs/ANDROID.md` (single-child devices, parent-managed rewards, side-load distribution).
+- [x] Confirm mobile product requirements (scope, rollout, managed vs unmanaged devices).
+  - Clarified in `docs/ANDROID.md` (single-child devices, parent-managed rewards, side-load distribution, Hilt adoption).
 - [ ] Choose `minSdkVersion`/`targetSdkVersion` and define baseline device support matrix.
   - Current recommendation documented in `docs/ANDROID.md`.
 - [x] Scaffold Android project with Kotlin + Jetpack Compose; add `:app` module to workspace.
