@@ -78,6 +78,7 @@ fun PwaShellHost(
         buildSet {
             parseHost(PwaShellDefaults.defaultPwaUrl)?.let { add(it) }
             parseHost(startUrl)?.let { add(it) }
+            // Allow embedded assets host subpath
             embeddedContent?.host?.let { add(it) }
         }
     }
@@ -124,7 +125,12 @@ fun PwaShellHost(
                         ): WebResourceResponse? {
                             val loader = embeddedAssetsLoader ?: return super.shouldInterceptRequest(view, request)
                             val uri = request?.url ?: return super.shouldInterceptRequest(view, request)
-                            return if (embeddedContent?.host?.equals(uri.host ?: "", true) == true) {
+                            val hostMatches =
+                                embeddedContent?.host?.equals(uri.host ?: "", ignoreCase = true) == true
+                            val pathMatches = embeddedContent?.pathPrefix?.let { prefix ->
+                                uri.path?.startsWith(prefix) == true
+                            } ?: false
+                            return if (hostMatches && pathMatches) {
                                 loader.shouldInterceptRequest(uri)
                             } else {
                                 super.shouldInterceptRequest(view, request)
