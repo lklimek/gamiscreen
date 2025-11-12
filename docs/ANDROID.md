@@ -43,7 +43,8 @@ android/
 ```
 
 - Keep Gradle version catalog (`gradle/libs.versions.toml`) at the root for dependency management.
-- Use Jetpack Compose for UI; rely on Material 3 components.
+- Use Jetpack/Compose Multiplatform for UI; rely on Material 3 components that can later target iOS. Kotlin compose compiler plugin is applied (`org.jetbrains.kotlin.plugin.compose`) per Kotlin 2.0 requirements.
+- `pwaShell/` is a Kotlin Multiplatform module (Compose Multiplatform 1.7.0 on Kotlin 2.0.21) so shared UI can be reused by future iOS shells.
 - Dependency injection will use **Hilt** (Dagger) for first-party Jetpack support, generated graphs, and better long-term maintainability.
 - Define shared configuration (API host, feature flags) in `core`.
 - Introduce strict lint/Detekt rules to match repository quality standards.
@@ -54,7 +55,8 @@ android/
   - `./gradlew lint`
   - `./gradlew test`
   - `./gradlew assembleDebug` (PR validation) and `bundleRelease` (release pipeline).
-- Standardize on OpenJDK **21.0.8** for local builds and CI runners (AGP 8.6+ compatible).
+  - Repository shortcut: run `scripts/android_ci.sh` (expects Gradle wrapper to be generated).
+- Standardize on OpenJDK **21.0.8** with Kotlin **2.0.21** / Compose Multiplatform **1.7.0**; use Gradle **9.2** (install via SDKMAN at `~/.sdkman/candidates/gradle/current/bin/gradle` and generate the wrapper with `gradle wrapper --gradle-version 9.2`).
 - Configure static analysis: Detekt + Ktlint integration; fail the build on violations.
 - Set up Firebase Crashlytics + Analytics (config placeholders until keys provided).
 - Define signing strategy:

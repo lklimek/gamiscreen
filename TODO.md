@@ -195,7 +195,8 @@ MVP will be shipped in three parts, in order: Server → Web App → Linux Clien
   - Project lives under `android/` with multi-module layout (`app`, `core`, `pwaShell`, `deviceControl`).
 - [x] Establish multi-module Gradle structure (`:pwaShell`, `:core`, `:deviceControl`) and shared dependency management.
   - Version catalog in `android/gradle/libs.versions.toml` centralises Compose and Kotlin dependencies.
-- [ ] Configure CI Gradle build, lint (Detekt/Ktlint), and unit test steps in existing pipeline.
+- [x] Configure CI Gradle build, lint (Detekt/Ktlint), and unit test steps in existing pipeline.
+  - Added `scripts/android_ci.sh` invoking `./gradlew lint test assembleDebug`; documented usage in `docs/ANDROID.md`.
 
 ### Phase 1 - PWA Shell
 

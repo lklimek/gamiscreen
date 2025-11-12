@@ -6,3 +6,5 @@ gamiscreen-web/node_modules
 gamiscreen-web/dist
 logs/
 dist/
+android/.kotlin/errors/
+android/gradle/wrapper/gradle-wrapper.jar

@@ -1,6 +1,39 @@
 plugins {
+    alias(libs.plugins.kotlin.multiplatform)
+    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.compose.multiplatform)
     alias(libs.plugins.android.library)
-    alias(libs.plugins.kotlin.android)
+}
+
+kotlin {
+    androidTarget()
+    jvmToolchain(21)
+
+    sourceSets {
+        val commonMain by getting {
+            dependencies {
+                implementation(compose.runtime)
+                implementation(compose.foundation)
+                implementation(compose.material3)
+                implementation(compose.ui)
+            }
+        }
+        val androidMain by getting {
+            dependencies {
+                implementation(projects.core)
+                implementation(libs.androidx.activity.compose)
+                implementation(libs.androidx.lifecycle.runtime)
+                implementation(libs.androidx.webkit)
+                implementation(libs.kotlinx.coroutines.android)
+                implementation(compose.preview)
+            }
+        }
+        val androidUnitTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+            }
+        }
+    }
 }
 
 android {
@@ -11,39 +44,10 @@ android {
         minSdk = 31
     }
 
+    sourceSets["main"].manifest.srcFile("src/androidMain/AndroidManifest.xml")
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
     }
-    kotlinOptions {
-        jvmTarget = "21"
-    }
-
-    buildFeatures {
-        compose = true
-    }
-    composeOptions {
-        kotlinCompilerExtensionVersion = libs.versions.composeCompiler.get()
-    }
-}
-
-dependencies {
-    implementation(projects.core)
-
-    implementation(platform(libs.compose.bom))
-
-    implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.lifecycle.runtime)
-    implementation(libs.androidx.webkit)
-    implementation(libs.compose.ui)
-    implementation(libs.compose.ui.graphics)
-    implementation(libs.compose.ui.tooling.preview)
-    implementation(libs.compose.material3)
-    implementation(libs.kotlinx.coroutines.android)
-
-    debugImplementation(libs.compose.ui.tooling)
-}
-
-kotlin {
-    jvmToolchain(21)
 }
