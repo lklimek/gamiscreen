@@ -200,7 +200,7 @@ MVP will be shipped in three parts, in order: Server → Web App → Linux Clien
 
 ### Phase 1 - PWA Shell
 
-- [ ] Implement single-activity Compose UI hosting a `WebView` that loads gamiscreen-web PWA.
+- [x] Implement single-activity Compose UI hosting a `WebView` that loads gamiscreen-web PWA.
 - [ ] Enable required WebView settings (JS, storage, service workers, safe browsing) and inject user agent tweaks if needed.
 - [ ] Persist auth/session data: hook WebView cookie store into native secure storage for tokens.
 - [ ] Handle navigation (back button, deep links, external URLs) and expose error/offline UI.
