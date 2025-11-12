@@ -49,7 +49,7 @@ export type {
   VersionInfoDto,
 } from './generated/api-types'
 
-import { getNativeBridge } from './nativeBridge'
+import { getNativeBridge, getNativeServerBase } from './nativeBridge'
 
 const TOKEN_KEY = 'gamiscreen.token'
 const SERVER_BASE_KEY = 'gamiscreen.server_base'
@@ -150,12 +150,24 @@ export function getAuthClaims(): JwtClaims | null {
 }
 
 function apiBase(): string {
-  // Prefer user-configured base (for GH Pages), then env, then same-origin
+  // Prefer native-provided base (embedded shell), then user-configured, env, same-origin
+  const nativeBase = getNativeServerBase()
+  if (nativeBase) {
+    console.debug('[api] using native server base', nativeBase)
+    return nativeBase.replace(/\/+$/, '')
+  }
   const ls = getServerBase()
-  if (ls) return ls.replace(/\/+$/, '')
+  if (ls) {
+    console.debug('[api] using stored server base', ls)
+    return ls.replace(/\/+$/, '')
+  }
   const env = (import.meta as any).env || {}
   const v = env.VITE_API_BASE_URL || ''
-  if (v) return v
+  if (v) {
+    console.debug('[api] using env server base', v)
+    return v
+  }
+  console.debug('[api] defaulting to same-origin base')
   return ''
 }
 

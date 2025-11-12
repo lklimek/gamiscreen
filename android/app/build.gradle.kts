@@ -8,7 +8,7 @@ plugins {
     alias(libs.plugins.compose.multiplatform)
 }
 
-val embeddedPwaDir = layout.projectDirectory.dir("../gamiscreen-web/dist")
+val embeddedPwaDir = layout.projectDirectory.dir("../../gamiscreen-web/dist")
 
 android {
     namespace = "ws.klimek.gamiscreen.app"
@@ -85,14 +85,27 @@ dependencies {
 androidComponents.onVariants { variant ->
     if (variant.buildType != "debug") return@onVariants
     val embeddedDir = embeddedPwaDir.asFile
-    tasks.register("verify${variant.name.replaceFirstChar { it.uppercaseChar() }}EmbeddedAssets") {
+    val variantNameCap = variant.name.replaceFirstChar { it.uppercaseChar() }
+    val taskProvider = tasks.register("verify${variantNameCap}EmbeddedAssets") {
         inputs.dir(embeddedDir)
         doFirst {
             if (!embeddedDir.exists()) {
-                throw GradleException(
-                    "Embedded PWA assets not found. Run `npm run build` inside gamiscreen-web/ before building the debug app."
+                logger.warn(
+                    "Embedded PWA assets not found at ${embeddedDir.absolutePath}. " +
+                        "Continuing with remote PWA."
                 )
             }
+        }
+    }
+    tasks.configureEach {
+        if (name == "assemble${variantNameCap}" ||
+            name == "bundle${variantNameCap}" ||
+            name == "install${variantNameCap}" ||
+            name == "package${variantNameCap}" ||
+            name == "lint${variantNameCap}" ||
+            name == "connected${variantNameCap}AndroidTest"
+        ) {
+            dependsOn(taskProvider)
         }
     }
 }

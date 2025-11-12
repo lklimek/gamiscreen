@@ -1,6 +1,7 @@
 package ws.klimek.gamiscreen.pwashell
 
 import android.annotation.SuppressLint
+import android.util.Log
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
@@ -81,6 +82,15 @@ fun PwaShellHost(
         }
     }
 
+    val tag = "PwaShellHost"
+    LaunchedEffect(embeddedContent, startUrl) {
+        if (embeddedContent != null) {
+            Log.i(tag, "Launching embedded PWA from ${embeddedContent.rootUrl}")
+        } else {
+            Log.i(tag, "Launching remote PWA at $startUrl")
+        }
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
@@ -88,7 +98,11 @@ fun PwaShellHost(
                 configureServiceWorkers()
                 WebView(context).apply {
                     addJavascriptInterface(
-                        SessionTokenBridge(sessionStore),
+                        SessionTokenBridge(
+                            sessionStore = sessionStore,
+                            embeddedMode = embeddedContent != null,
+                            serverBaseUrl = AppConfigDefaults.Local.apiBaseUrl
+                        ),
                         NATIVE_BRIDGE_JS_NAME
                     )
                     settings.applyWebDefaults()
@@ -320,6 +334,7 @@ private fun WebResourceError?.isConnectivityIssue(): Boolean {
 }
 
 private fun seedServerBase(webView: WebView, baseUrl: String) {
+    Log.i("PwaShellHost", "Seeding PWA server base to $baseUrl")
     val script = """
         (function() {
             try {

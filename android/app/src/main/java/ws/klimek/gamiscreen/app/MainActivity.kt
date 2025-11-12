@@ -51,8 +51,15 @@ fun GamiscreenApp(pendingDeepLink: String? = null) {
     val appContext = context.applicationContext
     val embeddedContent = remember(inspectionMode, appContext) {
         if (!inspectionMode && BuildConfig.EMBED_PWA) {
-            EmbeddedPwaContent.fromAssets(appContext)
+            val content = EmbeddedPwaContent.fromAssets(appContext)
+            if (content != null) {
+                android.util.Log.i("GamiscreenApp", "Using embedded PWA assets from app bundle.")
+            } else {
+                android.util.Log.w("GamiscreenApp", "Embedded PWA assets missing; falling back to remote PWA.")
+            }
+            content
         } else {
+            android.util.Log.i("GamiscreenApp", "Embedded PWA disabled; loading remote PWA.")
             null
         }
     }
