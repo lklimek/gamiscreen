@@ -9,6 +9,7 @@ import android.webkit.ServiceWorkerController
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -38,6 +39,7 @@ import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import java.util.Locale
+import org.json.JSONObject
 import ws.klimek.gamiscreen.core.AppConfigDefaults
 import ws.klimek.gamiscreen.core.SessionStore
 
@@ -59,7 +61,8 @@ object PwaShellDefaults {
 @Composable
 fun PwaShellHost(
     modifier: Modifier = Modifier,
-    startUrl: String = PwaShellDefaults.defaultPwaUrl
+    startUrl: String = PwaShellDefaults.defaultPwaUrl,
+    embeddedContent: EmbeddedPwaContent? = null
 ) {
     var uiState by remember { mutableStateOf<ShellUiState>(ShellUiState.Loading) }
     var reloadToken by remember { mutableIntStateOf(0) }
@@ -69,10 +72,12 @@ fun PwaShellHost(
     val context = LocalContext.current
     val appContext = context.applicationContext
     val sessionStore = remember(appContext) { SessionStore.getInstance(appContext) }
-    val allowedHosts = remember(startUrl) {
+    val embeddedAssetsLoader = embeddedContent?.assetLoader
+    val allowedHosts = remember(startUrl, embeddedContent) {
         buildSet {
             parseHost(PwaShellDefaults.defaultPwaUrl)?.let { add(it) }
             parseHost(startUrl)?.let { add(it) }
+            embeddedContent?.host?.let { add(it) }
         }
     }
 
@@ -99,6 +104,19 @@ fun PwaShellHost(
                         }
                     }
                     webViewClient = object : WebViewClient() {
+                        override fun shouldInterceptRequest(
+                            view: WebView?,
+                            request: WebResourceRequest?
+                        ): WebResourceResponse? {
+                            val loader = embeddedAssetsLoader ?: return super.shouldInterceptRequest(view, request)
+                            val uri = request?.url ?: return super.shouldInterceptRequest(view, request)
+                            return if (embeddedContent?.host?.equals(uri.host ?: "", true) == true) {
+                                loader.shouldInterceptRequest(uri)
+                            } else {
+                                super.shouldInterceptRequest(view, request)
+                            }
+                        }
+
                         override fun shouldOverrideUrlLoading(
                             view: WebView?,
                             request: WebResourceRequest?
@@ -115,8 +133,11 @@ fun PwaShellHost(
                             if (uiState !is ShellUiState.Error) {
                                 uiState = ShellUiState.Content
                             }
-                            view?.let {
-                                canNavigateBack = it.canGoBack()
+                            view?.let { web ->
+                                if (embeddedContent != null) {
+                                    seedServerBase(web, AppConfigDefaults.Local.apiBaseUrl)
+                                }
+                                canNavigateBack = web.canGoBack()
                             }
                         }
 
@@ -260,6 +281,7 @@ private fun configureServiceWorkers() {
 }
 
 private const val NATIVE_BRIDGE_JS_NAME = "__gamiscreenNative"
+private const val SERVER_BASE_KEY = "gamiscreen.server_base"
 
 private fun parseHost(url: String): String? = runCatching {
     Uri.parse(url).host?.lowercase(Locale.US)
@@ -296,3 +318,18 @@ private fun WebResourceError?.isConnectivityIssue(): Boolean {
         code == WebViewClient.ERROR_TIMEOUT ||
         code == WebViewClient.ERROR_UNKNOWN
 }
+
+private fun seedServerBase(webView: WebView, baseUrl: String) {
+    val script = """
+        (function() {
+            try {
+                localStorage.setItem('$SERVER_BASE_KEY', ${baseUrl.toJsStringLiteral()});
+            } catch (err) {
+                console.error('Unable to seed server base', err);
+            }
+        })();
+    """.trimIndent()
+    webView.evaluateJavascript(script, null)
+}
+
+private fun String.toJsStringLiteral(): String = JSONObject.quote(this)

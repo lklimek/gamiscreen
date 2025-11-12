@@ -1,3 +1,4 @@
+import org.gradle.api.GradleException
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -6,6 +7,8 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.compose.multiplatform)
 }
+
+val embeddedPwaDir = layout.projectDirectory.dir("../gamiscreen-web/dist")
 
 android {
     namespace = "ws.klimek.gamiscreen.app"
@@ -22,12 +25,16 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            buildConfigField("boolean", "EMBED_PWA", "true")
+        }
         getByName("release") {
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
-        )
+            )
+            buildConfigField("boolean", "EMBED_PWA", "false")
         }
     }
 
@@ -38,7 +45,10 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
+
+    sourceSets["debug"].assets.srcDir(embeddedPwaDir)
 
     packaging {
         resources {
@@ -70,4 +80,19 @@ dependencies {
     implementation(compose.preview)
 
     debugImplementation(compose.uiTooling)
+}
+
+androidComponents.onVariants { variant ->
+    if (variant.buildType != "debug") return@onVariants
+    val embeddedDir = embeddedPwaDir.asFile
+    tasks.register("verify${variant.name.replaceFirstChar { it.uppercaseChar() }}EmbeddedAssets") {
+        inputs.dir(embeddedDir)
+        doFirst {
+            if (!embeddedDir.exists()) {
+                throw GradleException(
+                    "Embedded PWA assets not found. Run `npm run build` inside gamiscreen-web/ before building the debug app."
+                )
+            }
+        }
+    }
 }
