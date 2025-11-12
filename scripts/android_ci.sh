@@ -19,7 +19,7 @@ if [[ -d "${WEB_DIR}" ]]; then
   else
     npm install --no-audit --no-fund
   fi
-  npm run build
+  VITE_BASE_PATH="/android-assets/" npm run build
   cd "${ANDROID_DIR}"
 else
   echo "Warning: gamiscreen-web directory not found; skipping embedded PWA build." >&2
