@@ -1,6 +1,7 @@
 package ws.klimek.gamiscreen.pwashell
 
 import android.annotation.SuppressLint
+import android.webkit.ServiceWorkerController
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -27,9 +28,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import ws.klimek.gamiscreen.core.AppConfigDefaults
+import ws.klimek.gamiscreen.core.SessionStore
+import org.json.JSONObject
 
 private sealed interface ShellUiState {
     data object Loading : ShellUiState
@@ -55,12 +59,16 @@ fun PwaShellHost(
     var reloadToken by remember { mutableIntStateOf(0) }
     var webView by remember { mutableStateOf<WebView?>(null) }
     val inPreview = LocalInspectionMode.current
+    val appContext = LocalContext.current.applicationContext
+    val sessionStore = remember(appContext) { SessionStore.getInstance(appContext) }
 
     Box(modifier = modifier.fillMaxSize()) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { context ->
+                configureServiceWorkers()
                 WebView(context).apply {
+                    addJavascriptInterface(SessionTokenBridge(sessionStore), TOKEN_BRIDGE_JS_NAME)
                     settings.applyWebDefaults()
                     webChromeClient = object : WebChromeClient() {
                         override fun onProgressChanged(view: WebView?, newProgress: Int) {
@@ -77,6 +85,12 @@ fun PwaShellHost(
                         override fun onPageFinished(view: WebView?, url: String?) {
                             if (uiState !is ShellUiState.Error) {
                                 uiState = ShellUiState.Content
+                            }
+                            view?.let {
+                                injectTokenSyncScript(it)
+                                sessionStore.currentAuthToken()?.let { token ->
+                                    seedTokenIntoWebView(it, token)
+                                }
                             }
                         }
 
@@ -183,6 +197,7 @@ private fun ErrorOverlay(
 }
 
 private fun WebSettings.applyWebDefaults() {
+    safeBrowsingEnabled = true
     javaScriptEnabled = true
     domStorageEnabled = true
     databaseEnabled = true
@@ -192,8 +207,71 @@ private fun WebSettings.applyWebDefaults() {
     displayZoomControls = false
     useWideViewPort = true
     loadWithOverviewMode = true
+    mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
     userAgentString = buildString {
-        append(userAgentString)
+        val baseAgent = userAgentString
+        append(baseAgent)
         append(" gamiscreen-android-shell")
     }
 }
+
+private fun configureServiceWorkers() {
+    ServiceWorkerController.getInstance()
+        .serviceWorkerWebSettings.apply {
+            setAllowContentAccess(true)
+            setAllowFileAccess(true)
+            setBlockNetworkLoads(false)
+        }
+}
+
+private const val TOKEN_BRIDGE_JS_NAME = "GamiscreenTokenBridge"
+private const val TOKEN_STORAGE_KEY = "gamiscreen.token"
+
+private fun injectTokenSyncScript(webView: WebView) {
+    val script = """
+        (function() {
+            if (window.__gamiscreenTokenSyncInstalled) return;
+            var bridge = window['$TOKEN_BRIDGE_JS_NAME'];
+            if (!bridge || typeof bridge.persistAuthToken !== 'function') return;
+            window.__gamiscreenTokenSyncInstalled = true;
+            var TOKEN_KEY = '$TOKEN_STORAGE_KEY';
+            function notify() {
+                try {
+                    var value = localStorage.getItem(TOKEN_KEY) || '';
+                    bridge.persistAuthToken(value);
+                } catch (err) {
+                    console.error('Token sync notify failed', err);
+                }
+            }
+            var origSetItem = localStorage.setItem;
+            localStorage.setItem = function(key, value) {
+                var result = origSetItem.apply(this, arguments);
+                if (key === TOKEN_KEY) notify();
+                return result;
+            };
+            var origRemoveItem = localStorage.removeItem;
+            localStorage.removeItem = function(key) {
+                var result = origRemoveItem.apply(this, arguments);
+                if (key === TOKEN_KEY) notify();
+                return result;
+            };
+            notify();
+        })();
+    """.trimIndent()
+    webView.evaluateJavascript(script, null)
+}
+
+private fun seedTokenIntoWebView(webView: WebView, token: String) {
+    val script = """
+        (function() {
+            try {
+                localStorage.setItem('$TOKEN_STORAGE_KEY', ${token.toJsStringLiteral()});
+            } catch (err) {
+                console.error('Unable to seed auth token', err);
+            }
+        })();
+    """.trimIndent()
+    webView.evaluateJavascript(script, null)
+}
+
+private fun String.toJsStringLiteral(): String = JSONObject.quote(this)
