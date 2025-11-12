@@ -7,4 +7,5 @@ gamiscreen-web/dist
 logs/
 dist/
 android/.kotlin/errors/
+android/.kotlin/sessions/
 android/gradle/wrapper/gradle-wrapper.jar
