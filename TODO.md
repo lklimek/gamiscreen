@@ -203,8 +203,8 @@ MVP will be shipped in three parts, in order: Server → Web App → Linux Clien
 - [x] Implement single-activity Compose UI hosting a `WebView` that loads gamiscreen-web PWA.
 - [x] Enable required WebView settings (JS, storage, service workers, safe browsing) and inject user agent tweaks if needed.
 - [x] Persist auth/session data: hook WebView cookie store into native secure storage for tokens.
-- [ ] Handle navigation (back button, deep links, external URLs) and expose error/offline UI.
-- [ ] Provide `JavascriptInterface` bridge with no-op native hooks to unblock future features.
+- [x] Handle navigation (back button, deep links, external URLs) and expose error/offline UI.
+- [x] Provide `JavascriptInterface` bridge with no-op native hooks to unblock future features.
 - [ ] Support file uploads and camera intents invoked from the PWA.
 - [ ] Instrument crash/analytics reporting (Firebase Crashlytics + optional analytics).
 

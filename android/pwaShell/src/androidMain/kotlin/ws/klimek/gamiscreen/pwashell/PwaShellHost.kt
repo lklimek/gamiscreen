@@ -1,6 +1,10 @@
 package ws.klimek.gamiscreen.pwashell
 
 import android.annotation.SuppressLint
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.webkit.ServiceWorkerController
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -8,6 +12,8 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,18 +33,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import java.util.Locale
 import ws.klimek.gamiscreen.core.AppConfigDefaults
 import ws.klimek.gamiscreen.core.SessionStore
-import org.json.JSONObject
 
 private sealed interface ShellUiState {
     data object Loading : ShellUiState
     data object Content : ShellUiState
-    data class Error(val description: String) : ShellUiState
+    data class Error(val description: String, val isNetworkIssue: Boolean) : ShellUiState
 }
 
 object PwaShellDefaults {
@@ -59,8 +65,16 @@ fun PwaShellHost(
     var reloadToken by remember { mutableIntStateOf(0) }
     var webView by remember { mutableStateOf<WebView?>(null) }
     val inPreview = LocalInspectionMode.current
-    val appContext = LocalContext.current.applicationContext
+    var canNavigateBack by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val appContext = context.applicationContext
     val sessionStore = remember(appContext) { SessionStore.getInstance(appContext) }
+    val allowedHosts = remember(startUrl) {
+        buildSet {
+            parseHost(PwaShellDefaults.defaultPwaUrl)?.let { add(it) }
+            parseHost(startUrl)?.let { add(it) }
+        }
+    }
 
     Box(modifier = modifier.fillMaxSize()) {
         AndroidView(
@@ -68,7 +82,10 @@ fun PwaShellHost(
             factory = { context ->
                 configureServiceWorkers()
                 WebView(context).apply {
-                    addJavascriptInterface(SessionTokenBridge(sessionStore), TOKEN_BRIDGE_JS_NAME)
+                    addJavascriptInterface(
+                        SessionTokenBridge(sessionStore),
+                        NATIVE_BRIDGE_JS_NAME
+                    )
                     settings.applyWebDefaults()
                     webChromeClient = object : WebChromeClient() {
                         override fun onProgressChanged(view: WebView?, newProgress: Int) {
@@ -82,15 +99,24 @@ fun PwaShellHost(
                         }
                     }
                     webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(
+                            view: WebView?,
+                            request: WebResourceRequest?
+                        ): Boolean {
+                            return handleUrlOverride(context, request?.url, allowedHosts)
+                        }
+
+                        override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
+                            val uri = url?.let { runCatching { Uri.parse(it) }.getOrNull() }
+                            return handleUrlOverride(context, uri, allowedHosts)
+                        }
+
                         override fun onPageFinished(view: WebView?, url: String?) {
                             if (uiState !is ShellUiState.Error) {
                                 uiState = ShellUiState.Content
                             }
                             view?.let {
-                                injectTokenSyncScript(it)
-                                sessionStore.currentAuthToken()?.let { token ->
-                                    seedTokenIntoWebView(it, token)
-                                }
+                                canNavigateBack = it.canGoBack()
                             }
                         }
 
@@ -100,9 +126,11 @@ fun PwaShellHost(
                             error: WebResourceError?
                         ) {
                             if (request?.isForMainFrame == false) return
+                            canNavigateBack = view?.canGoBack() == true
                             uiState = ShellUiState.Error(
                                 description = error?.description?.toString()
-                                    ?: "Unable to load gamiscreen right now."
+                                    ?: "Unable to load gamiscreen right now.",
+                                isNetworkIssue = error.isConnectivityIssue()
                             )
                         }
                     }
@@ -110,6 +138,7 @@ fun PwaShellHost(
             },
             update = { view ->
                 webView = view
+                canNavigateBack = view.canGoBack()
             },
             onRelease = { it.destroy() }
         )
@@ -124,12 +153,17 @@ fun PwaShellHost(
 
             is ShellUiState.Error -> ErrorOverlay(
                 message = state.description,
+                isOffline = state.isNetworkIssue,
                 onRetry = {
                     uiState = ShellUiState.Loading
                     reloadToken++
                 }
             )
         }
+    }
+
+    BackHandler(enabled = canNavigateBack) {
+        webView?.goBack()
     }
 
     LaunchedEffect(webView, startUrl, reloadToken, inPreview) {
@@ -173,6 +207,7 @@ private fun PreviewPlaceholder() {
 @Composable
 private fun ErrorOverlay(
     message: String,
+    isOffline: Boolean,
     onRetry: () -> Unit
 ) {
     Column(
@@ -181,12 +216,12 @@ private fun ErrorOverlay(
         verticalArrangement = Arrangement.Center
     ) {
         Text(
-            text = "Couldn't reach gamiscreen.",
+            text = if (isOffline) "You're offline." else "Couldn't reach gamiscreen.",
             style = MaterialTheme.typography.titleMedium
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = message,
+            text = if (isOffline) "Check your connection and try again." else message,
             style = MaterialTheme.typography.bodyMedium
         )
         Spacer(modifier = Modifier.height(16.dp))
@@ -224,54 +259,40 @@ private fun configureServiceWorkers() {
         }
 }
 
-private const val TOKEN_BRIDGE_JS_NAME = "GamiscreenTokenBridge"
-private const val TOKEN_STORAGE_KEY = "gamiscreen.token"
+private const val NATIVE_BRIDGE_JS_NAME = "__gamiscreenNative"
 
-private fun injectTokenSyncScript(webView: WebView) {
-    val script = """
-        (function() {
-            if (window.__gamiscreenTokenSyncInstalled) return;
-            var bridge = window['$TOKEN_BRIDGE_JS_NAME'];
-            if (!bridge || typeof bridge.persistAuthToken !== 'function') return;
-            window.__gamiscreenTokenSyncInstalled = true;
-            var TOKEN_KEY = '$TOKEN_STORAGE_KEY';
-            function notify() {
-                try {
-                    var value = localStorage.getItem(TOKEN_KEY) || '';
-                    bridge.persistAuthToken(value);
-                } catch (err) {
-                    console.error('Token sync notify failed', err);
-                }
-            }
-            var origSetItem = localStorage.setItem;
-            localStorage.setItem = function(key, value) {
-                var result = origSetItem.apply(this, arguments);
-                if (key === TOKEN_KEY) notify();
-                return result;
-            };
-            var origRemoveItem = localStorage.removeItem;
-            localStorage.removeItem = function(key) {
-                var result = origRemoveItem.apply(this, arguments);
-                if (key === TOKEN_KEY) notify();
-                return result;
-            };
-            notify();
-        })();
-    """.trimIndent()
-    webView.evaluateJavascript(script, null)
+private fun parseHost(url: String): String? = runCatching {
+    Uri.parse(url).host?.lowercase(Locale.US)
+}.getOrNull()
+
+private fun handleUrlOverride(
+    context: Context,
+    uri: Uri?,
+    allowedHosts: Set<String>
+): Boolean {
+    val normalizedHost = uri?.host?.lowercase(Locale.US)
+    val scheme = uri?.scheme?.lowercase(Locale.US)
+    if (uri != null && scheme in setOf("http", "https") && normalizedHost != null && normalizedHost in allowedHosts) {
+        return false
+    }
+
+    val target = uri ?: return false
+    val intent = Intent(Intent.ACTION_VIEW, target).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    return try {
+        context.startActivity(intent)
+        true
+    } catch (ex: ActivityNotFoundException) {
+        Toast.makeText(context, "No app available to open this link.", Toast.LENGTH_SHORT).show()
+        true
+    }
 }
 
-private fun seedTokenIntoWebView(webView: WebView, token: String) {
-    val script = """
-        (function() {
-            try {
-                localStorage.setItem('$TOKEN_STORAGE_KEY', ${token.toJsStringLiteral()});
-            } catch (err) {
-                console.error('Unable to seed auth token', err);
-            }
-        })();
-    """.trimIndent()
-    webView.evaluateJavascript(script, null)
+private fun WebResourceError?.isConnectivityIssue(): Boolean {
+    val code = this?.errorCode ?: return false
+    return code == WebViewClient.ERROR_CONNECT ||
+        code == WebViewClient.ERROR_HOST_LOOKUP ||
+        code == WebViewClient.ERROR_TIMEOUT ||
+        code == WebViewClient.ERROR_UNKNOWN
 }
-
-private fun String.toJsStringLiteral(): String = JSONObject.quote(this)

@@ -49,17 +49,73 @@ export type {
   VersionInfoDto,
 } from './generated/api-types'
 
+import { getNativeBridge } from './nativeBridge'
+
 const TOKEN_KEY = 'gamiscreen.token'
 const SERVER_BASE_KEY = 'gamiscreen.server_base'
 const API_V1_PREFIX = '/api/v1'
 
+type TokenStore = {
+  get(): string | null
+  set(token: string | null): void
+}
+
+const tokenStore: TokenStore = createTokenStore()
+
+function createTokenStore(): TokenStore {
+  const bridge = getNativeBridge()
+  if (bridge) {
+    return {
+      get: () => {
+        try {
+          const value = bridge.getAuthToken()
+          return normalizeToken(value)
+        } catch (err) {
+          console.warn('native bridge getAuthToken failed', err)
+          return null
+        }
+      },
+      set: (token) => {
+        try {
+          bridge.setAuthToken(token ?? null)
+        } catch (err) {
+          console.warn('native bridge setAuthToken failed', err)
+        }
+      },
+    }
+  }
+
+  return {
+    get: () => {
+      try {
+        return localStorage.getItem(TOKEN_KEY)
+      } catch {
+        return null
+      }
+    },
+    set: (token) => {
+      try {
+        if (token) localStorage.setItem(TOKEN_KEY, token)
+        else localStorage.removeItem(TOKEN_KEY)
+      } catch {
+        // ignore storage errors
+      }
+    },
+  }
+}
+
+function normalizeToken(value: string | null | undefined): string | null {
+  if (!value) return null
+  const trimmed = value.trim()
+  return trimmed.length === 0 ? null : trimmed
+}
+
 export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY)
+  return tokenStore.get()
 }
 
 export function setToken(token: string | null) {
-  if (token) localStorage.setItem(TOKEN_KEY, token)
-  else localStorage.removeItem(TOKEN_KEY)
+  tokenStore.set(token)
 }
 
 export function getServerBase(): string | null {
