@@ -19,7 +19,7 @@ use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, MutexGuard, broadcast};
 use tokio_util::sync::CancellationToken;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::{Span, info_span};
 use uuid::Uuid;
@@ -233,11 +233,23 @@ pub fn router(state: AppState) -> Router {
 
     // Optionally add CORS for dev if configured
 
-    if let Some(origin) = &state.config.dev_cors_origin {
-        let hv = header::HeaderValue::from_str(origin)
-            .unwrap_or(header::HeaderValue::from_static("http://localhost:5151"));
+    if let Some(origin_cfg) = &state.config.dev_cors_origin {
+        let mut origins: Vec<header::HeaderValue> = origin_cfg
+            .split(',')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| header::HeaderValue::from_str(s).ok())
+            .collect();
+        let embedded_host =
+            header::HeaderValue::from_static("https://gamiscreen.klimek.ws");
+        if !origins.iter().any(|hv| hv == &embedded_host) {
+            origins.push(embedded_host);
+        }
+        if origins.is_empty() {
+            origins.push(header::HeaderValue::from_static("http://localhost:5151"));
+        }
         let cors = CorsLayer::new()
-            .allow_origin(hv)
+            .allow_origin(AllowOrigin::list(origins))
             .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
             .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
         app.layer(cors)
