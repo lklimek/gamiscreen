@@ -46,7 +46,14 @@ jobs:
 
       - name: Ensure Gradle wrapper
         working-directory: android
-        run: ./gradlew --version
+        run: |
+          if [[ ! -f gradle/wrapper/gradle-wrapper.jar ]]; then
+            mkdir -p gradle/wrapper
+            curl -L "https://services.gradle.org/distributions/gradle-9.2-bin.zip" -o gradle-9.2-bin.zip
+            unzip -p gradle-9.2-bin.zip gradle-9.2/src/gradle/wrapper/gradle-wrapper.jar > gradle/wrapper/gradle-wrapper.jar
+            rm -f gradle-9.2-bin.zip
+          fi
+          ./gradlew --version
 
       - name: Make android_ci executable
         run: chmod +x scripts/android_ci.sh
