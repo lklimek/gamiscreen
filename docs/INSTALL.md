@@ -36,7 +36,7 @@ Notes
 - The installer generates a random JWT secret and fills it into the config template.
 - Use `--force` to overwrite existing files. You can also customize `--user`, `--group`, `--working-dir`, or `--bin-path`.
 - The server embeds the web app. On first build, it will run `npm install` and `npm run build` in `gamiscreen-web/` automatically. Set `SKIP_WEB_BUILD=1` to skip this behavior (useful on CI or when serving the web separately).
-- HTTPS/production: the server listens on HTTP. Use a reverse proxy (e.g., Nginx, Caddy) for TLS when exposing publicly.
+- HTTPS/production: the server listens on HTTP. Terminate TLS with your own edge proxy or load balancer (e.g., Nginx) when exposing publicly.
 
 Uninstall
 

@@ -34,7 +34,7 @@ Gamiscreen is a self-hosted parental control tool that turns good habits into sc
 - Usage and workflows (parent/child, CLI): docs/USAGE.md
 - Auth and access control details: docs/AUTH.md
 - Configuration (server & client): docs/CONFIGURATION.md
-- Docker & reverse proxy setup: docs/DOCKER.md
+- Docker setup: docs/DOCKER.md
 
 ## Project Layout
 
