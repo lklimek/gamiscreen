@@ -205,7 +205,6 @@ MVP will be shipped in three parts, in order: Server → Web App → Linux Clien
 - [x] Persist auth/session data: hook WebView cookie store into native secure storage for tokens.
 - [x] Handle navigation (back button, deep links, external URLs) and expose error/offline UI.
 - [x] Provide `JavascriptInterface` bridge with no-op native hooks to unblock future features.
-- [ ] Support file uploads and camera intents invoked from the PWA.
 - [ ] Instrument crash/analytics reporting (Firebase Crashlytics + optional analytics).
 
 ### Phase 2 - Device Control

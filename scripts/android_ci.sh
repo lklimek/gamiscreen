@@ -1,5 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+usage() {
+  echo "Usage: $0 [debug|release]" >&2
+  exit 1
+}
+
+BUILD_TYPE="${1:-debug}"
+if [[ "${BUILD_TYPE}" != "debug" && "${BUILD_TYPE}" != "release" ]]; then
+  usage
+fi
+
 set -x
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,14 +24,14 @@ if [[ ! -d "${ANDROID_DIR}" ]]; then
 fi
 
 if [[ -d "${WEB_DIR}" ]]; then
-  cd "${WEB_DIR}"
+  pushd "${WEB_DIR}" >/dev/null
   if [[ -f package-lock.json ]]; then
     npm ci --no-audit --no-fund
   else
     npm install --no-audit --no-fund
   fi
   VITE_BASE_PATH="/android-assets/" npm run build
-  cd "${ANDROID_DIR}"
+  popd >/dev/null
 else
   echo "Warning: gamiscreen-web directory not found; skipping embedded PWA build." >&2
 fi
@@ -32,4 +43,8 @@ if [[ ! -x "./gradlew" ]]; then
   exit 1
 fi
 
-./gradlew lint test assembleDebug
+if [[ "${BUILD_TYPE}" == "release" ]]; then
+  ./gradlew clean lint test assembleRelease
+else
+  ./gradlew clean lint test assembleDebug
+fi

@@ -39,6 +39,10 @@ val embeddedPwaDir = layout.projectDirectory.dir("../../gamiscreen-web/dist")
 val workspaceRoot = rootProject.projectDir.parentFile
 val workspaceVersion = readWorkspaceVersion(workspaceRoot?.resolve("Cargo.toml"))
 val workspaceVersionCode = versionCodeFrom(workspaceVersion)
+val signingKeystorePath = System.getenv("ANDROID_SIGNING_KEYSTORE")?.takeIf { it.isNotBlank() }
+val signingKeystorePassword = System.getenv("ANDROID_SIGNING_KEYSTORE_PASSWORD")
+val signingKeyAlias = System.getenv("ANDROID_SIGNING_KEY_ALIAS")
+val signingKeyAliasPassword = System.getenv("ANDROID_SIGNING_KEY_ALIAS_PASSWORD")
 
 android {
     namespace = "ws.klimek.gamiscreen.app"
@@ -54,6 +58,21 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (signingKeystorePath != null &&
+            signingKeystorePassword != null &&
+            signingKeyAlias != null &&
+            signingKeyAliasPassword != null
+        ) {
+            create("release") {
+                storeFile = file(signingKeystorePath)
+                storePassword = signingKeystorePassword
+                keyAlias = signingKeyAlias
+                keyPassword = signingKeyAliasPassword
+            }
+        }
+    }
+
     buildTypes {
         getByName("debug") {
             buildConfigField("boolean", "EMBED_PWA", "true")
@@ -65,6 +84,9 @@ android {
                 "proguard-rules.pro"
             )
             buildConfigField("boolean", "EMBED_PWA", "false")
+            signingConfigs.findByName("release")?.let {
+                signingConfig = it
+            }
         }
     }
 

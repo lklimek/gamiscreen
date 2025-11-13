@@ -1,0 +1,93 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - master
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      buildType:
+        description: "Build type"
+        required: false
+        default: "debug"
+        type: choice
+        options:
+          - debug
+          - release
+
+permissions:
+  contents: write
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    env:
+      BUILD_TYPE: ${{ github.event_name == 'release' && 'release' || (github.event_name == 'push' && 'debug' || inputs.buildType) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - name: Make android_ci executable
+        run: chmod +x scripts/android_ci.sh
+
+      - name: Prepare signing keys
+        if: env.BUILD_TYPE == 'release'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_SIGNING_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEYSTORE_PASSWORD }}
+          ANDROID_SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
+          ANDROID_SIGNING_KEY_ALIAS_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS_PASSWORD }}
+        run: |
+          if [[ -z "$ANDROID_KEYSTORE_BASE64" || -z "$ANDROID_SIGNING_KEYSTORE_PASSWORD" || -z "$ANDROID_SIGNING_KEY_ALIAS" || -z "$ANDROID_SIGNING_KEY_ALIAS_PASSWORD" ]]; then
+            echo "Android signing secrets are not fully configured." >&2
+            exit 1
+          fi
+          KEYSTORE_PATH="${GITHUB_WORKSPACE}/android/release-signing.keystore"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          {
+            echo "ANDROID_SIGNING_KEYSTORE=$KEYSTORE_PATH"
+            echo "ANDROID_SIGNING_KEYSTORE_PASSWORD=$ANDROID_SIGNING_KEYSTORE_PASSWORD"
+            echo "ANDROID_SIGNING_KEY_ALIAS=$ANDROID_SIGNING_KEY_ALIAS"
+            echo "ANDROID_SIGNING_KEY_ALIAS_PASSWORD=$ANDROID_SIGNING_KEY_ALIAS_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+      - name: Build Android (${{ env.BUILD_TYPE }})
+        run: ./scripts/android_ci.sh $BUILD_TYPE
+
+      - name: Locate APK
+        id: apk
+        run: |
+          if [[ "${BUILD_TYPE}" == "release" ]]; then
+            APK_PATH=$(ls android/app/build/outputs/apk/release/*.apk | head -n 1)
+          else
+            APK_PATH=$(ls android/app/build/outputs/apk/debug/*.apk | head -n 1)
+          fi
+          echo "apk_path=${APK_PATH}" >> $GITHUB_OUTPUT
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamiscreen-android-${{ env.BUILD_TYPE }}
+          path: ${{ steps.apk.outputs.apk_path }}
+
+      - name: Upload to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.apk.outputs.apk_path }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

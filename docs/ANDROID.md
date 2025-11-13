@@ -64,6 +64,40 @@ android/
   - Release keystore stored in CI secrets; document manual signing fallback.
 - Document manual QA checklists for WebView flows, lock behavior, and offline scenarios.
 
+### Release Signing & GitHub Actions
+
+Release builds use a real keystore injected via CI secrets. To configure:
+
+1. Generate (or reuse) a signing keystore:
+   ```bash
+   keytool -genkeypair -v \
+     -keystore gamiscreen-release.keystore \
+     -alias gamiscreen-release \
+     -keyalg RSA -keysize 4096 -validity 10000
+   ```
+
+2. Base64-encode the keystore so it can be stored as a GitHub secret:
+   ```bash
+   base64 -w0 gamiscreen-release.keystore > gamiscreen-release.keystore.b64
+   ```
+
+3. Add the following repository secrets (Settings → Secrets → Actions):
+
+| Secret name                          | Value                                               |
+| ------------------------------------ | --------------------------------------------------- |
+| `ANDROID_KEYSTORE_BASE64`            | Contents of `gamiscreen-release.keystore.b64`       |
+| `ANDROID_SIGNING_KEYSTORE_PASSWORD`  | Keystore password                                   |
+| `ANDROID_SIGNING_KEY_ALIAS`          | Alias used when generating the key (e.g., `gamiscreen-release`) |
+| `ANDROID_SIGNING_KEY_ALIAS_PASSWORD` | Key password                                        |
+
+4. The workflow `.github/workflows/android-apk.yml` automatically:
+   - Decodes the keystore into `android/release-signing.keystore`.
+   - Exports the signing env vars for Gradle (`ANDROID_SIGNING_KEYSTORE`, etc.).
+   - Builds `./scripts/android_ci.sh release`, which picks up those env vars and signs the APK.
+   - Uploads the signed APK as an artifact and attaches it to releases.
+
+Local release builds can set the same env vars before running `./scripts/android_ci.sh release` to reuse the CI keystore.
+
 ## Rust Integration Roadmap
 
 - Build shared business logic as `libgamiscreen.so` via `cargo-ndk` targeting `armeabi-v7a`, `arm64-v8a`, and `x86_64`.
