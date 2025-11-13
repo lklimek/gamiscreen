@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - master
+  pull_request:
+    paths:
+      - 'android/**'
   release:
     types: [published]
   workflow_dispatch:
@@ -24,7 +27,7 @@ jobs:
   build-android:
     runs-on: ubuntu-latest
     env:
-      BUILD_TYPE: ${{ github.event_name == 'release' && 'release' || (github.event_name == 'push' && 'debug' || inputs.buildType) }}
+      BUILD_TYPE: ${{ github.event_name == 'release' && 'release' || (github.event_name == 'push' && 'debug' || (github.event_name == 'pull_request' && 'debug' || inputs.buildType)) }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
