@@ -6,7 +6,7 @@ on:
       - master
   pull_request:
     paths:
-      - 'android/**'
+      - "android/**"
   release:
     types: [published]
   workflow_dispatch:
@@ -43,6 +43,10 @@ jobs:
           distribution: temurin
           java-version: 21
           cache: gradle
+
+      - name: Ensure Gradle wrapper
+        working-directory: android
+        run: ./gradlew --version
 
       - name: Make android_ci executable
         run: chmod +x scripts/android_ci.sh
