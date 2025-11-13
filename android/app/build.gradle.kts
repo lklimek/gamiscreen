@@ -1,5 +1,32 @@
-import org.gradle.api.GradleException
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.io.File
+
+fun readWorkspaceVersion(cargoFile: File?): String {
+    if (cargoFile == null || !cargoFile.exists()) {
+        return "0.0.0"
+    }
+    var inWorkspacePackage = false
+    cargoFile.readLines().forEach { line ->
+        val trimmed = line.trim()
+        if (trimmed.startsWith("[")) {
+            inWorkspacePackage = trimmed == "[workspace.package]"
+        } else if (inWorkspacePackage && trimmed.startsWith("version")) {
+            val value = trimmed.substringAfter("=").trim().trim('"')
+            if (value.isNotEmpty()) {
+                return value
+            }
+        }
+    }
+    return "0.0.0"
+}
+
+fun versionCodeFrom(version: String): Int {
+    val parts = version.split(".")
+    val major = parts.getOrNull(0)?.toIntOrNull() ?: 0
+    val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
+    val patch = parts.getOrNull(2)?.toIntOrNull() ?: 0
+    return major * 10000 + minor * 100 + patch
+}
 
 plugins {
     alias(libs.plugins.android.application)
@@ -9,6 +36,9 @@ plugins {
 }
 
 val embeddedPwaDir = layout.projectDirectory.dir("../../gamiscreen-web/dist")
+val workspaceRoot = rootProject.projectDir.parentFile
+val workspaceVersion = readWorkspaceVersion(workspaceRoot?.resolve("Cargo.toml"))
+val workspaceVersionCode = versionCodeFrom(workspaceVersion)
 
 android {
     namespace = "ws.klimek.gamiscreen.app"
@@ -18,8 +48,8 @@ android {
         applicationId = "ws.klimek.gamiscreen.app"
         minSdk = 31
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = workspaceVersionCode
+        versionName = workspaceVersion
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
