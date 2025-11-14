@@ -80,6 +80,18 @@ jobs:
             echo "ANDROID_SIGNING_KEY_ALIAS_PASSWORD=$ANDROID_SIGNING_KEY_ALIAS_PASSWORD"
           } >> "$GITHUB_ENV"
 
+      - name: Cache configuration cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            android/.gradle/configuration-cache
+            ~/.gradle/caches/jars-* 
+            ~/.gradle/caches/build-cache-*
+          key: gradle-config-${{ runner.os }}-${{ github.ref }}-${{ hashFiles('android/**/build.gradle*', 'android/**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-config-${{ runner.os }}-${{ github.ref }}
+            gradle-config-${{ runner.os }}-
+
       - name: Build Android (${{ env.BUILD_TYPE }})
         run: ./scripts/android_ci.sh $BUILD_TYPE
 
