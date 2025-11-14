@@ -4,6 +4,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
+use directories::ProjectDirs;
 use gamiscreen_shared::api::rest::RestError;
 use gamiscreen_shared::api::{self};
 use gamiscreen_shared::jwt::{self, JwtClaims};
@@ -91,6 +92,15 @@ pub async fn run(config_path: Option<PathBuf>) -> Result<(), AppError> {
         CAUTION_BEFORE_LOCK_SECS,
         plat.clone(),
     );
+    let pending_log_path = pending_minutes_path()?;
+    tracing::trace!(path=?pending_log_path, "using pending minutes log path");
+    let pending_minutes = PendingMinutes::load(pending_log_path)?;
+    if pending_minutes.has_entries() {
+        info!(
+            restored_entries = pending_minutes.len(),
+            "restored pending usage minutes from log"
+        );
+    }
 
     let cancel = tokio_util::sync::CancellationToken::new();
     let cfg_cloned = cfg.clone();
@@ -113,6 +123,7 @@ pub async fn run(config_path: Option<PathBuf>) -> Result<(), AppError> {
                 relocker: relocker_cloned,
                 platform: plat_cloned,
                 countdown_task,
+                pending_minutes,
             },
         )
         .await;
@@ -144,6 +155,7 @@ struct MainLoopContext {
     relocker: ReLocker,
     platform: Arc<dyn platform::Platform>,
     countdown_task: CountdownTask,
+    pending_minutes: PendingMinutes,
 }
 
 async fn main_loop(
@@ -159,9 +171,9 @@ async fn main_loop(
         relocker,
         platform,
         countdown_task,
+        mut pending_minutes,
     } = ctx;
     let mut failures: u32 = 0;
-    let mut unsent_minutes: BTreeSet<i64> = BTreeSet::new();
     let fail_fuse_secs = HEARTBEAT_INTERVAL_SECS * 5;
     let interval = Duration::from_secs(HEARTBEAT_INTERVAL_SECS);
 
@@ -187,7 +199,9 @@ async fn main_loop(
         }
 
         let now_min: i64 = chrono::Utc::now().timestamp() / 60;
-        unsent_minutes.insert(now_min);
+        if let Err(e) = pending_minutes.insert(now_min) {
+            warn!(error=%e, "failed to append minute to pending log");
+        }
 
         match send_pending(
             &cfg.server_url,
@@ -195,7 +209,7 @@ async fn main_loop(
             &child_id,
             &device_id,
             &token,
-            &mut unsent_minutes,
+            &mut pending_minutes,
         )
         .await
         {
@@ -248,19 +262,19 @@ async fn send_pending(
     child_id: &str,
     device_id: &str,
     token: &str,
-    unsent_minutes: &mut BTreeSet<i64>,
+    pending_minutes: &mut PendingMinutes,
 ) -> Result<Option<i32>, AppError> {
-    if unsent_minutes.is_empty() {
+    if pending_minutes.is_empty() {
         return Ok(None);
     }
     let base = crate::config::normalize_server_url(server_url);
-    let minutes: Vec<i64> = unsent_minutes.iter().copied().collect();
+    let minutes = pending_minutes.snapshot();
     let resp = api::rest::child_device_heartbeat_with_minutes(
         &base, tenant_id, child_id, device_id, token, &minutes,
     )
     .await
     .map_err(|e| AppError::Http(format!("heartbeat error: {e}")))?;
-    unsent_minutes.clear();
+    pending_minutes.mark_sent(&minutes)?;
     Ok(Some(resp.remaining_minutes))
 }
 
@@ -269,6 +283,100 @@ fn read_token_from_keyring(server_url: &str) -> Result<String, AppError> {
     entry
         .get_password()
         .map_err(|e| AppError::Keyring(e.to_string()))
+}
+
+struct PendingMinutes {
+    path: PathBuf,
+    minutes: BTreeSet<i64>,
+}
+
+impl PendingMinutes {
+    fn load(path: PathBuf) -> Result<Self, AppError> {
+        let minutes = match std::fs::read_to_string(&path) {
+            Ok(contents) => contents
+                .lines()
+                .filter_map(|line| {
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        return None;
+                    }
+                    match trimmed.parse::<i64>() {
+                        Ok(v) => Some(v),
+                        Err(e) => {
+                            warn!(error=%e, "pending minutes log contained invalid line");
+                            None
+                        }
+                    }
+                })
+                .collect(),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => BTreeSet::new(),
+            Err(e) => return Err(AppError::Io(e)),
+        };
+        Ok(Self { path, minutes })
+    }
+
+    fn has_entries(&self) -> bool {
+        !self.minutes.is_empty()
+    }
+
+    fn len(&self) -> usize {
+        self.minutes.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.minutes.is_empty()
+    }
+
+    fn snapshot(&self) -> Vec<i64> {
+        self.minutes.iter().copied().collect()
+    }
+
+    fn insert(&mut self, minute: i64) -> Result<(), AppError> {
+        if self.minutes.insert(minute) {
+            self.save()?;
+        }
+        Ok(())
+    }
+
+    fn mark_sent(&mut self, sent: &[i64]) -> Result<(), AppError> {
+        if sent.is_empty() {
+            return Ok(());
+        }
+
+        let mut changed = false;
+        for minute in sent {
+            if self.minutes.remove(minute) {
+                changed = true;
+            }
+        }
+        if changed {
+            if let Err(e) = self.save() {
+                // put minutes back so we don't lose data if save fails
+                for minute in sent {
+                    self.minutes.insert(*minute);
+                }
+                return Err(e);
+            }
+        }
+        Ok(())
+    }
+
+    fn save(&self) -> Result<(), AppError> {
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent).map_err(AppError::Io)?;
+        }
+        let mut contents = String::new();
+        for minute in &self.minutes {
+            contents.push_str(&format!("{minute}\n"));
+        }
+        std::fs::write(&self.path, contents).map_err(AppError::Io)
+    }
+}
+
+fn pending_minutes_path() -> Result<PathBuf, AppError> {
+    let dirs = ProjectDirs::from("ws.klimek.gamiscreen", "gamiscreen", "gamiscreen")
+        .ok_or_else(|| AppError::Config("could not determine data directory".into()))?;
+    Ok(dirs.data_local_dir().join("pending-minutes.log"))
 }
 
 struct CountdownTask {
