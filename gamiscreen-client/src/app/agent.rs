@@ -57,9 +57,7 @@ pub async fn run(config_path: Option<PathBuf>) -> Result<(), AppError> {
             claims = new_claims;
         }
         Err(RestError::Status { status: 401, .. }) => {
-            return Err(AppError::Http(
-                "token renewal failed with unauthorized; please log in again".into(),
-            ));
+            error!("token renewal failed with unauthorized; please log in again");
         }
         Err(e) => {
             warn!(error=%e, "token renewal failed; continuing with existing token");
