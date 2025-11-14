@@ -18,7 +18,7 @@ This document captures the initial technical decisions and open questions for th
 ## Platform Targets
 
 - `minSdkVersion`: **31 (Android 12)** – aligns with modern WebView/privacy requirements, grants access to updated Device Policy APIs, and reduces legacy testing burden. Devices below Android 12 are out of scope.
-- `targetSdkVersion`: **34 (Android 14)** – required for Play Store by 2024 and ensures compatibility with current privacy restrictions.
+- `targetSdkVersion`: **36 (Android 15)** – matches Google Play's latest requirement for 2024+ and ensures compatibility with current privacy restrictions.
 - Compile SDK: 34 (Android 14).
 - Build variants:
   - `debug`: developer settings, mock WebView URL override, verbose logging.
@@ -56,7 +56,7 @@ android/
   - `./gradlew test`
   - `./gradlew assembleDebug` (PR validation) and `bundleRelease` (release pipeline).
   - Repository shortcut: run `scripts/android_ci.sh` (expects Gradle wrapper to be generated).
-- Standardize on OpenJDK **21.0.8** with Kotlin **2.0.21** / Compose Multiplatform **1.7.0**; use Gradle **9.2** (install via SDKMAN at `~/.sdkman/candidates/gradle/current/bin/gradle` and generate the wrapper with `gradle wrapper --gradle-version 9.2`).
+- Standardize on OpenJDK **21.0.8** with Kotlin **2.2.21** / Compose Multiplatform **1.9.3**; use Gradle **9.2** (install via SDKMAN at `~/.sdkman/candidates/gradle/current/bin/gradle` and generate the wrapper with `gradle wrapper --gradle-version 9.2`).
 - Configure static analysis: Detekt + Ktlint integration; fail the build on violations.
 - Set up Firebase Crashlytics + Analytics (config placeholders until keys provided).
 - Define signing strategy:

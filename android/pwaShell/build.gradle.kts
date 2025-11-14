@@ -38,7 +38,7 @@ kotlin {
 
 android {
     namespace = "ws.klimek.gamiscreen.pwashell"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 31

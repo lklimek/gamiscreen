@@ -24,8 +24,11 @@ fun versionCodeFrom(version: String): Int {
     val parts = version.split(".")
     val major = parts.getOrNull(0)?.toIntOrNull() ?: 0
     val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
-    val patch = parts.getOrNull(2)?.toIntOrNull() ?: 0
-    return major * 10000 + minor * 100 + patch
+    val patchPart = parts.getOrNull(2) ?: "0"
+    val patch = patchPart.substringBefore("-").toIntOrNull() ?: 0
+    val suffix = patchPart.substringAfter("-", missingDelimiterValue = "")
+    val qualifierIncrement = suffix.split(".").lastOrNull()?.toIntOrNull() ?: 0
+    return major * 10000 + minor * 100 + patch + qualifierIncrement
 }
 
 plugins {

@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "ws.klimek.gamiscreen.core"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 31
