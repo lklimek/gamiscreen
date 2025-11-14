@@ -20,15 +20,36 @@ fun readWorkspaceVersion(cargoFile: File?): String {
     return "0.0.0"
 }
 
+/**
+ * Builds an integer version code using 4 segments: MMM.NNN.PPP.QQQ
+ *
+ *  - MMM: major (0–999)
+ *  - NNN: minor (0–999)
+ *  - PPP: patch (0–999)
+ *  - QQQ: qualifier (0–999) from the trailing number in the qualifier suffix.
+ *         If no numeric qualifier is present, defaults to 999 so releases stay highest.
+ */
 fun versionCodeFrom(version: String): Int {
-    val parts = version.split(".")
-    val major = parts.getOrNull(0)?.toIntOrNull() ?: 0
-    val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
-    val patchPart = parts.getOrNull(2) ?: "0"
-    val patch = patchPart.substringBefore("-").toIntOrNull() ?: 0
-    val suffix = patchPart.substringAfter("-", missingDelimiterValue = "")
-    val qualifierIncrement = suffix.split(".").lastOrNull()?.toIntOrNull() ?: 0
-    return major * 10000 + minor * 100 + patch + qualifierIncrement
+    fun parseSegment(value: String?): Int = value?.toIntOrNull()?.coerceIn(0, 999) ?: 0
+
+    val (semantic, qualifierSuffix) = version.split("-", limit = 2).let {
+        it[0] to it.getOrNull(1)
+    }
+    val semanticParts = semantic.split(".")
+
+    val major = parseSegment(semanticParts.getOrNull(0))
+    val minor = parseSegment(semanticParts.getOrNull(1))
+    val patch = parseSegment(semanticParts.getOrNull(2))
+
+    val qualifier = qualifierSuffix
+        ?.let { Regex("(\\d+)$").find(it)?.value?.toIntOrNull() }
+        ?.coerceIn(0, 999)
+        ?: 999
+
+    return major * 1_000_000_000 +
+        minor * 1_000_000 +
+        patch * 1_000 +
+        qualifier
 }
 
 plugins {
