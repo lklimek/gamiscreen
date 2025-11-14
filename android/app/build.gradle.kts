@@ -46,12 +46,12 @@ val signingKeyAliasPassword = System.getenv("ANDROID_SIGNING_KEY_ALIAS_PASSWORD"
 
 android {
     namespace = "ws.klimek.gamiscreen.app"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "ws.klimek.gamiscreen.app"
         minSdk = 31
-        targetSdk = 34
+        targetSdk = 36
         versionCode = workspaceVersionCode
         versionName = workspaceVersion
 
