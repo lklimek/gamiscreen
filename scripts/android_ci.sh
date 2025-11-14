@@ -48,3 +48,13 @@ if [[ "${BUILD_TYPE}" == "release" ]]; then
 else
   ./gradlew clean lint test assembleDebug
 fi
+
+METADATA_FILE="${ANDROID_DIR}/app/build/outputs/apk/${BUILD_TYPE}/output-metadata.json"
+if [[ -f "${METADATA_FILE}" ]]; then
+  VERSION_NAME=$(jq -r '.elements[0].versionName // .variantOutputs[0].versionName' "${METADATA_FILE}")
+  VERSION_CODE=$(jq -r '.elements[0].versionCode // .variantOutputs[0].versionCode' "${METADATA_FILE}")
+  echo "versionName=${VERSION_NAME}"
+  echo "versionCode=${VERSION_CODE}"
+else
+  echo "output-metadata.json not found at ${METADATA_FILE}" >&2
+fi
