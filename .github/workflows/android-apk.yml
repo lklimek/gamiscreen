@@ -82,6 +82,14 @@ jobs:
       - name: Build Android (${{ env.BUILD_TYPE }})
         run: ./scripts/android_ci.sh $BUILD_TYPE
 
+      - name: Build App Bundle
+        run: |
+          if [[ "${BUILD_TYPE}" == "release" ]]; then
+            cd android && ./gradlew bundleRelease
+          else
+            cd android && ./gradlew bundleDebug
+          fi
+
       - name: Locate APK
         id: apk
         run: |
@@ -92,16 +100,30 @@ jobs:
           fi
           echo "apk_path=${APK_PATH}" >> $GITHUB_OUTPUT
 
+      - name: Locate App Bundle
+        id: bundle
+        run: |
+          if [[ "${BUILD_TYPE}" == "release" ]]; then
+            BUNDLE_PATH=$(ls android/app/build/outputs/bundle/release/*.aab | head -n 1)
+          else
+            BUNDLE_PATH=$(ls android/app/build/outputs/bundle/debug/*.aab | head -n 1)
+          fi
+          echo "bundle_path=${BUNDLE_PATH}" >> $GITHUB_OUTPUT
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: gamiscreen-android-${{ env.BUILD_TYPE }}
-          path: ${{ steps.apk.outputs.apk_path }}
+          path: |
+            ${{ steps.apk.outputs.apk_path }}
+            ${{ steps.bundle.outputs.bundle_path }}
 
       - name: Upload to release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.apk.outputs.apk_path }}
+          files: |
+            ${{ steps.apk.outputs.apk_path }}
+            ${{ steps.bundle.outputs.bundle_path }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
