@@ -8,3 +8,4 @@ logs/
 dist/
 android/.kotlin/errors/
 android/.kotlin/sessions/
+android/keystore
