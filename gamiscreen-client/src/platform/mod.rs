@@ -13,6 +13,9 @@ use crate::config::ClientConfig;
 /// Cross-platform interface for OS-level actions we need.
 #[async_trait]
 pub trait Platform: Send + Sync {
+    /// Perform any per-process initialization (e.g., environment tweaks).
+    // TODO: move into new() methods of platform implementations
+    fn initialize_process(&self) {}
     async fn lock(&self) -> Result<(), AppError>;
     async fn is_session_locked(&self) -> Result<bool, AppError>;
     async fn notify(&self, total_secs: u64);
@@ -49,13 +52,17 @@ pub trait Platform: Send + Sync {
 pub async fn detect(cfg: &ClientConfig) -> Result<Arc<dyn Platform>, AppError> {
     #[cfg(target_os = "windows")]
     {
-        Ok(Arc::new(windows::WindowsPlatform::new()))
+        let plat: Arc<dyn Platform> = Arc::new(windows::WindowsPlatform::new());
+        plat.initialize_process();
+        Ok(plat)
     }
 
     #[cfg(not(target_os = "windows"))]
     {
         let backend = linux::lock::detect_lock_backend(cfg).await?;
-        Ok(Arc::new(linux::LinuxPlatform::new(backend)))
+        let plat: Arc<dyn Platform> = Arc::new(linux::LinuxPlatform::new(backend));
+        plat.initialize_process();
+        Ok(plat)
     }
 }
 
@@ -63,7 +70,9 @@ pub async fn detect(cfg: &ClientConfig) -> Result<Arc<dyn Platform>, AppError> {
 pub async fn detect_default() -> Result<Arc<dyn Platform>, AppError> {
     #[cfg(target_os = "windows")]
     {
-        Ok(Arc::new(windows::WindowsPlatform::new()))
+        let plat: Arc<dyn Platform> = Arc::new(windows::WindowsPlatform::new());
+        plat.initialize_process();
+        Ok(plat)
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -72,6 +81,8 @@ pub async fn detect_default() -> Result<Arc<dyn Platform>, AppError> {
             server_url: String::new(),
         };
         let backend = linux::lock::detect_lock_backend(&dummy_cfg).await?;
-        Ok(Arc::new(linux::LinuxPlatform::new(backend)))
+        let plat: Arc<dyn Platform> = Arc::new(linux::LinuxPlatform::new(backend));
+        plat.initialize_process();
+        Ok(plat)
     }
 }
