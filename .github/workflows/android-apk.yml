@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - master
-      - android
   pull_request:
     paths:
       # we don't build on every code change, only when version is changed - which is in Cargo.toml
@@ -135,7 +134,8 @@ jobs:
             ${{ steps.bundle.outputs.bundle_path }}
 
       - name: Publish to Google Play internal testing
-        if: github.event_name == 'release' && env.BUILD_TYPE == 'release'
+        # if: github.event_name == 'release' && env.BUILD_TYPE == 'release'
+        if: env.BUILD_TYPE == 'release'
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
