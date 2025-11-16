@@ -140,7 +140,8 @@ jobs:
         with:
           serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
           packageName: ws.klimek.gamiscreen.app
-          releaseFile: ${{ steps.bundle.outputs.bundle_path }}
+          releaseFiles: |
+            ${{ steps.bundle.outputs.bundle_path }}
           track: qa
           status: draft
 
