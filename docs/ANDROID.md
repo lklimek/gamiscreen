@@ -116,9 +116,9 @@ GitHub Releases now push the generated `.aab` straight to the Google Play Intern
 2. Link the service account to Google Play Console:
    1. In Play Console visit **Setup → Developer account → API access**, click **Link service account**, and paste the service-account email.
    2. Grant the account the **Release Manager** role, enable access to `ws.klimek.gamiscreen.app`, and allow releasing to Internal Testing.
-2. Generate a JSON key for that service account and store its contents in the repository secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`.
-3. Ensure the Internal Testing track already has at least one tester list configured so uploaded builds become available.
-4. When a GitHub Release is published, `.github/workflows/android-apk.yml` runs the `Publish to Google Play internal testing` step which uploads `bundleRelease` to the `internal` track with status `completed`.
+3. Generate a JSON key for that service account and store its contents in the repository secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`.
+4. Ensure the Internal Testing track already has at least one tester list configured so uploaded builds become available.
+5. When a GitHub Release is published, `.github/workflows/android-apk.yml` runs the `Publish to Google Play internal testing` step (powered by `r0adkll/upload-google-play@v1`) which uploads `bundleRelease` to the `internal` track as a **draft**.
 
 You can trigger the same upload with `workflow_dispatch` by selecting the `release` build type once the secret is in place.
 
