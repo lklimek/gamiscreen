@@ -4,10 +4,12 @@ on:
   push:
     branches:
       - master
+      - android
   pull_request:
     paths:
       # we don't build on every code change, only when version is changed - which is in Cargo.toml
       - "Cargo.toml"
+      - ".github/workflows/android-apk.yml"
   release:
     types: [published]
   workflow_dispatch:
@@ -131,6 +133,16 @@ jobs:
           path: |
             ${{ steps.apk.outputs.apk_path }}
             ${{ steps.bundle.outputs.bundle_path }}
+
+      - name: Publish to Google Play internal testing
+        if: github.event_name == 'release' && env.BUILD_TYPE == 'release'
+        uses: google-github-actions/upload-google-play@v1
+        with:
+          serviceCredentials: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: ws.klimek.gamiscreen.app
+          releaseFiles: ${{ steps.bundle.outputs.bundle_path }}
+          track: internal
+          status: draft
 
       - name: Upload to release
         if: github.event_name == 'release'

@@ -104,6 +104,24 @@ Release builds use a real keystore injected via CI secrets. To configure:
 
 Local release builds can set the same env vars before running `./scripts/android_ci.sh release` to reuse the CI keystore.
 
+### Play Store Internal Testing Deployments
+
+GitHub Releases now push the generated `.aab` straight to the Google Play Internal Testing track. To enable it:
+
+1. Create a Google Cloud service account inside the same Google Cloud project that backs the Play Console:
+   1. Open [console.cloud.google.com/iam-admin/serviceaccounts](https://console.cloud.google.com/iam-admin/serviceaccounts) and select the project that owns the Play application.
+   2. Click **Create service account**, name it `gamiscreen-play-publisher`, and keep the description clear (e.g., "CI releases").
+   3. You do not need to grant project-wide roles; leave the role picker empty so the account only acts through Play Console.
+   4. Finish creation and, from the three-dot menu, choose **Manage keys → Add key → Create new key → JSON**. Download the JSON file—this becomes the GitHub secret.
+2. Link the service account to Google Play Console:
+   1. In Play Console visit **Setup → Developer account → API access**, click **Link service account**, and paste the service-account email.
+   2. Grant the account the **Release Manager** role, enable access to `ws.klimek.gamiscreen.app`, and allow releasing to Internal Testing.
+2. Generate a JSON key for that service account and store its contents in the repository secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`.
+3. Ensure the Internal Testing track already has at least one tester list configured so uploaded builds become available.
+4. When a GitHub Release is published, `.github/workflows/android-apk.yml` runs the `Publish to Google Play internal testing` step which uploads `bundleRelease` to the `internal` track with status `completed`.
+
+You can trigger the same upload with `workflow_dispatch` by selecting the `release` build type once the secret is in place.
+
 ## Rust Integration Roadmap
 
 - Build shared business logic as `libgamiscreen.so` via `cargo-ndk` targeting `armeabi-v7a`, `arm64-v8a`, and `x86_64`.
