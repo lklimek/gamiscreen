@@ -101,6 +101,7 @@ Release builds use a real keystore injected via CI secrets. To configure:
    - Exports the signing env vars for Gradle (`ANDROID_SIGNING_KEYSTORE`, etc.).
    - Builds `./scripts/android_ci.sh release`, which picks up those env vars and signs the APK.
    - Uploads the signed APK as an artifact and attaches it to releases.
+   - Runs R8/resource shrinking with `proguard-rules.pro` and generates `mapping.txt` plus `native-debug-symbols.zip` (via `ndk.debugSymbolLevel = "FULL"`); both artifacts are uploaded to Google Play so crashes can be deobfuscated.
 
 Local release builds can set the same env vars before running `./scripts/android_ci.sh release` to reuse the CI keystore.
 
@@ -119,6 +120,7 @@ GitHub Releases now push the generated `.aab` straight to the Google Play Intern
 3. Generate a JSON key for that service account and store its contents in the repository secret `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`.
 4. Ensure the Internal Testing track already has at least one tester list configured so uploaded builds become available.
 5. When a GitHub Release is published, `.github/workflows/android-apk.yml` runs the `Publish to Google Play internal testing` step (powered by `r0adkll/upload-google-play@v1`) which uploads `bundleRelease` to the `internal` track as a **draft**.
+6. The same step attaches `mapping.txt` and `native-debug-symbols.zip`, so Play Console crash reports arrive already deobfuscated.
 
 You can trigger the same upload with `workflow_dispatch` by selecting the `release` build type once the secret is in place.
 

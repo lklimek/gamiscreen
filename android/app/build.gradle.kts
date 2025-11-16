@@ -102,12 +102,16 @@ android {
             buildConfigField("boolean", "EMBED_PWA", "true")
         }
         getByName("release") {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
             buildConfigField("boolean", "EMBED_PWA", "false")
+            ndk {
+                debugSymbolLevel = "FULL"
+            }
             signingConfigs.findByName("release")?.let {
                 signingConfig = it
             }
@@ -154,6 +158,7 @@ dependencies {
     implementation(compose.material3)
     implementation(compose.ui)
     implementation(compose.preview)
+    implementation(libs.jsr305)
 
     debugImplementation(compose.uiTooling)
 }

@@ -123,6 +123,24 @@ jobs:
             echo "APP_VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
           fi
 
+      - name: Locate Google Play assets
+        if: env.BUILD_TYPE == 'release'
+        id: play_assets
+        run: |
+          set -euo pipefail
+          MAPPING_PATH="android/app/build/outputs/mapping/${BUILD_TYPE}/mapping.txt"
+          SYMBOLS_PATH="android/app/build/outputs/native-debug-symbols/${BUILD_TYPE}/native-debug-symbols.zip"
+          if [[ ! -f "$MAPPING_PATH" ]]; then
+            echo "Mapping file not found at $MAPPING_PATH" >&2
+            exit 1
+          fi
+          if [[ ! -f "$SYMBOLS_PATH" ]]; then
+            echo "Native debug symbols archive not found at $SYMBOLS_PATH" >&2
+            exit 1
+          fi
+          echo "mapping=$MAPPING_PATH" >> "$GITHUB_OUTPUT"
+          echo "symbols=$SYMBOLS_PATH" >> "$GITHUB_OUTPUT"
+
       - name: Locate APK
         id: apk
         run: |
@@ -160,7 +178,9 @@ jobs:
           packageName: ws.klimek.gamiscreen.app
           releaseFiles: |
             ${{ steps.bundle.outputs.bundle_path }}
-          releaseName: gamiscreen-${{ env.APP_VERSION }}
+          releaseName: gamiscreen-qa-${{ env.APP_VERSION }}
+          mappingFile: ${{ steps.play_assets.outputs.mapping }}
+          debugSymbols: ${{ steps.play_assets.outputs.symbols }}
           track: internal
           status: draft
 

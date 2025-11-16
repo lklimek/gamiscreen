@@ -10,6 +10,7 @@ lifecycleRuntime = "2.8.6"
 webkit = "1.14.0"
 material = "1.13.0"
 securityCrypto = "1.0.0"
+jsr305 = "3.0.2"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidxCore" }
@@ -20,6 +21,7 @@ androidx-webkit = { module = "androidx.webkit:webkit", version.ref = "webkit" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 material = { module = "com.google.android.material:material", version.ref = "material" }
 androidx-security-crypto = { module = "androidx.security:security-crypto", version.ref = "securityCrypto" }
+jsr305 = { module = "com.google.code.findbugs:jsr305", version.ref = "jsr305" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
