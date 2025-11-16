@@ -18,8 +18,8 @@ This document captures the initial technical decisions and open questions for th
 ## Platform Targets
 
 - `minSdkVersion`: **31 (Android 12)** – aligns with modern WebView/privacy requirements, grants access to updated Device Policy APIs, and reduces legacy testing burden. Devices below Android 12 are out of scope.
-- `targetSdkVersion`: **36 (Android 15)** – matches Google Play's latest requirement for 2024+ and ensures compatibility with current privacy restrictions.
-- Compile SDK: 34 (Android 14).
+- `targetSdkVersion`: **36 (Android 15)** – matches Google Play's latest requirement for 2024+ and ensures compatibility with current privacy restrictions. (We'll revisit API 37 once tooling stabilizes.)
+- Compile SDK: **36** – keeps parity with target SDK and ensures WebView/Material components match Chrome 124 equivalents.
 - Build variants:
   - `debug`: developer settings, mock WebView URL override, verbose logging.
   - `release`: Play-ready, ProGuard/R8 enabled, Crashlytics active.
@@ -43,8 +43,8 @@ android/
 ```
 
 - Keep Gradle version catalog (`gradle/libs.versions.toml`) at the root for dependency management.
-- Use Jetpack/Compose Multiplatform for UI; rely on Material 3 components that can later target iOS. Kotlin compose compiler plugin is applied (`org.jetbrains.kotlin.plugin.compose`) per Kotlin 2.0 requirements.
-- `pwaShell/` is a Kotlin Multiplatform module (Compose Multiplatform 1.7.0 on Kotlin 2.0.21) so shared UI can be reused by future iOS shells.
+- Use Jetpack/Compose Multiplatform for UI; rely on Material 3 components that can later target iOS. Kotlin compose compiler plugin is applied (`org.jetbrains.kotlin.plugin.compose`) per Kotlin 2.0 requirements. Current stack: Compose Multiplatform **1.9.3**, Kotlin **2.2.21**, Material **1.13.0**, AndroidX WebKit **1.14.0**.
+- `pwaShell/` is a Kotlin Multiplatform module (Compose Multiplatform 1.9.3 on Kotlin 2.2.21) so shared UI can be reused by future iOS shells.
 - Dependency injection will use **Hilt** (Dagger) for first-party Jetpack support, generated graphs, and better long-term maintainability.
 - Define shared configuration (API host, feature flags) in `core`.
 - Introduce strict lint/Detekt rules to match repository quality standards.
@@ -63,6 +63,12 @@ android/
   - Debug keystore committed for local builds.
   - Release keystore stored in CI secrets; document manual signing fallback.
 - Document manual QA checklists for WebView flows, lock behavior, and offline scenarios.
+
+### WebView & PWA Debugging Notes
+
+- `WebView.setWebContentsDebuggingEnabled(true)` is called by `PwaShellHost`, so Chrome DevTools (`chrome://inspect`) works on every debug build without extra flags. Use it to inspect `<dialog>` layout, console warnings, and Service Worker failures.
+- Embedded PWA assets come from `gamiscreen-web/dist` (copied into `android/app/src/debug/assets`). Run `npm run build` before `./gradlew :app:assembleDebug` to refresh them.
+- Service Worker scripts (`sw.js`, `notification-format.js`) are served from the embedded asset host `https://gamiscreen.klimek.ws/android-assets/`. Any failure to import notification helpers is logged to console from the SW itself—check logcat for `Service worker failed to load notification formatter`.
 
 ### Release Signing & GitHub Actions
 

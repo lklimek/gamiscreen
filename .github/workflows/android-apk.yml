@@ -6,7 +6,8 @@ on:
       - master
   pull_request:
     paths:
-      - "android/**"
+      # we don't build on every code change, only when version is changed - which is in Cargo.toml
+      - "Cargo.toml"
   release:
     types: [published]
   workflow_dispatch:
