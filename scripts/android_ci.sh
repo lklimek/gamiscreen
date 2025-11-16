@@ -44,7 +44,7 @@ if [[ ! -x "./gradlew" ]]; then
 fi
 
 if [[ "${BUILD_TYPE}" == "release" ]]; then
-  ./gradlew clean lint test assembleRelease
+  ./gradlew clean lint test assembleRelease bundleRelease
 else
   ./gradlew clean lint test assembleDebug
 fi

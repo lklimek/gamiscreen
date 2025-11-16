@@ -1,3 +1,4 @@
+import org.gradle.api.tasks.bundling.Zip
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.io.File
 
@@ -188,5 +189,25 @@ androidComponents.onVariants { variant ->
         ) {
             dependsOn(taskProvider)
         }
+    }
+
+    if (variant.buildType == "release") {
+        val mergeTaskName = "merge${variantNameCap}NativeLibs"
+        val nativeLibsDir = layout.buildDirectory.dir(
+            "intermediates/merged_native_libs/${variant.name}/${mergeTaskName}/out/lib"
+        )
+        val symbolsTask = tasks.register<Zip>("package${variantNameCap}NativeDebugSymbols") {
+            dependsOn(mergeTaskName)
+            from(nativeLibsDir)
+            destinationDirectory.set(layout.buildDirectory.dir("outputs/native-debug-symbols/${variant.name}"))
+            archiveFileName.set("native-debug-symbols.zip")
+            doFirst {
+                val dir = nativeLibsDir.get().asFile
+                if (!dir.exists()) {
+                    error("Native libraries not found at ${dir.absolutePath}. Build release native libs before packaging symbols.")
+                }
+            }
+        }
+        tasks.matching { it.name == "bundle${variantNameCap}" }.configureEach { dependsOn(symbolsTask) }
     }
 }

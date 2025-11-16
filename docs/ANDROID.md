@@ -99,7 +99,7 @@ Release builds use a real keystore injected via CI secrets. To configure:
 4. The workflow `.github/workflows/android-apk.yml` automatically:
    - Decodes the keystore into `android/release-signing.keystore`.
    - Exports the signing env vars for Gradle (`ANDROID_SIGNING_KEYSTORE`, etc.).
-   - Builds `./scripts/android_ci.sh release`, which picks up those env vars and signs the APK.
+   - Builds `./scripts/android_ci.sh release`, which now produces both the signed APK and App Bundle (including native debug symbols).
    - Uploads the signed APK as an artifact and attaches it to releases.
    - Runs R8/resource shrinking with `proguard-rules.pro` and generates `mapping.txt` plus `native-debug-symbols.zip` (via `ndk.debugSymbolLevel = "FULL"`); both artifacts are uploaded to Google Play so crashes can be deobfuscated.
 

@@ -58,9 +58,6 @@ jobs:
           fi
           ./gradlew --version
 
-      - name: Make android_ci executable
-        run: chmod +x scripts/android_ci.sh
-
       - name: Prepare signing keys
         if: env.BUILD_TYPE == 'release'
         env:
@@ -134,12 +131,12 @@ jobs:
             echo "Mapping file not found at $MAPPING_PATH" >&2
             exit 1
           fi
-          echo "mapping=$MAPPING_PATH" >> "$GITHUB_OUTPUT"
-          if [[ -f "$SYMBOLS_PATH" ]]; then
-            echo "symbols=$SYMBOLS_PATH" >> "$GITHUB_OUTPUT"
-          else
-            echo "Native debug symbols archive not found at $SYMBOLS_PATH; skipping upload." >&2
+          if [[ ! -f "$SYMBOLS_PATH" ]]; then
+            echo "Native debug symbols archive not found at $SYMBOLS_PATH" >&2
+            exit 1
           fi
+          echo "mapping=$MAPPING_PATH" >> "$GITHUB_OUTPUT"
+          echo "symbols=$SYMBOLS_PATH" >> "$GITHUB_OUTPUT"
 
       - name: Locate APK
         id: apk
@@ -180,7 +177,7 @@ jobs:
             ${{ steps.bundle.outputs.bundle_path }}
           releaseName: gamiscreen-qa-${{ env.APP_VERSION }}
           mappingFile: ${{ steps.play_assets.outputs.mapping }}
-          debugSymbols: ${{ steps.play_assets.outputs.symbols || '' }}
+          debugSymbols: ${{ steps.play_assets.outputs.symbols }}
           track: internal
           status: completed
 
