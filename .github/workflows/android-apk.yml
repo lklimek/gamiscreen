@@ -142,7 +142,7 @@ jobs:
           packageName: ws.klimek.gamiscreen.app
           releaseFiles: |
             ${{ steps.bundle.outputs.bundle_path }}
-          track: qa
+          track: internal
           status: draft
 
       - name: Upload to release
