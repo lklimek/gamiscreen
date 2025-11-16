@@ -108,7 +108,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            buildConfigField("boolean", "EMBED_PWA", "false")
+            buildConfigField("boolean", "EMBED_PWA", "true")
             ndk {
                 debugSymbolLevel = "FULL"
             }
@@ -129,6 +129,7 @@ android {
     }
 
     sourceSets["debug"].assets.srcDir(embeddedPwaDir)
+    sourceSets["release"].assets.srcDir(embeddedPwaDir)
 
     packaging {
         resources {
@@ -164,7 +165,6 @@ dependencies {
 }
 
 androidComponents.onVariants { variant ->
-    if (variant.buildType != "debug") return@onVariants
     val embeddedDir = embeddedPwaDir.asFile
     val variantNameCap = variant.name.replaceFirstChar { it.uppercaseChar() }
     val taskProvider = tasks.register("verify${variantNameCap}EmbeddedAssets") {
