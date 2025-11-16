@@ -1,11 +1,11 @@
 package ws.klimek.gamiscreen.pwashell
 
 import android.annotation.SuppressLint
-import android.util.Log
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import android.webkit.ServiceWorkerController
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -51,20 +51,20 @@ private sealed interface ShellUiState {
 }
 
 object PwaShellDefaults {
-    val defaultPwaUrl: String =
-        buildString {
-            append(AppConfigDefaults.Local.apiBaseUrl.trimEnd('/'))
-            append('/')
-        }
+    val defaultPwaUrl: String = buildString {
+        append(AppConfigDefaults.Local.apiBaseUrl.trimEnd('/'))
+        append('/')
+    }
 }
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun PwaShellHost(
-    modifier: Modifier = Modifier,
-    startUrl: String = PwaShellDefaults.defaultPwaUrl,
-    embeddedContent: EmbeddedPwaContent? = null
+        modifier: Modifier = Modifier,
+        startUrl: String = PwaShellDefaults.defaultPwaUrl,
+        embeddedContent: EmbeddedPwaContent? = null
 ) {
+    WebView.setWebContentsDebuggingEnabled(true)
     var uiState by remember { mutableStateOf<ShellUiState>(ShellUiState.Loading) }
     var reloadToken by remember { mutableIntStateOf(0) }
     var webView by remember { mutableStateOf<WebView?>(null) }
@@ -74,14 +74,15 @@ fun PwaShellHost(
     val appContext = context.applicationContext
     val sessionStore = remember(appContext) { SessionStore.getInstance(appContext) }
     val embeddedAssetsLoader = embeddedContent?.assetLoader
-    val allowedHosts = remember(startUrl, embeddedContent) {
-        buildSet {
-            parseHost(PwaShellDefaults.defaultPwaUrl)?.let { add(it) }
-            parseHost(startUrl)?.let { add(it) }
-            // Allow embedded assets host subpath
-            embeddedContent?.host?.let { add(it) }
-        }
-    }
+    val allowedHosts =
+            remember(startUrl, embeddedContent) {
+                buildSet {
+                    parseHost(PwaShellDefaults.defaultPwaUrl)?.let { add(it) }
+                    parseHost(startUrl)?.let { add(it) }
+                    // Allow embedded assets host subpath
+                    embeddedContent?.host?.let { add(it) }
+                }
+            }
 
     val tag = "PwaShellHost"
     LaunchedEffect(embeddedContent, startUrl) {
@@ -94,118 +95,152 @@ fun PwaShellHost(
 
     Box(modifier = modifier.fillMaxSize()) {
         AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { context ->
-                configureServiceWorkers()
-                WebView(context).apply {
-                    addJavascriptInterface(
-                        SessionTokenBridge(
-                            sessionStore = sessionStore,
-                            embeddedMode = embeddedContent != null,
-                            serverBaseUrl = AppConfigDefaults.Local.apiBaseUrl
-                        ),
-                        NATIVE_BRIDGE_JS_NAME
-                    )
-                    settings.applyWebDefaults()
-                    webChromeClient = object : WebChromeClient() {
-                        override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                            if (uiState !is ShellUiState.Error) {
-                                uiState = if (newProgress >= 100) {
-                                    ShellUiState.Content
-                                } else {
-                                    ShellUiState.Loading
+                modifier = Modifier.fillMaxSize(),
+                factory = { context ->
+                    configureServiceWorkers()
+                    WebView(context).apply {
+                        addJavascriptInterface(
+                                SessionTokenBridge(
+                                        sessionStore = sessionStore,
+                                        embeddedMode = embeddedContent != null,
+                                        serverBaseUrl = AppConfigDefaults.Local.apiBaseUrl
+                                ),
+                                NATIVE_BRIDGE_JS_NAME
+                        )
+                        settings.applyWebDefaults()
+                        webChromeClient =
+                                object : WebChromeClient() {
+                                    override fun onProgressChanged(
+                                            view: WebView?,
+                                            newProgress: Int
+                                    ) {
+                                        if (uiState !is ShellUiState.Error) {
+                                            uiState =
+                                                    if (newProgress >= 100) {
+                                                        ShellUiState.Content
+                                                    } else {
+                                                        ShellUiState.Loading
+                                                    }
+                                        }
+                                    }
                                 }
-                            }
-                        }
-                    }
-                    webViewClient = object : WebViewClient() {
-                        override fun shouldInterceptRequest(
-                            view: WebView?,
-                            request: WebResourceRequest?
-                        ): WebResourceResponse? {
-                            val loader = embeddedAssetsLoader ?: return super.shouldInterceptRequest(view, request)
-                            val uri = request?.url ?: return super.shouldInterceptRequest(view, request)
-                            val hostMatches =
-                                embeddedContent?.host?.equals(uri.host ?: "", ignoreCase = true) == true
-                            val pathMatches = embeddedContent?.pathPrefix?.let { prefix ->
-                                uri.path?.startsWith(prefix) == true
-                            } ?: false
-                            return if (hostMatches && pathMatches) {
-                                loader.shouldInterceptRequest(uri)
-                            } else {
-                                super.shouldInterceptRequest(view, request)
-                            }
-                        }
+                        webViewClient =
+                                object : WebViewClient() {
+                                    override fun shouldInterceptRequest(
+                                            view: WebView?,
+                                            request: WebResourceRequest?
+                                    ): WebResourceResponse? {
+                                        val loader =
+                                                embeddedAssetsLoader
+                                                        ?: return super.shouldInterceptRequest(
+                                                                view,
+                                                                request
+                                                        )
+                                        val uri =
+                                                request?.url
+                                                        ?: return super.shouldInterceptRequest(
+                                                                view,
+                                                                request
+                                                        )
+                                        val hostMatches =
+                                                embeddedContent?.host?.equals(
+                                                        uri.host ?: "",
+                                                        ignoreCase = true
+                                                ) == true
+                                        val pathMatches =
+                                                embeddedContent?.pathPrefix?.let { prefix ->
+                                                    uri.path?.startsWith(prefix) == true
+                                                }
+                                                        ?: false
+                                        return if (hostMatches && pathMatches) {
+                                            loader.shouldInterceptRequest(uri)
+                                        } else {
+                                            super.shouldInterceptRequest(view, request)
+                                        }
+                                    }
 
-                        override fun shouldOverrideUrlLoading(
-                            view: WebView?,
-                            request: WebResourceRequest?
-                        ): Boolean {
-                            return handleUrlOverride(context, request?.url, allowedHosts)
-                        }
+                                    override fun shouldOverrideUrlLoading(
+                                            view: WebView?,
+                                            request: WebResourceRequest?
+                                    ): Boolean {
+                                        return handleUrlOverride(
+                                                context,
+                                                request?.url,
+                                                allowedHosts
+                                        )
+                                    }
 
-                        override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
-                            val uri = url?.let { runCatching { Uri.parse(it) }.getOrNull() }
-                            return handleUrlOverride(context, uri, allowedHosts)
-                        }
+                                    override fun shouldOverrideUrlLoading(
+                                            view: WebView?,
+                                            url: String?
+                                    ): Boolean {
+                                        val uri =
+                                                url?.let {
+                                                    runCatching { Uri.parse(it) }.getOrNull()
+                                                }
+                                        return handleUrlOverride(context, uri, allowedHosts)
+                                    }
 
-                        override fun onPageFinished(view: WebView?, url: String?) {
-                            if (uiState !is ShellUiState.Error) {
-                                uiState = ShellUiState.Content
-                            }
-                            view?.let { web ->
-                                if (embeddedContent != null) {
-                                    seedServerBase(web, AppConfigDefaults.Local.apiBaseUrl)
+                                    override fun onPageFinished(view: WebView?, url: String?) {
+                                        if (uiState !is ShellUiState.Error) {
+                                            uiState = ShellUiState.Content
+                                        }
+                                        view?.let { web ->
+                                            if (embeddedContent != null) {
+                                                seedServerBase(
+                                                        web,
+                                                        AppConfigDefaults.Local.apiBaseUrl
+                                                )
+                                            }
+                                            canNavigateBack = web.canGoBack()
+                                        }
+                                    }
+
+                                    override fun onReceivedError(
+                                            view: WebView?,
+                                            request: WebResourceRequest?,
+                                            error: WebResourceError?
+                                    ) {
+                                        if (request?.isForMainFrame == false) return
+                                        canNavigateBack = view?.canGoBack() == true
+                                        uiState =
+                                                ShellUiState.Error(
+                                                        description = error?.description?.toString()
+                                                                        ?: "Unable to load gamiscreen right now.",
+                                                        isNetworkIssue = error.isConnectivityIssue()
+                                                )
+                                    }
                                 }
-                                canNavigateBack = web.canGoBack()
-                            }
-                        }
-
-                        override fun onReceivedError(
-                            view: WebView?,
-                            request: WebResourceRequest?,
-                            error: WebResourceError?
-                        ) {
-                            if (request?.isForMainFrame == false) return
-                            canNavigateBack = view?.canGoBack() == true
-                            uiState = ShellUiState.Error(
-                                description = error?.description?.toString()
-                                    ?: "Unable to load gamiscreen right now.",
-                                isNetworkIssue = error.isConnectivityIssue()
-                            )
-                        }
                     }
-                }
-            },
-            update = { view ->
-                webView = view
-                canNavigateBack = view.canGoBack()
-            },
-            onRelease = { it.destroy() }
+                },
+                update = { view ->
+                    webView = view
+                    canNavigateBack = view.canGoBack()
+                },
+                onRelease = { it.destroy() }
         )
 
         when (val state = uiState) {
             ShellUiState.Content -> Unit
-            ShellUiState.Loading -> if (!inPreview) {
-                LoadingOverlay()
-            } else {
-                PreviewPlaceholder()
-            }
-
-            is ShellUiState.Error -> ErrorOverlay(
-                message = state.description,
-                isOffline = state.isNetworkIssue,
-                onRetry = {
-                    uiState = ShellUiState.Loading
-                    reloadToken++
-                }
-            )
+            ShellUiState.Loading ->
+                    if (!inPreview) {
+                        LoadingOverlay()
+                    } else {
+                        PreviewPlaceholder()
+                    }
+            is ShellUiState.Error ->
+                    ErrorOverlay(
+                            message = state.description,
+                            isOffline = state.isNetworkIssue,
+                            onRetry = {
+                                uiState = ShellUiState.Loading
+                                reloadToken++
+                            }
+                    )
         }
     }
 
-    BackHandler(enabled = canNavigateBack) {
-        webView?.goBack()
-    }
+    BackHandler(enabled = canNavigateBack) { webView?.goBack() }
 
     LaunchedEffect(webView, startUrl, reloadToken, inPreview) {
         if (inPreview) return@LaunchedEffect
@@ -216,9 +251,9 @@ fun PwaShellHost(
 @Composable
 private fun LoadingOverlay() {
     Column(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
     ) {
         CircularProgressIndicator()
         Spacer(modifier = Modifier.height(16.dp))
@@ -229,46 +264,37 @@ private fun LoadingOverlay() {
 @Composable
 private fun PreviewPlaceholder() {
     Column(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
     ) {
-        Text(
-            text = "Preview mode",
-            style = MaterialTheme.typography.titleMedium
-        )
+        Text(text = "Preview mode", style = MaterialTheme.typography.titleMedium)
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "WebView is available on device builds.",
-            style = MaterialTheme.typography.bodyMedium
+                text = "WebView is available on device builds.",
+                style = MaterialTheme.typography.bodyMedium
         )
     }
 }
 
 @Composable
-private fun ErrorOverlay(
-    message: String,
-    isOffline: Boolean,
-    onRetry: () -> Unit
-) {
+private fun ErrorOverlay(message: String, isOffline: Boolean, onRetry: () -> Unit) {
     Column(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
+            modifier = Modifier.fillMaxSize(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
     ) {
         Text(
-            text = if (isOffline) "You're offline." else "Couldn't reach gamiscreen.",
-            style = MaterialTheme.typography.titleMedium
+                text = if (isOffline) "You're offline." else "Couldn't reach gamiscreen.",
+                style = MaterialTheme.typography.titleMedium
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = if (isOffline) "Check your connection and try again." else message,
-            style = MaterialTheme.typography.bodyMedium
+                text = if (isOffline) "Check your connection and try again." else message,
+                style = MaterialTheme.typography.bodyMedium
         )
         Spacer(modifier = Modifier.height(16.dp))
-        Button(onClick = onRetry) {
-            Text(text = "Retry")
-        }
+        Button(onClick = onRetry) { Text(text = "Retry") }
     }
 }
 
@@ -292,36 +318,33 @@ private fun WebSettings.applyWebDefaults() {
 }
 
 private fun configureServiceWorkers() {
-    ServiceWorkerController.getInstance()
-        .serviceWorkerWebSettings.apply {
-            setAllowContentAccess(true)
-            setAllowFileAccess(true)
-            setBlockNetworkLoads(false)
-        }
+    ServiceWorkerController.getInstance().serviceWorkerWebSettings.apply {
+        setAllowContentAccess(true)
+        setAllowFileAccess(true)
+        setBlockNetworkLoads(false)
+    }
 }
 
 private const val NATIVE_BRIDGE_JS_NAME = "__gamiscreenNative"
 private const val SERVER_BASE_KEY = "gamiscreen.server_base"
 
-private fun parseHost(url: String): String? = runCatching {
-    Uri.parse(url).host?.lowercase(Locale.US)
-}.getOrNull()
+private fun parseHost(url: String): String? =
+        runCatching { Uri.parse(url).host?.lowercase(Locale.US) }.getOrNull()
 
-private fun handleUrlOverride(
-    context: Context,
-    uri: Uri?,
-    allowedHosts: Set<String>
-): Boolean {
+private fun handleUrlOverride(context: Context, uri: Uri?, allowedHosts: Set<String>): Boolean {
     val normalizedHost = uri?.host?.lowercase(Locale.US)
     val scheme = uri?.scheme?.lowercase(Locale.US)
-    if (uri != null && scheme in setOf("http", "https") && normalizedHost != null && normalizedHost in allowedHosts) {
+    if (uri != null &&
+                    scheme in setOf("http", "https") &&
+                    normalizedHost != null &&
+                    normalizedHost in allowedHosts
+    ) {
         return false
     }
 
     val target = uri ?: return false
-    val intent = Intent(Intent.ACTION_VIEW, target).apply {
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    }
+    val intent =
+            Intent(Intent.ACTION_VIEW, target).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
     return try {
         context.startActivity(intent)
         true
@@ -334,14 +357,15 @@ private fun handleUrlOverride(
 private fun WebResourceError?.isConnectivityIssue(): Boolean {
     val code = this?.errorCode ?: return false
     return code == WebViewClient.ERROR_CONNECT ||
-        code == WebViewClient.ERROR_HOST_LOOKUP ||
-        code == WebViewClient.ERROR_TIMEOUT ||
-        code == WebViewClient.ERROR_UNKNOWN
+            code == WebViewClient.ERROR_HOST_LOOKUP ||
+            code == WebViewClient.ERROR_TIMEOUT ||
+            code == WebViewClient.ERROR_UNKNOWN
 }
 
 private fun seedServerBase(webView: WebView, baseUrl: String) {
     Log.i("PwaShellHost", "Seeding PWA server base to $baseUrl")
-    val script = """
+    val script =
+            """
         (function() {
             try {
                 localStorage.setItem('$SERVER_BASE_KEY', ${baseUrl.toJsStringLiteral()});
