@@ -105,6 +105,24 @@ jobs:
             cd android && ./gradlew bundleDebug
           fi
 
+      - name: Extract version info
+        run: |
+          METADATA_FILE="android/app/build/outputs/apk/${BUILD_TYPE}/output-metadata.json"
+          if [[ ! -f "$METADATA_FILE" ]]; then
+            echo "Metadata file not found at $METADATA_FILE" >&2
+            exit 1
+          fi
+          VERSION_NAME=$(jq -r '.elements[0].versionName // .variantOutputs[0].versionName' "$METADATA_FILE")
+          VERSION_CODE=$(jq -r '.elements[0].versionCode // .variantOutputs[0].versionCode' "$METADATA_FILE")
+          if [[ -z "$VERSION_NAME" || "$VERSION_NAME" == "null" ]]; then
+            echo "Failed to extract version name from $METADATA_FILE" >&2
+            exit 1
+          fi
+          echo "APP_VERSION=$VERSION_NAME" >> "$GITHUB_ENV"
+          if [[ -n "$VERSION_CODE" && "$VERSION_CODE" != "null" ]]; then
+            echo "APP_VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          fi
+
       - name: Locate APK
         id: apk
         run: |
@@ -128,7 +146,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: gamiscreen-android-${{ env.BUILD_TYPE }}
+          name: gamiscreen-android-${{ env.BUILD_TYPE }}-${{ env.APP_VERSION }}
           path: |
             ${{ steps.apk.outputs.apk_path }}
             ${{ steps.bundle.outputs.bundle_path }}
@@ -142,6 +160,7 @@ jobs:
           packageName: ws.klimek.gamiscreen.app
           releaseFiles: |
             ${{ steps.bundle.outputs.bundle_path }}
+          releaseName: gamiscreen-${{ env.APP_VERSION }}
           track: internal
           status: draft
 
