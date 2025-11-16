@@ -179,7 +179,7 @@ jobs:
           mappingFile: ${{ steps.play_assets.outputs.mapping }}
           debugSymbols: ${{ steps.play_assets.outputs.symbols }}
           track: internal
-          status: completed
+          status: draft
 
       - name: Upload to release
         if: github.event_name == 'release'
