@@ -1,8 +1,12 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App'
+import { ensurePwaFreshness } from './pwaVersioning'
+import packageInfo from '../package.json'
 import '@picocss/pico/css/pico.min.css'
 import './styles.css'
+
+ensurePwaFreshness(packageInfo.version)
 
 const container = document.getElementById('root')
 if (!container) throw new Error('Root element not found')

@@ -50,8 +50,8 @@ export type {
 } from './generated/api-types'
 
 import { getNativeBridge, getNativeServerBase } from './nativeBridge'
+import { TOKEN_KEY } from './storageKeys'
 
-const TOKEN_KEY = 'gamiscreen.token'
 const SERVER_BASE_KEY = 'gamiscreen.server_base'
 const API_V1_PREFIX = '/api/v1'
 
