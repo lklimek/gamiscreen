@@ -43,6 +43,7 @@ import java.util.Locale
 import org.json.JSONObject
 import ws.klimek.gamiscreen.core.AppConfigDefaults
 import ws.klimek.gamiscreen.core.SessionStore
+import ws.klimek.gamiscreen.pwashell.BuildConfig
 
 private sealed interface ShellUiState {
     data object Loading : ShellUiState
@@ -64,7 +65,8 @@ fun PwaShellHost(
         startUrl: String = PwaShellDefaults.defaultPwaUrl,
         embeddedContent: EmbeddedPwaContent? = null
 ) {
-    WebView.setWebContentsDebuggingEnabled(true)
+    // Enable WebView debugging only in debug builds, synchronized with gamiscreen-web's debug mode
+    WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
     var uiState by remember { mutableStateOf<ShellUiState>(ShellUiState.Loading) }
     var reloadToken by remember { mutableIntStateOf(0) }
     var webView by remember { mutableStateOf<WebView?>(null) }
