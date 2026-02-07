@@ -1,8 +1,8 @@
 ## Code Standards
 
 ### Required Before Each Commit
-- Run `make fmt` before committing any changes to ensure proper code formatting
-- This will run gofmt on all Go files to maintain consistent style
+- Run `cargo +nightly fmt` before committing any changes to ensure proper code formatting
+- This will format all Rust files according to the project's rustfmt configuration
 
 ### Development Flow - keep the order:
 1. Before writing any code:
