@@ -156,6 +156,18 @@ jobs:
           fi
           echo "bundle_path=${BUNDLE_PATH}" >> $GITHUB_OUTPUT
 
+      - name: Check Google Play publish config
+        id: play_publish
+        if: github.event_name == 'release' && env.BUILD_TYPE == 'release'
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [[ -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -165,7 +177,7 @@ jobs:
             ${{ steps.bundle.outputs.bundle_path }}
 
       - name: Publish to Google Play internal testing
-        if: github.event_name == 'release' && env.BUILD_TYPE == 'release' && secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON != ''
+        if: github.event_name == 'release' && env.BUILD_TYPE == 'release' && steps.play_publish.outputs.enabled == 'true'
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
