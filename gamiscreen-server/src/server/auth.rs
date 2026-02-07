@@ -75,7 +75,13 @@ pub async fn require_bearer(
     {
         Ok(true) => {}
         Ok(false) => {
-            tracing::warn!(jti = %jti, username = %claims.sub, "auth: session missing or expired");
+            tracing::warn!(
+                jti = %jti,
+                username = %claims.sub,
+                cutoff = %cutoff,
+                idle_days = idle_days,
+                "auth: session missing or expired (last_used_at < cutoff)"
+            );
             return unauthorized();
         }
         Err(e) => {
