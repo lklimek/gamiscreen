@@ -833,6 +833,35 @@ impl Store {
         .await
         .map_err(|e| e.to_string())?
     }
+
+    /// Touch session atomically, but only if it hasn't expired.
+    /// Returns `true` if the session was found and updated, `false` otherwise.
+    ///
+    /// This combines the idle timeout check and the `last_used_at` update into
+    /// a single atomic UPDATE, eliminating the race condition between checking
+    /// and updating the session.
+    pub async fn touch_session_with_cutoff(
+        &self,
+        jti_: &str,
+        cutoff: chrono::NaiveDateTime,
+    ) -> Result<bool, String> {
+        use schema::sessions::dsl::*;
+        let pool = self.pool.clone();
+        let j = jti_.to_string();
+        tokio::task::spawn_blocking(move || -> Result<bool, String> {
+            let mut conn = pool.get().map_err(|e| e.to_string())?;
+            configure_sqlite_conn(&mut conn).map_err(|e| format!("pragma error: {e}"))?;
+            let now = Utc::now().naive_utc();
+            let updated =
+                diesel::update(sessions.filter(jti.eq(&j)).filter(last_used_at.ge(cutoff)))
+                    .set(last_used_at.eq(now))
+                    .execute(&mut conn)
+                    .map_err(|e| e.to_string())?;
+            Ok(updated > 0)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
 }
 
 fn configure_sqlite_conn(conn: &mut SqliteConnection) -> Result<(), diesel::result::Error> {

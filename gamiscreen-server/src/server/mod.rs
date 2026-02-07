@@ -240,9 +240,8 @@ pub fn router(state: AppState) -> Router {
             .filter(|s| !s.is_empty())
             .filter_map(|s| header::HeaderValue::from_str(s).ok())
             .collect();
-        let embedded_host =
-            header::HeaderValue::from_static("https://gamiscreen.klimek.ws");
-        if !origins.iter().any(|hv| hv == &embedded_host) {
+        let embedded_host = header::HeaderValue::from_static("https://gamiscreen.klimek.ws");
+        if !origins.contains(&embedded_host) {
             origins.push(embedded_host);
         }
         if origins.is_empty() {
@@ -778,6 +777,7 @@ async fn sse_notifications(
     Query(q): Query<SseQuery>,
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, std::convert::Infallible>>>, AppError> {
     // Validate token from query
+    // NOTE: SSE auth does not consult or touch the sessions table; it only verifies the JWT.
     let claims = jwt::decode_and_verify(&q.token, state.config.jwt_secret.as_bytes())
         .map_err(|_| AppError::unauthorized())?;
     // Access control
