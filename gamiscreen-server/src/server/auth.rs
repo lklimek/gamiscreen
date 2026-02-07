@@ -62,29 +62,24 @@ pub async fn require_bearer(
         return unauthorized();
     }
     let jti = claims.jti.clone();
-    let session = state.store.get_session(&jti).await.map_err(|e| {
-        tracing::error!(error=%e, jti=%jti, "auth: get_session failed");
-        AppError::internal(e)
-    })?;
-    let Some(sess) = session else {
-        tracing::warn!(jti = %jti, username = %claims.sub, "auth: session missing");
-        return unauthorized();
-    };
-    let last = sess.last_used_at;
     let idle_days = if claims.device_id.is_some() {
         DEVICE_SESSION_IDLE_DAYS
     } else {
         USER_SESSION_IDLE_DAYS
     };
     let cutoff = Utc::now() - Duration::days(idle_days);
-    if last < cutoff.naive_utc() {
-        return unauthorized();
-    }
-    match state.store.touch_session(&jti).await {
+    match state
+        .store
+        .touch_session_with_cutoff(&jti, cutoff.naive_utc())
+        .await
+    {
         Ok(true) => {}
-        Ok(false) => return unauthorized(),
+        Ok(false) => {
+            tracing::warn!(jti = %jti, username = %claims.sub, "auth: session missing or expired");
+            return unauthorized();
+        }
         Err(e) => {
-            error!(jti = %jti, error=%e, "auth: touch_session failed");
+            error!(jti = %jti, error=%e, "auth: touch_session_with_cutoff failed");
             return Err(AppError::internal(e));
         }
     }
