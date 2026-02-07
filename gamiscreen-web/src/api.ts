@@ -87,10 +87,11 @@ const tokenStore: TokenStore = {
     if (bridge) {
       try {
         bridge.setAuthToken(token ?? null)
+        return // Successfully saved to bridge, don't use localStorage
       } catch (err) {
         console.warn('native bridge setAuthToken failed', err)
+        // Fall through to localStorage as fallback
       }
-      return
     }
 
     try {
