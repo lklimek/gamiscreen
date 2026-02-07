@@ -149,25 +149,44 @@ export function getAuthClaims(): JwtClaims | null {
   }
 }
 
+// Helper to get environment variables
+function getEnv() {
+  return (import.meta as any).env || {}
+}
+
+// Helper to check if debug logging should be enabled
+function isDebugEnabled(): boolean {
+  // In Vite, import.meta.env.PROD is true for production builds
+  return !getEnv().PROD
+}
+
 function apiBase(): string {
   // Prefer native-provided base (embedded shell), then user-configured, env, same-origin
   const nativeBase = getNativeServerBase()
   if (nativeBase) {
-    console.debug('[api] using native server base', nativeBase)
+    if (isDebugEnabled()) {
+      console.debug('[api] using native server base', nativeBase)
+    }
     return nativeBase.replace(/\/+$/, '')
   }
   const ls = getServerBase()
   if (ls) {
-    console.debug('[api] using stored server base', ls)
+    if (isDebugEnabled()) {
+      console.debug('[api] using stored server base', ls)
+    }
     return ls.replace(/\/+$/, '')
   }
-  const env = (import.meta as any).env || {}
+  const env = getEnv()
   const v = env.VITE_API_BASE_URL || ''
   if (v) {
-    console.debug('[api] using env server base', v)
+    if (isDebugEnabled()) {
+      console.debug('[api] using env server base', v)
+    }
     return v
   }
-  console.debug('[api] defaulting to same-origin base')
+  if (isDebugEnabled()) {
+    console.debug('[api] defaulting to same-origin base')
+  }
   return ''
 }
 
