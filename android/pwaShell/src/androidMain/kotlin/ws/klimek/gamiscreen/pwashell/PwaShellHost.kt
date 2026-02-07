@@ -65,7 +65,7 @@ fun PwaShellHost(
         startUrl: String = PwaShellDefaults.defaultPwaUrl,
         embeddedContent: EmbeddedPwaContent? = null
 ) {
-    // Enable WebView debugging only in debug builds, synchronized with gamiscreen-web's debug mode
+    // Enable WebView debugging only in debug builds (disabled in release for security)
     WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
     var uiState by remember { mutableStateOf<ShellUiState>(ShellUiState.Loading) }
     var reloadToken by remember { mutableIntStateOf(0) }
