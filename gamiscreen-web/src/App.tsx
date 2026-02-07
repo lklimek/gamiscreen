@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import packageInfo from '../package.json'
 import { getAuthClaims, getServerVersion, getToken, notificationsCount, pushUnsubscribe, renewToken, setToken } from './api'
 const API_V1_PREFIX = '/api/v1'
+const EMBEDDED_MODE_CHECK_MAX_RETRIES = 60 // 1 minute (60 seconds * 1 second interval)
 import { ChildDetailsPage } from './pages/ChildDetailsPage'
 import { LoginPage } from './pages/LoginPage'
 import { NotificationsPage } from './pages/NotificationsPage'
@@ -66,11 +67,16 @@ export function App() {
     if (embedded) return
     let cancelled = false
     let timer: number | undefined
+    let retryCount = 0
     const check = () => {
       if (cancelled) return
       if (isEmbeddedMode()) {
         setEmbedded(true)
         return
+      }
+      retryCount++
+      if (retryCount >= EMBEDDED_MODE_CHECK_MAX_RETRIES) {
+        return // Stop polling after 1 minute
       }
       timer = window.setTimeout(check, 1000)
     }
