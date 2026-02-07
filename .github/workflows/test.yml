@@ -26,29 +26,12 @@ jobs:
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
 
-      - name: Run tests
-        env:
-          SKIP_WEB_BUILD: "1"
-        run: cargo test --workspace
-
-  web-build:
-    name: Web Build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: gamiscreen-web/package-lock.json
-
-      - name: Install deps
-        working-directory: gamiscreen-web
-        run: npm ci
-
-      - name: Build
-        working-directory: gamiscreen-web
-        run: npm run build
+      # This includes building the gamiscreen-web, so we don't need separate steps for that.
+      - name: Run tests
+        run: cargo test --workspace
