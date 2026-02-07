@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import packageInfo from '../package.json'
 import { getAuthClaims, getServerVersion, getToken, notificationsCount, pushUnsubscribe, renewToken, setToken } from './api'
-
 const API_V1_PREFIX = '/api/v1'
+const EMBEDDED_MODE_CHECK_MAX_RETRIES = 60 // 1 minute (60 seconds * 1 second interval)
 import { ChildDetailsPage } from './pages/ChildDetailsPage'
 import { LoginPage } from './pages/LoginPage'
 import { NotificationsPage } from './pages/NotificationsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { StatusPage } from './pages/StatusPage'
 import { NotificationSettings, getNotificationSettings, saveNotificationSettings } from './notifications'
+import { isEmbeddedMode } from './nativeBridge'
 
 type Route = 'status' | 'login' | 'child' | 'notifications' | 'settings'
 
@@ -61,6 +62,30 @@ export function App() {
   })
   const [serverVersion, setServerVersion] = useState<string | null>(null)
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(() => getNotificationSettings())
+  const [embedded, setEmbedded] = useState(() => isEmbeddedMode())
+  useEffect(() => {
+    if (embedded) return
+    let cancelled = false
+    let timer: number | undefined
+    let retryCount = 0
+    const check = () => {
+      if (cancelled) return
+      if (isEmbeddedMode()) {
+        setEmbedded(true)
+        return
+      }
+      retryCount++
+      if (retryCount >= EMBEDDED_MODE_CHECK_MAX_RETRIES) {
+        return // Stop polling after 1 minute
+      }
+      timer = window.setTimeout(check, 1000)
+    }
+    timer = window.setTimeout(check, 0)
+    return () => {
+      cancelled = true
+      if (timer) window.clearTimeout(timer)
+    }
+  }, [embedded])
 
   const cleanupPushSubscription = useCallback(async () => {
     try {
@@ -410,7 +435,7 @@ export function App() {
           <small>Use responsibly. Reward healthy habits.</small>
         </p>
         <p style={{ margin: 0, fontSize: 10, color: 'var(--muted-color, #666)' }}>
-          Server&nbsp;v{serverVersion ?? '…'} · Web&nbsp;v{webVersion} · Tenant&nbsp;{claims?.tenant_id ?? '—'}
+          Server&nbsp;v{serverVersion ?? '…'} · Web&nbsp;v{webVersion}{embedded ? ' · Embedded' : ''} · Tenant&nbsp;{claims?.tenant_id ?? '—'}
         </p>
       </footer>
       {installAvailable && (

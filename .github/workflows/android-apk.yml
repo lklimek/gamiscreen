@@ -1,0 +1,202 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      # TODO: remove before merging to master, we don't want to build on every push, only when version is changed
+      - master
+  pull_request:
+    paths:
+      # we don't build on every code change, only when version is changed - which is in Cargo.toml
+      - "Cargo.toml"
+      - ".github/workflows/android-apk.yml"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      buildType:
+        description: "Build type; release also publishes to Google Play internal testing"
+        required: false
+        default: "debug"
+        type: choice
+        options:
+          - debug
+          - release
+
+permissions:
+  contents: write
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    env:
+      BUILD_TYPE: ${{ github.event_name == 'workflow_dispatch' && (inputs.buildType || 'release') || (github.event_name == 'pull_request' && 'debug' || 'release') }}
+      EMBED_PWA: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - name: Ensure Gradle wrapper
+        working-directory: android
+        run: |
+          if [[ ! -f gradle/wrapper/gradle-wrapper.jar ]]; then
+            echo "gradle/wrapper/gradle-wrapper.jar is missing. Ensure the Gradle wrapper is committed to the repository." >&2
+            exit 1
+          fi
+          ./gradlew --version
+
+      - name: Prepare signing keys
+        if: env.BUILD_TYPE == 'release'
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_SIGNING_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEYSTORE_PASSWORD }}
+          ANDROID_SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS }}
+          ANDROID_SIGNING_KEY_ALIAS_PASSWORD: ${{ secrets.ANDROID_SIGNING_KEY_ALIAS_PASSWORD }}
+        run: |
+          if [[ -z "$ANDROID_KEYSTORE_BASE64" || -z "$ANDROID_SIGNING_KEYSTORE_PASSWORD" || -z "$ANDROID_SIGNING_KEY_ALIAS" || -z "$ANDROID_SIGNING_KEY_ALIAS_PASSWORD" ]]; then
+            echo "Android signing secrets are not fully configured." >&2
+            exit 1
+          fi
+          KEYSTORE_PATH="${GITHUB_WORKSPACE}/android/release-signing.keystore"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          {
+            echo "ANDROID_SIGNING_KEYSTORE=$KEYSTORE_PATH"
+            echo "ANDROID_SIGNING_KEYSTORE_PASSWORD=$ANDROID_SIGNING_KEYSTORE_PASSWORD"
+            echo "ANDROID_SIGNING_KEY_ALIAS=$ANDROID_SIGNING_KEY_ALIAS"
+            echo "ANDROID_SIGNING_KEY_ALIAS_PASSWORD=$ANDROID_SIGNING_KEY_ALIAS_PASSWORD"
+          } >> "$GITHUB_ENV"
+
+      - name: Cache configuration cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            android/.gradle/configuration-cache
+            ~/.gradle/caches/jars-* 
+            ~/.gradle/caches/build-cache-*
+          key: gradle-config-${{ runner.os }}-${{ github.ref }}-${{ hashFiles('android/**/build.gradle*', 'android/**/gradle-wrapper.properties') }}
+          restore-keys: |
+            gradle-config-${{ runner.os }}-${{ github.ref }}
+            gradle-config-${{ runner.os }}-
+
+      - name: Build Android (${{ env.BUILD_TYPE }})
+        run: ./scripts/android_ci.sh $BUILD_TYPE
+
+      - name: Build App Bundle
+        run: |
+          if [[ "${BUILD_TYPE}" == "release" ]]; then
+            cd android && ./gradlew bundleRelease
+          else
+            cd android && ./gradlew bundleDebug
+          fi
+
+      - name: Extract version info
+        run: |
+          METADATA_FILE="android/app/build/outputs/apk/${BUILD_TYPE}/output-metadata.json"
+          if [[ ! -f "$METADATA_FILE" ]]; then
+            echo "Metadata file not found at $METADATA_FILE" >&2
+            exit 1
+          fi
+          VERSION_NAME=$(jq -r '.elements[0].versionName // .variantOutputs[0].versionName' "$METADATA_FILE")
+          VERSION_CODE=$(jq -r '.elements[0].versionCode // .variantOutputs[0].versionCode' "$METADATA_FILE")
+          if [[ -z "$VERSION_NAME" || "$VERSION_NAME" == "null" ]]; then
+            echo "Failed to extract version name from $METADATA_FILE" >&2
+            exit 1
+          fi
+          echo "APP_VERSION=$VERSION_NAME" >> "$GITHUB_ENV"
+          if [[ -n "$VERSION_CODE" && "$VERSION_CODE" != "null" ]]; then
+            echo "APP_VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          fi
+
+      - name: Locate Google Play assets
+        if: env.BUILD_TYPE == 'release'
+        id: play_assets
+        run: |
+          set -euo pipefail
+          MAPPING_PATH="android/app/build/outputs/mapping/${BUILD_TYPE}/mapping.txt"
+          SYMBOLS_PATH="android/app/build/outputs/native-debug-symbols/${BUILD_TYPE}/native-debug-symbols.zip"
+          if [[ ! -f "$MAPPING_PATH" ]]; then
+            echo "Mapping file not found at $MAPPING_PATH" >&2
+            exit 1
+          fi
+          if [[ ! -f "$SYMBOLS_PATH" ]]; then
+            echo "Native debug symbols archive not found at $SYMBOLS_PATH" >&2
+            exit 1
+          fi
+          echo "mapping=$MAPPING_PATH" >> "$GITHUB_OUTPUT"
+          echo "symbols=$SYMBOLS_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Locate APK
+        id: apk
+        run: |
+          if [[ "${BUILD_TYPE}" == "release" ]]; then
+            APK_PATH=$(ls android/app/build/outputs/apk/release/*.apk | head -n 1)
+          else
+            APK_PATH=$(ls android/app/build/outputs/apk/debug/*.apk | head -n 1)
+          fi
+          echo "apk_path=${APK_PATH}" >> $GITHUB_OUTPUT
+
+      - name: Locate App Bundle
+        id: bundle
+        run: |
+          if [[ "${BUILD_TYPE}" == "release" ]]; then
+            BUNDLE_PATH=$(ls android/app/build/outputs/bundle/release/*.aab | head -n 1)
+          else
+            BUNDLE_PATH=$(ls android/app/build/outputs/bundle/debug/*.aab | head -n 1)
+          fi
+          echo "bundle_path=${BUNDLE_PATH}" >> $GITHUB_OUTPUT
+
+      - name: Check Google Play publish config
+        id: play_publish
+        if: github.event_name == 'release' && env.BUILD_TYPE == 'release'
+        env:
+          GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [[ -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamiscreen-android-${{ env.BUILD_TYPE }}-${{ env.APP_VERSION }}
+          path: |
+            ${{ steps.apk.outputs.apk_path }}
+            ${{ steps.bundle.outputs.bundle_path }}
+
+      - name: Publish to Google Play internal testing
+        if: env.BUILD_TYPE == 'release' && steps.play_publish.outputs.enabled == 'true'
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: ws.klimek.gamiscreen.app
+          releaseFiles: |
+            ${{ steps.bundle.outputs.bundle_path }}
+          releaseName: gamiscreen-qa-${{ env.APP_VERSION }}
+          mappingFile: ${{ steps.play_assets.outputs.mapping }}
+          debugSymbols: ${{ steps.play_assets.outputs.symbols }}
+          track: internal
+          status: draft
+
+      - name: Upload to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.apk.outputs.apk_path }}
+            ${{ steps.bundle.outputs.bundle_path }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

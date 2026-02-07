@@ -73,7 +73,11 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
-importScripts('notification-format.js');
+try {
+  importScripts('notification-format.js');
+} catch (err) {
+  console.error('Service worker failed to load notification formatter', err);
+}
 
 self.addEventListener('push', (event) => {
   const data = (() => {
