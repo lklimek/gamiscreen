@@ -159,7 +159,7 @@ jobs:
 
       - name: Check Google Play publish config
         id: play_publish
-        if: github.event_name == 'release' && env.BUILD_TYPE == 'release'
+        if: env.BUILD_TYPE == 'release' && (github.event_name == 'release' || github.event_name == 'workflow_dispatch')
         env:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
         run: |
