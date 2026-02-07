@@ -75,7 +75,7 @@ const tokenStore: TokenStore = {
         return null
       }
     }
-    
+
     try {
       return localStorage.getItem(TOKEN_KEY)
     } catch {
@@ -92,7 +92,7 @@ const tokenStore: TokenStore = {
       }
       return
     }
-    
+
     try {
       if (token) localStorage.setItem(TOKEN_KEY, token)
       else localStorage.removeItem(TOKEN_KEY)
