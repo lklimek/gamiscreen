@@ -1,9 +1,9 @@
 use std::io::ErrorKind;
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use axum::http::StatusCode;
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use gamiscreen_server::{server, storage};
 use gamiscreen_shared::api;
 use gamiscreen_shared::domain::{Child, Task};
@@ -21,6 +21,7 @@ struct TestServer {
     client: Client,
     handle: tokio::task::JoinHandle<()>,
     _tempdir: tempfile::TempDir,
+    db_path: PathBuf,
 }
 
 impl TestServer {
@@ -39,6 +40,7 @@ impl TestServer {
             base: format!("http://{}", addr),
             client: Client::new(),
             handle,
+            db_path: db_path.clone(),
             _tempdir: dir,
         })
     }
@@ -135,6 +137,59 @@ impl TestServer {
         );
         body_text
     }
+
+    /// Helper to backdate a session's last_used_at field in the database.
+    /// This is used to test session idle timeout behavior.
+    async fn backdate_session(&self, jti: &str, days_ago: i64) {
+        use diesel::prelude::*;
+        let db_path_str = self.db_path.to_str().unwrap().to_string();
+        let jti_str = jti.to_string();
+        tokio::task::spawn_blocking(move || {
+            let manager = diesel::r2d2::ConnectionManager::<SqliteConnection>::new(&db_path_str);
+            let pool = diesel::r2d2::Pool::builder().build(manager).unwrap();
+            let mut conn = pool.get().unwrap();
+            
+            let target_time = (Utc::now() - Duration::days(days_ago)).naive_utc();
+            diesel::sql_query(format!(
+                "UPDATE sessions SET last_used_at = '{}' WHERE jti = '{}'",
+                target_time.format("%Y-%m-%d %H:%M:%S%.f"),
+                jti_str
+            ))
+            .execute(&mut conn)
+            .unwrap();
+        })
+        .await
+        .unwrap();
+    }
+
+    /// Helper to get the current last_used_at for a session.
+    async fn get_session_last_used(&self, jti: &str) -> Option<chrono::NaiveDateTime> {
+        use diesel::prelude::*;
+        let db_path_str = self.db_path.to_str().unwrap().to_string();
+        let jti_str = jti.to_string();
+        tokio::task::spawn_blocking(move || {
+            let manager = diesel::r2d2::ConnectionManager::<SqliteConnection>::new(&db_path_str);
+            let pool = diesel::r2d2::Pool::builder().build(manager).unwrap();
+            let mut conn = pool.get().unwrap();
+            
+            #[derive(QueryableByName)]
+            struct SessionTime {
+                #[diesel(sql_type = diesel::sql_types::Timestamp)]
+                last_used_at: chrono::NaiveDateTime,
+            }
+            
+            diesel::sql_query(format!(
+                "SELECT last_used_at FROM sessions WHERE jti = '{}'",
+                jti_str
+            ))
+            .get_result::<SessionTime>(&mut conn)
+            .optional()
+            .unwrap()
+            .map(|s| s.last_used_at)
+        })
+        .await
+        .unwrap()
+    }
 }
 
 impl Drop for TestServer {
@@ -228,6 +283,27 @@ fn now_minute() -> i64 {
 
 fn to_value<T: Serialize>(value: &T) -> Value {
     serde_json::to_value(value).expect("failed to serialize test body")
+}
+
+/// Extract the JTI (JWT ID) from a JWT token for testing purposes.
+fn extract_jti_from_token(token: &str) -> String {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
+    
+    // JWT tokens have 3 parts: header.payload.signature
+    let parts: Vec<&str> = token.split('.').collect();
+    assert_eq!(parts.len(), 3, "Invalid JWT token format");
+    
+    // Decode the payload (second part)
+    let payload_bytes = URL_SAFE_NO_PAD.decode(parts[1])
+        .expect("Failed to decode JWT payload");
+    let payload_json: Value = serde_json::from_slice(&payload_bytes)
+        .expect("Failed to parse JWT payload");
+    
+    payload_json["jti"]
+        .as_str()
+        .expect("JTI not found in token")
+        .to_string()
 }
 
 #[tokio::test]
@@ -800,3 +876,206 @@ async fn child_access_control() {
             .await;
     }
 }
+
+#[tokio::test]
+async fn user_session_idle_timeout() {
+    let Some(server) = TestServer::spawn().await else {
+        return;
+    };
+    
+    // Login as a user (parent)
+    let token = server.login("parent", "secret123").await;
+    let jti = extract_jti_from_token(&token);
+    
+    // Verify the session works initially
+    server
+        .request_expect_status(
+            "GET",
+            &tenant_path("children"),
+            Some(&token),
+            None,
+            StatusCode::OK,
+        )
+        .await;
+    
+    // Backdate the session beyond the user idle timeout (14 days)
+    server.backdate_session(&jti, 15).await;
+    
+    // Request should now be unauthorized due to idle timeout
+    server
+        .request_expect_status(
+            "GET",
+            &tenant_path("children"),
+            Some(&token),
+            None,
+            StatusCode::UNAUTHORIZED,
+        )
+        .await;
+}
+
+#[tokio::test]
+async fn device_session_idle_timeout() {
+    let Some(server) = TestServer::spawn().await else {
+        return;
+    };
+    
+    // Login as a child and register a device
+    let child_token = server.login("alice", "kidpass").await;
+    let register_resp: api::ClientRegisterResp = server
+        .request_expect_json(
+            "POST",
+            &tenant_path("children/alice/register"),
+            Some(&child_token),
+            Some(to_value(&api::ClientRegisterReq {
+                child_id: None,
+                device_id: "test-device".to_string(),
+            })),
+            StatusCode::OK,
+        )
+        .await;
+    let device_token = register_resp.token;
+    let jti = extract_jti_from_token(&device_token);
+    
+    // Verify the device session works initially
+    server
+        .request_expect_json::<api::HeartbeatResp>(
+            "POST",
+            &tenant_path("children/alice/device/test-device/heartbeat"),
+            Some(&device_token),
+            Some(to_value(&api::HeartbeatReq {
+                minutes: vec![now_minute()],
+            })),
+            StatusCode::OK,
+        )
+        .await;
+    
+    // Backdate the session beyond the device idle timeout (30 days)
+    server.backdate_session(&jti, 31).await;
+    
+    // Request should now be unauthorized due to idle timeout
+    server
+        .request_expect_status(
+            "POST",
+            &tenant_path("children/alice/device/test-device/heartbeat"),
+            Some(&device_token),
+            Some(to_value(&api::HeartbeatReq {
+                minutes: vec![now_minute()],
+            })),
+            StatusCode::UNAUTHORIZED,
+        )
+        .await;
+}
+
+#[tokio::test]
+async fn authenticated_request_advances_last_used_at_for_user() {
+    let Some(server) = TestServer::spawn().await else {
+        return;
+    };
+    
+    // Login as a user
+    let token = server.login("parent", "secret123").await;
+    let jti = extract_jti_from_token(&token);
+    
+    // Backdate the session to 10 days ago (within the 14-day idle timeout)
+    server.backdate_session(&jti, 10).await;
+    
+    // Get the backdated timestamp
+    let old_timestamp = server.get_session_last_used(&jti).await.unwrap();
+    
+    // Wait a moment to ensure timestamp difference is detectable
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    
+    // Make an authenticated request
+    server
+        .request_expect_status(
+            "GET",
+            &tenant_path("children"),
+            Some(&token),
+            None,
+            StatusCode::OK,
+        )
+        .await;
+    
+    // Verify that last_used_at was advanced
+    let new_timestamp = server.get_session_last_used(&jti).await.unwrap();
+    assert!(
+        new_timestamp > old_timestamp,
+        "last_used_at should be advanced after authenticated request. Old: {}, New: {}",
+        old_timestamp,
+        new_timestamp
+    );
+    
+    // Verify the new timestamp is recent (within the last second)
+    let now = Utc::now().naive_utc();
+    let diff = now.signed_duration_since(new_timestamp);
+    assert!(
+        diff.num_seconds() < 2,
+        "last_used_at should be very recent. Diff: {} seconds",
+        diff.num_seconds()
+    );
+}
+
+#[tokio::test]
+async fn authenticated_request_advances_last_used_at_for_device() {
+    let Some(server) = TestServer::spawn().await else {
+        return;
+    };
+    
+    // Login as a child and register a device
+    let child_token = server.login("alice", "kidpass").await;
+    let register_resp: api::ClientRegisterResp = server
+        .request_expect_json(
+            "POST",
+            &tenant_path("children/alice/register"),
+            Some(&child_token),
+            Some(to_value(&api::ClientRegisterReq {
+                child_id: None,
+                device_id: "test-device".to_string(),
+            })),
+            StatusCode::OK,
+        )
+        .await;
+    let device_token = register_resp.token;
+    let jti = extract_jti_from_token(&device_token);
+    
+    // Backdate the session to 20 days ago (within the 30-day device idle timeout)
+    server.backdate_session(&jti, 20).await;
+    
+    // Get the backdated timestamp
+    let old_timestamp = server.get_session_last_used(&jti).await.unwrap();
+    
+    // Wait a moment to ensure timestamp difference is detectable
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    
+    // Make an authenticated request
+    server
+        .request_expect_json::<api::HeartbeatResp>(
+            "POST",
+            &tenant_path("children/alice/device/test-device/heartbeat"),
+            Some(&device_token),
+            Some(to_value(&api::HeartbeatReq {
+                minutes: vec![now_minute()],
+            })),
+            StatusCode::OK,
+        )
+        .await;
+    
+    // Verify that last_used_at was advanced
+    let new_timestamp = server.get_session_last_used(&jti).await.unwrap();
+    assert!(
+        new_timestamp > old_timestamp,
+        "last_used_at should be advanced after authenticated request. Old: {}, New: {}",
+        old_timestamp,
+        new_timestamp
+    );
+    
+    // Verify the new timestamp is recent (within the last second)
+    let now = Utc::now().naive_utc();
+    let diff = now.signed_duration_since(new_timestamp);
+    assert!(
+        diff.num_seconds() < 2,
+        "last_used_at should be very recent. Diff: {} seconds",
+        diff.num_seconds()
+    );
+}
+

@@ -1330,6 +1330,7 @@ name = "gamiscreen-server"
 version = "0.10.1"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "bcrypt",
  "chrono",
  "clap",
