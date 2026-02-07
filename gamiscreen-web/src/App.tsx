@@ -66,10 +66,16 @@ export function App() {
     if (embedded) return
     let cancelled = false
     let timer: number | undefined
+    const startTime = Date.now()
+    const maxDuration = 60000 // 1 minute in milliseconds
     const check = () => {
       if (cancelled) return
       if (isEmbeddedMode()) {
         setEmbedded(true)
+        return
+      }
+      // Stop polling after 1 minute
+      if (Date.now() - startTime >= maxDuration) {
         return
       }
       timer = window.setTimeout(check, 1000)
