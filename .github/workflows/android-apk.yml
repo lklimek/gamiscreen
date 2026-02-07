@@ -51,10 +51,8 @@ jobs:
         working-directory: android
         run: |
           if [[ ! -f gradle/wrapper/gradle-wrapper.jar ]]; then
-            mkdir -p gradle/wrapper
-            curl -L "https://services.gradle.org/distributions/gradle-9.2.0-bin.zip" -o gradle-9.2.0-bin.zip
-            unzip -p gradle-9.2.0-bin.zip gradle-9.2.0/src/gradle/wrapper/gradle-wrapper.jar > gradle/wrapper/gradle-wrapper.jar
-            rm -f gradle-9.2.0-bin.zip
+            echo "gradle/wrapper/gradle-wrapper.jar is missing. Ensure the Gradle wrapper is committed to the repository." >&2
+            exit 1
           fi
           ./gradlew --version
 

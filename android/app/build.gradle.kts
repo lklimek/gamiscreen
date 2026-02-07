@@ -22,35 +22,45 @@ fun readWorkspaceVersion(cargoFile: File?): String {
 }
 
 /**
- * Builds an integer version code using 4 segments: MMM.NNN.PPP.QQQ
+ * Builds an integer version code using 4 segments: MMM.NN.PP.QQ
  *
  *  - MMM: major (0–999)
- *  - NNN: minor (0–999)
- *  - PPP: patch (0–999)
- *  - QQQ: qualifier (0–999) from the trailing number in the qualifier suffix.
- *         If no numeric qualifier is present, defaults to 999 so releases stay highest.
+ *  - NN:  minor (0–99)
+ *  - PP:  patch (0–99)
+ *  - QQ:  qualifier (0–99) from the trailing number in the qualifier suffix.
+ *         If no numeric qualifier is present, defaults to 99 so releases stay highest.
+ *
+ * The resulting versionCode is encoded as: MMMNNPPQQ (e.g. 001020304 for 1.2.3-4)
+ * and is guaranteed to stay below 2,100,000,000.
  */
 fun versionCodeFrom(version: String): Int {
-    fun parseSegment(value: String?): Int = value?.toIntOrNull()?.coerceIn(0, 999) ?: 0
+    fun parseSegment(value: String?, max: Int): Int =
+        value?.toIntOrNull()?.coerceIn(0, max) ?: 0
 
     val (semantic, qualifierSuffix) = version.split("-", limit = 2).let {
         it[0] to it.getOrNull(1)
     }
     val semanticParts = semantic.split(".")
 
-    val major = parseSegment(semanticParts.getOrNull(0))
-    val minor = parseSegment(semanticParts.getOrNull(1))
-    val patch = parseSegment(semanticParts.getOrNull(2))
+    val major = parseSegment(semanticParts.getOrNull(0), 999)
+    val minor = parseSegment(semanticParts.getOrNull(1), 99)
+    val patch = parseSegment(semanticParts.getOrNull(2), 99)
 
     val qualifier = qualifierSuffix
         ?.let { Regex("(\\d+)$").find(it)?.value?.toIntOrNull() }
-        ?.coerceIn(0, 999)
-        ?: 999
+        ?.coerceIn(0, 99)
+        ?: 99
 
-    return major * 1_000_000_000 +
-        minor * 1_000_000 +
-        patch * 1_000 +
+    val versionCode = major * 1_000_000 +
+        minor * 10_000 +
+        patch * 100 +
         qualifier
+
+    if (versionCode !in 0..2_100_000_000) {
+        throw IllegalArgumentException("versionCode $versionCode derived from '$version' is out of allowed range")
+    }
+
+    return versionCode
 }
 
 plugins {
