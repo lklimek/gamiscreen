@@ -8,6 +8,15 @@ use tracing::{error, warn};
 
 use super::{AppError, AppState};
 
+/// How many days of inactivity before a user session is considered expired.
+const USER_SESSION_IDLE_DAYS: i64 = 14;
+/// How many days before mandatory re-login for users.
+const USER_TOKEN_TTL_DAYS: i64 = 30;
+/// How many days of inactivity before a device session is considered expired.
+const DEVICE_SESSION_IDLE_DAYS: i64 = 30;
+/// How many days before mandatory re-login for devices.
+const DEVICE_TOKEN_TTL_DAYS: i64 = 2 * DEVICE_SESSION_IDLE_DAYS;
+
 #[derive(Clone, Debug)]
 pub struct AuthCtx {
     pub claims: JwtClaims,
@@ -62,9 +71,22 @@ pub async fn require_bearer(
         return unauthorized();
     };
     let last = sess.last_used_at;
-    let cutoff = Utc::now() - Duration::days(7);
+    let idle_days = if claims.device_id.is_some() {
+        DEVICE_SESSION_IDLE_DAYS
+    } else {
+        USER_SESSION_IDLE_DAYS
+    };
+    let cutoff = Utc::now() - Duration::days(idle_days);
     if last < cutoff.naive_utc() {
         return unauthorized();
+    }
+    match state.store.touch_session(&jti).await {
+        Ok(true) => {}
+        Ok(false) => return unauthorized(),
+        Err(e) => {
+            error!(jti = %jti, error=%e, "auth: touch_session failed");
+            return Err(AppError::internal(e));
+        }
     }
     let auth = AuthCtx { claims };
     req.extensions_mut().insert(auth);
@@ -80,7 +102,12 @@ pub async fn issue_jwt_for_user(
     tenant_id: &str,
 ) -> Result<String, AppError> {
     let jti = uuid::Uuid::new_v4().to_string();
-    let exp = (Utc::now() + Duration::days(30)).timestamp();
+    let ttl_days = if device_id.is_some() {
+        DEVICE_TOKEN_TTL_DAYS
+    } else {
+        USER_TOKEN_TTL_DAYS
+    };
+    let exp = (Utc::now() + Duration::days(ttl_days)).timestamp();
     let claims = JwtClaims {
         sub: username.to_string(),
         jti: jti.clone(),

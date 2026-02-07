@@ -778,6 +778,7 @@ async fn sse_notifications(
     Query(q): Query<SseQuery>,
 ) -> Result<Sse<impl futures::Stream<Item = Result<Event, std::convert::Infallible>>>, AppError> {
     // Validate token from query
+    // NOTE: SSE auth does not consult or touch the sessions table; it only verifies the JWT.
     let claims = jwt::decode_and_verify(&q.token, state.config.jwt_secret.as_bytes())
         .map_err(|_| AppError::unauthorized())?;
     // Access control

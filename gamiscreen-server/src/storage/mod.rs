@@ -833,6 +833,24 @@ impl Store {
         .await
         .map_err(|e| e.to_string())?
     }
+
+    pub async fn touch_session(&self, jti_: &str) -> Result<bool, String> {
+        use schema::sessions::dsl::*;
+        let pool = self.pool.clone();
+        let j = jti_.to_string();
+        tokio::task::spawn_blocking(move || -> Result<bool, String> {
+            let mut conn = pool.get().map_err(|e| e.to_string())?;
+            configure_sqlite_conn(&mut conn).map_err(|e| format!("pragma error: {e}"))?;
+            let now = Utc::now().naive_utc();
+            let updated = diesel::update(sessions.filter(jti.eq(&j)))
+                .set(last_used_at.eq(now))
+                .execute(&mut conn)
+                .map_err(|e| e.to_string())?;
+            Ok(updated > 0)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
 }
 
 fn configure_sqlite_conn(conn: &mut SqliteConnection) -> Result<(), diesel::result::Error> {
