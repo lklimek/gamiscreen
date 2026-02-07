@@ -66,11 +66,17 @@ export function App() {
     if (embedded) return
     let cancelled = false
     let timer: number | undefined
+    let retryCount = 0
+    const maxRetries = 60 // 1 minute (60 seconds * 1 second interval)
     const check = () => {
       if (cancelled) return
       if (isEmbeddedMode()) {
         setEmbedded(true)
         return
+      }
+      retryCount++
+      if (retryCount >= maxRetries) {
+        return // Stop polling after 1 minute
       }
       timer = window.setTimeout(check, 1000)
     }
