@@ -11,3 +11,4 @@ android/.kotlin/sessions/
 android/keystore
 *.tsbuildinfo
 gamiscreen-web/vite.config.d.ts
+/docs/todos/
