@@ -10,3 +10,4 @@ android/.kotlin/errors/
 android/.kotlin/sessions/
 android/keystore
 *.tsbuildinfo
+gamiscreen-web/*.d.ts
