@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import packageInfo from '../package.json'
 import { getAuthClaims, getServerVersion, getToken, notificationsCount, pushUnsubscribe, renewToken, setToken } from './api'
 const API_V1_PREFIX = '/api/v1'
+const EMBEDDED_MODE_POLL_TIMEOUT_MS = 60000 // 1 minute
 import { ChildDetailsPage } from './pages/ChildDetailsPage'
 import { LoginPage } from './pages/LoginPage'
 import { NotificationsPage } from './pages/NotificationsPage'
@@ -67,15 +68,15 @@ export function App() {
     let cancelled = false
     let timer: number | undefined
     const startTime = Date.now()
-    const maxDuration = 60000 // 1 minute in milliseconds
     const check = () => {
       if (cancelled) return
       if (isEmbeddedMode()) {
         setEmbedded(true)
         return
       }
-      // Stop polling after 1 minute
-      if (Date.now() - startTime >= maxDuration) {
+      // Stop polling after timeout
+      const elapsed = Date.now() - startTime
+      if (elapsed >= EMBEDDED_MODE_POLL_TIMEOUT_MS) {
         return
       }
       timer = window.setTimeout(check, 1000)
