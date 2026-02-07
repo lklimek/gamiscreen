@@ -148,7 +148,7 @@ impl TestServer {
             let manager = diesel::r2d2::ConnectionManager::<SqliteConnection>::new(&db_path_str);
             let pool = diesel::r2d2::Pool::builder().build(manager).unwrap();
             let mut conn = pool.get().unwrap();
-            
+
             let target_time = (Utc::now() - Duration::days(days_ago)).naive_utc();
             diesel::sql_query("UPDATE sessions SET last_used_at = ?1 WHERE jti = ?2")
                 .bind::<diesel::sql_types::Timestamp, _>(target_time)
@@ -169,13 +169,13 @@ impl TestServer {
             let manager = diesel::r2d2::ConnectionManager::<SqliteConnection>::new(&db_path_str);
             let pool = diesel::r2d2::Pool::builder().build(manager).unwrap();
             let mut conn = pool.get().unwrap();
-            
+
             #[derive(QueryableByName)]
             struct SessionTime {
                 #[diesel(sql_type = diesel::sql_types::Timestamp)]
                 last_used_at: chrono::NaiveDateTime,
             }
-            
+
             diesel::sql_query("SELECT last_used_at FROM sessions WHERE jti = ?1")
                 .bind::<diesel::sql_types::Text, _>(&jti_str)
                 .get_result::<SessionTime>(&mut conn)
@@ -283,19 +283,20 @@ fn to_value<T: Serialize>(value: &T) -> Value {
 
 /// Extract the JTI (JWT ID) from a JWT token for testing purposes.
 fn extract_jti_from_token(token: &str) -> String {
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
-    
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+
     // JWT tokens have 3 parts: header.payload.signature
     let parts: Vec<&str> = token.split('.').collect();
     assert_eq!(parts.len(), 3, "Invalid JWT token format");
-    
+
     // Decode the payload (second part)
-    let payload_bytes = URL_SAFE_NO_PAD.decode(parts[1])
+    let payload_bytes = URL_SAFE_NO_PAD
+        .decode(parts[1])
         .expect("Failed to decode JWT payload");
-    let payload_json: Value = serde_json::from_slice(&payload_bytes)
-        .expect("Failed to parse JWT payload");
-    
+    let payload_json: Value =
+        serde_json::from_slice(&payload_bytes).expect("Failed to parse JWT payload");
+
     payload_json["jti"]
         .as_str()
         .expect("JTI not found in token")
@@ -878,11 +879,11 @@ async fn user_session_idle_timeout() {
     let Some(server) = TestServer::spawn().await else {
         return;
     };
-    
+
     // Login as a user (parent)
     let token = server.login("parent", "secret123").await;
     let jti = extract_jti_from_token(&token);
-    
+
     // Verify the session works initially
     server
         .request_expect_status(
@@ -893,10 +894,10 @@ async fn user_session_idle_timeout() {
             StatusCode::OK,
         )
         .await;
-    
+
     // Backdate the session beyond the user idle timeout (14 days)
     server.backdate_session(&jti, 15).await;
-    
+
     // Request should now be unauthorized due to idle timeout
     server
         .request_expect_status(
@@ -914,7 +915,7 @@ async fn device_session_idle_timeout() {
     let Some(server) = TestServer::spawn().await else {
         return;
     };
-    
+
     // Login as a child and register a device
     let child_token = server.login("alice", "kidpass").await;
     let register_resp: api::ClientRegisterResp = server
@@ -931,7 +932,7 @@ async fn device_session_idle_timeout() {
         .await;
     let device_token = register_resp.token;
     let jti = extract_jti_from_token(&device_token);
-    
+
     // Verify the device session works initially
     server
         .request_expect_json::<api::HeartbeatResp>(
@@ -944,10 +945,10 @@ async fn device_session_idle_timeout() {
             StatusCode::OK,
         )
         .await;
-    
+
     // Backdate the session beyond the device idle timeout (30 days)
     server.backdate_session(&jti, 31).await;
-    
+
     // Request should now be unauthorized due to idle timeout
     server
         .request_expect_status(
@@ -967,20 +968,20 @@ async fn authenticated_request_advances_last_used_at_for_user() {
     let Some(server) = TestServer::spawn().await else {
         return;
     };
-    
+
     // Login as a user
     let token = server.login("parent", "secret123").await;
     let jti = extract_jti_from_token(&token);
-    
+
     // Backdate the session to 10 days ago (within the 14-day idle timeout)
     server.backdate_session(&jti, 10).await;
-    
+
     // Get the backdated timestamp
     let old_timestamp = server.get_session_last_used(&jti).await.unwrap();
-    
+
     // Wait a moment to ensure timestamp difference is detectable
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    
+
     // Make an authenticated request
     server
         .request_expect_status(
@@ -991,7 +992,7 @@ async fn authenticated_request_advances_last_used_at_for_user() {
             StatusCode::OK,
         )
         .await;
-    
+
     // Verify that last_used_at was advanced
     let new_timestamp = server.get_session_last_used(&jti).await.unwrap();
     assert!(
@@ -1000,7 +1001,7 @@ async fn authenticated_request_advances_last_used_at_for_user() {
         old_timestamp,
         new_timestamp
     );
-    
+
     // Verify the new timestamp is recent (within the last second)
     let now = Utc::now().naive_utc();
     let diff = now.signed_duration_since(new_timestamp);
@@ -1016,7 +1017,7 @@ async fn authenticated_request_advances_last_used_at_for_device() {
     let Some(server) = TestServer::spawn().await else {
         return;
     };
-    
+
     // Login as a child and register a device
     let child_token = server.login("alice", "kidpass").await;
     let register_resp: api::ClientRegisterResp = server
@@ -1033,16 +1034,16 @@ async fn authenticated_request_advances_last_used_at_for_device() {
         .await;
     let device_token = register_resp.token;
     let jti = extract_jti_from_token(&device_token);
-    
+
     // Backdate the session to 20 days ago (within the 30-day device idle timeout)
     server.backdate_session(&jti, 20).await;
-    
+
     // Get the backdated timestamp
     let old_timestamp = server.get_session_last_used(&jti).await.unwrap();
-    
+
     // Wait a moment to ensure timestamp difference is detectable
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    
+
     // Make an authenticated request
     server
         .request_expect_json::<api::HeartbeatResp>(
@@ -1055,7 +1056,7 @@ async fn authenticated_request_advances_last_used_at_for_device() {
             StatusCode::OK,
         )
         .await;
-    
+
     // Verify that last_used_at was advanced
     let new_timestamp = server.get_session_last_used(&jti).await.unwrap();
     assert!(
@@ -1064,7 +1065,7 @@ async fn authenticated_request_advances_last_used_at_for_device() {
         old_timestamp,
         new_timestamp
     );
-    
+
     // Verify the new timestamp is recent (within the last second)
     let now = Utc::now().naive_utc();
     let diff = now.signed_duration_since(new_timestamp);
@@ -1074,4 +1075,3 @@ async fn authenticated_request_advances_last_used_at_for_device() {
         diff.num_seconds()
     );
 }
-
