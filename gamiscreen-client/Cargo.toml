@@ -7,7 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-tokio = { version = "1", features = [
+tokio = { version = "1.49.0", features = [
     "rt-multi-thread",
     "macros",
     "time",
@@ -18,41 +18,41 @@ tokio = { version = "1", features = [
 #     "json",
 #     "rustls-tls",
 # ] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-serde_yaml = "0.9"
-thiserror = "2"
-directories = "6"
-clap = { version = "4", features = ["derive"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-futures-util = { version = "0.3", default-features = false, features = [
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+serde_yaml = "0.9.34-deprecated"
+thiserror = "2.0.18"
+directories = "6.0.0"
+clap = { version = "4.5.57", features = ["derive"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["fmt", "env-filter"] }
+futures-util = { version = "0.3.31", default-features = false, features = [
     "sink",
     "std",
 ] }
-url = "2"
-rpassword = "7"
-uuid = { version = "1", features = ["v4"] }
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
-async-trait = "0.1"
-tinytemplate = "1.2"
-semver = "1"
-sha2 = "0.10"
-hex = "0.4"
-reqwest = { version = "0.12", default-features = false, features = [
+url = "2.5.8"
+rpassword = "7.4.0"
+uuid = { version = "1.20.0", features = ["v4"] }
+chrono = { version = "0.4.43", default-features = false, features = ["clock"] }
+async-trait = "0.1.89"
+tinytemplate = "1.2.1"
+semver = "1.0.27"
+sha2 = "0.10.9"
+hex = "0.4.3"
+reqwest = { version = "0.13.2", default-features = false, features = [
     "json",
-    "rustls-tls",
+    "rustls",
 ] }
-reqwest-eventsource = "0.6"
+reqwest-eventsource = "0.6.0"
 gamiscreen-shared = { path = "../gamiscreen-shared", features = [
     "rest-client",
 ] }
-tokio-util = { version = "0.7" }
-zip = { version = "5.1.1", default-features = false, features = ["deflate"] }
-tempfile = "3.22.0"
+tokio-util = { version = "0.7.18" }
+zip = { version = "7.4.0", default-features = false, features = ["deflate"] }
+tempfile = "3.24.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.61.0", features = [
+windows-sys = { version = "0.61.2", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_Graphics_Gdi",
     "Win32_System_StationsAndDesktops",
@@ -66,14 +66,17 @@ windows-sys = { version = "0.61.0", features = [
     "Win32_Foundation",
     "Win32_System_Services",
 ] }
-keyring = { version = "3", features = ["windows-native"] }
+keyring = { version = "3.6.3", features = ["windows-native"] }
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
-zbus = { version = "5.11.0", default-features = false, features = ["tokio"] }
-zbus_names = "4.2"
-nix = "0.30"
-notify-rust = { version = "4.11.7" }
-keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
+zbus = { version = "5.13.2", default-features = false, features = ["tokio"] }
+zbus_names = "4.3.1"
+nix = "0.31.1"
+notify-rust = { version = "4.12.0" }
+keyring = { version = "3.6.3", features = [
+    "sync-secret-service",
+    "crypto-rust",
+] }
 
 [[bin]]
 name = "gamiscreen-client"
