@@ -164,8 +164,21 @@ jobs:
             ${{ steps.apk.outputs.apk_path }}
             ${{ steps.bundle.outputs.bundle_path }}
 
+      - name: Check Google Play credentials
+        id: check_play_creds
+        if: github.event_name == 'release' && env.BUILD_TYPE == 'release'
+        env:
+          GOOGLE_PLAY_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+        run: |
+          if [[ -n "$GOOGLE_PLAY_JSON" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Google Play credentials not available, skipping publish"
+          fi
+
       - name: Publish to Google Play internal testing
-        if: github.event_name == 'release' && env.BUILD_TYPE == 'release' && secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON != ''
+        if: github.event_name == 'release' && env.BUILD_TYPE == 'release' && steps.check_play_creds.outputs.available == 'true'
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}

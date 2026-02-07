@@ -149,11 +149,15 @@ export function getAuthClaims(): JwtClaims | null {
   }
 }
 
+// Helper to get environment variables
+function getEnv() {
+  return (import.meta as any).env || {}
+}
+
 // Helper to check if debug logging should be enabled
 function isDebugEnabled(): boolean {
-  const env = (import.meta as any).env || {}
   // In Vite, import.meta.env.PROD is true for production builds
-  return !env.PROD
+  return !getEnv().PROD
 }
 
 function apiBase(): string {
@@ -172,7 +176,7 @@ function apiBase(): string {
     }
     return ls.replace(/\/+$/, '')
   }
-  const env = (import.meta as any).env || {}
+  const env = getEnv()
   const v = env.VITE_API_BASE_URL || ''
   if (v) {
     if (isDebugEnabled()) {
