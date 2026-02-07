@@ -60,48 +60,47 @@ type TokenStore = {
   set(token: string | null): void
 }
 
-const tokenStore: TokenStore = createTokenStore()
-
-function createTokenStore(): TokenStore {
-  const bridge = getNativeBridge()
-  if (bridge) {
-    return {
-      get: () => {
-        try {
-          const value = bridge.getAuthToken()
-          return normalizeToken(value)
-        } catch (err) {
-          console.warn('native bridge getAuthToken failed', err)
-          return null
-        }
-      },
-      set: (token) => {
-        try {
-          bridge.setAuthToken(token ?? null)
-        } catch (err) {
-          console.warn('native bridge setAuthToken failed', err)
-        }
-      },
-    }
-  }
-
-  return {
-    get: () => {
+// Lazy token store that resolves the native bridge on each access
+// This ensures token persistence is consistent even if the bridge
+// becomes available after module load (e.g., in embedded mode)
+const tokenStore: TokenStore = {
+  get: () => {
+    const bridge = getNativeBridge()
+    if (bridge) {
       try {
-        return localStorage.getItem(TOKEN_KEY)
-      } catch {
+        const value = bridge.getAuthToken()
+        return normalizeToken(value)
+      } catch (err) {
+        console.warn('native bridge getAuthToken failed', err)
         return null
       }
-    },
-    set: (token) => {
+    }
+
+    try {
+      return localStorage.getItem(TOKEN_KEY)
+    } catch {
+      return null
+    }
+  },
+  set: (token) => {
+    const bridge = getNativeBridge()
+    if (bridge) {
       try {
-        if (token) localStorage.setItem(TOKEN_KEY, token)
-        else localStorage.removeItem(TOKEN_KEY)
-      } catch {
-        // ignore storage errors
+        bridge.setAuthToken(token ?? null)
+        return // Successfully saved to bridge, don't use localStorage
+      } catch (err) {
+        console.warn('native bridge setAuthToken failed', err)
+        // Fall through to localStorage as fallback
       }
-    },
-  }
+    }
+
+    try {
+      if (token) localStorage.setItem(TOKEN_KEY, token)
+      else localStorage.removeItem(TOKEN_KEY)
+    } catch {
+      // ignore storage errors
+    }
+  },
 }
 
 function normalizeToken(value: string | null | undefined): string | null {
