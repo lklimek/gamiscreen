@@ -319,9 +319,12 @@ private fun WebSettings.applyWebDefaults() {
 
 private fun configureServiceWorkers() {
     ServiceWorkerController.getInstance().serviceWorkerWebSettings.apply {
-        setAllowContentAccess(true)
-        setAllowFileAccess(true)
+        // Service workers need network access for caching and fetch API
         setBlockNetworkLoads(false)
+        // File and content access are disabled for security - not needed since
+        // assets are served via https:// URLs through WebViewAssetLoader
+        setAllowFileAccess(false)
+        setAllowContentAccess(false)
     }
 }
 
