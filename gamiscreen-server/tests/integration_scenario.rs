@@ -150,13 +150,11 @@ impl TestServer {
             let mut conn = pool.get().unwrap();
             
             let target_time = (Utc::now() - Duration::days(days_ago)).naive_utc();
-            diesel::sql_query(format!(
-                "UPDATE sessions SET last_used_at = '{}' WHERE jti = '{}'",
-                target_time.format("%Y-%m-%d %H:%M:%S%.f"),
-                jti_str
-            ))
-            .execute(&mut conn)
-            .unwrap();
+            diesel::sql_query("UPDATE sessions SET last_used_at = ?1 WHERE jti = ?2")
+                .bind::<diesel::sql_types::Timestamp, _>(target_time)
+                .bind::<diesel::sql_types::Text, _>(&jti_str)
+                .execute(&mut conn)
+                .unwrap();
         })
         .await
         .unwrap();
@@ -178,14 +176,12 @@ impl TestServer {
                 last_used_at: chrono::NaiveDateTime,
             }
             
-            diesel::sql_query(format!(
-                "SELECT last_used_at FROM sessions WHERE jti = '{}'",
-                jti_str
-            ))
-            .get_result::<SessionTime>(&mut conn)
-            .optional()
-            .unwrap()
-            .map(|s| s.last_used_at)
+            diesel::sql_query("SELECT last_used_at FROM sessions WHERE jti = ?1")
+                .bind::<diesel::sql_types::Text, _>(&jti_str)
+                .get_result::<SessionTime>(&mut conn)
+                .optional()
+                .unwrap()
+                .map(|s| s.last_used_at)
         })
         .await
         .unwrap()
