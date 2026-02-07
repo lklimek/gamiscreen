@@ -1,0 +1,51 @@
+name: Tests
+
+on:
+  pull_request:
+    branches: ["*"]
+
+permissions:
+  contents: read
+
+jobs:
+  rust-tests:
+    name: Rust Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libdbus-1-dev libsqlite3-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run tests
+        env:
+          SKIP_WEB_BUILD: "1"
+        run: cargo test --workspace
+
+  web-build:
+    name: Web Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: gamiscreen-web/package-lock.json
+
+      - name: Install deps
+        working-directory: gamiscreen-web
+        run: npm ci
+
+      - name: Build
+        working-directory: gamiscreen-web
+        run: npm run build
