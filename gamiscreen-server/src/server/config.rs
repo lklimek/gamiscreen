@@ -261,12 +261,12 @@ tasks:
 
         assert_eq!(
             mapping
-                .get(&Value::String("tenant_id".into()))
+                .get(Value::String("tenant_id".into()))
                 .and_then(Value::as_str),
             Some("first")
         );
         let version = mapping
-            .get(&Value::String("config_version".into()))
+            .get(Value::String("config_version".into()))
             .and_then(Value::as_str)
             .and_then(|s| Version::parse(s).ok());
         let current = Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
@@ -282,9 +282,9 @@ tasks:
 
         assert!(matches!(
             mapping
-                .get(&Value::String("push".into()))
+                .get(Value::String("push".into()))
                 .and_then(Value::as_mapping),
-            Some(push_map) if push_map.get(&Value::String("enabled".into())) == Some(&Value::Bool(false))
+            Some(push_map) if push_map.get(Value::String("enabled".into())) == Some(&Value::Bool(false))
         ));
     }
 }

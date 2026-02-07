@@ -4,17 +4,18 @@
 - Run `make fmt` before committing any changes to ensure proper code formatting
 - This will run gofmt on all Go files to maintain consistent style
 
-### Development Flow
-- Analysis:
-  -  evaluate provided task and ask clarifying questions if needed
-  - review documents in docs/, 
-  - review existing code, 
-  - find design patterns that apply for the task
-  -  generate a new file in docs/todos/ with a  TODO list (markdown format with checkboxes)
-- Implementation
-- Code quality always use `cargo clippy`, `cargo fmt` and   `cargo test` or equivalent tools
-- Documentation: review README.md and  in docs/*.md and update them accordingly
-- Final self-review: check all the changes, verify if new code doesn't duplicate existing functions, find and report any gaps
+### Development Flow - keep the order:
+1. Before writing any code:
+  1. evaluate provided request and ask clarifying questions if needed
+  2. review documents in docs/, 
+  3. review existing code, 
+  4. find design patterns already in use in the code that can be used
+  5. identify tasks to execute and write them don in docs/todos/ (markdown formatted TODO list with checkboxes)
+2. Iterate on the identified tasks, marking completed as done in the todo file
+3. Check code quality with `cargo clippy`, `cargo +nightly fmt` and  `cargo test` or equivalent tools
+4. Update documentation: review README.md and  in docs/*.md and update them accordingly
+5. Final self-review: check all the changes, verify if new code doesn't duplicate existing functions, find and report any gaps
+
 
 ## Repository Structure
 - android/ - Android app (embedding gamiscreen-web)

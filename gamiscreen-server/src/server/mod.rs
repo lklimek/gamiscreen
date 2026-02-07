@@ -241,7 +241,7 @@ pub fn router(state: AppState) -> Router {
             .filter_map(|s| header::HeaderValue::from_str(s).ok())
             .collect();
         let embedded_host = header::HeaderValue::from_static("https://gamiscreen.klimek.ws");
-        if !origins.iter().any(|hv| hv == &embedded_host) {
+        if !origins.contains(&embedded_host) {
             origins.push(embedded_host);
         }
         if origins.is_empty() {

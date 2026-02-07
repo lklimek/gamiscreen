@@ -347,14 +347,12 @@ impl PendingMinutes {
                 changed = true;
             }
         }
-        if changed {
-            if let Err(e) = self.save() {
-                // put minutes back so we don't lose data if save fails
-                for minute in sent {
-                    self.minutes.insert(*minute);
-                }
-                return Err(e);
+        if changed && let Err(e) = self.save() {
+            // put minutes back so we don't lose data if save fails
+            for minute in sent {
+                self.minutes.insert(*minute);
             }
+            return Err(e);
         }
         Ok(())
     }
@@ -621,11 +619,12 @@ impl ReLocker {
             loop {
                 match platform.is_session_locked().await {
                     Ok(false) => {
-                        if let Some(secs) = remaining_secs_for_task {
-                            if secs <= 0 && !negative_notified {
-                                platform.update_notification(secs).await;
-                                negative_notified = true;
-                            }
+                        if let Some(secs) = remaining_secs_for_task
+                            && secs <= 0
+                            && !negative_notified
+                        {
+                            platform.update_notification(secs).await;
+                            negative_notified = true;
                         }
                         let wait = Self::relock_delay(initial_lock_at);
                         if !wait.is_zero() {
