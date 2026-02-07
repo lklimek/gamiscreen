@@ -22,7 +22,7 @@ serde_yaml = "0.9"
 tower-http = { version = "0.6.6", features = ["cors", "trace", "fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-time = { version = "0.3.44", features = ["macros", "serde"] }
+time = { version = "0.3.47", features = ["macros", "serde"] }
 diesel = { version = "2.1.6", features = ["sqlite", "chrono", "r2d2"] }
 diesel_migrations = "2.1.0"
 chrono = { version = "0.4.42", features = ["serde"] }
