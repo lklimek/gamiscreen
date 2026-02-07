@@ -74,8 +74,7 @@ fn export_runtime_dir(runtime: &Path) {
 
 fn build_bus_address(runtime: &Path) -> Option<String> {
     let bus = runtime.join("bus");
-    bus.exists()
-        .then(|| format!("unix:path={}", bus.display()))
+    bus.exists().then(|| format!("unix:path={}", bus.display()))
 }
 
 #[async_trait::async_trait]
