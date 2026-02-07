@@ -22,7 +22,7 @@ fun readWorkspaceVersion(cargoFile: File?): String {
 }
 
 /**
- * Builds an integer version code using 4 segments: MMM.NN.PP.QQ
+ * Builds an integer version code using 4 segments: MMM.NN.PP.QQ.
  *
  *  - MMM: major (0–999)
  *  - NN:  minor (0–99)
@@ -73,7 +73,8 @@ plugins {
 val embeddedPwaDir = layout.projectDirectory.dir("../../gamiscreen-web/dist")
 val workspaceRoot = rootProject.projectDir.parentFile
 val workspaceVersion = readWorkspaceVersion(workspaceRoot?.resolve("Cargo.toml"))
-val workspaceVersionCode = versionCodeFrom(workspaceVersion)
+val versionCodeOffset = 1_000_000_000
+val workspaceVersionCode = versionCodeFrom(workspaceVersion) + versionCodeOffset
 val signingKeystorePath = System.getenv("ANDROID_SIGNING_KEYSTORE")?.takeIf { it.isNotBlank() }
 val signingKeystorePassword = System.getenv("ANDROID_SIGNING_KEYSTORE_PASSWORD")
 val signingKeyAlias = System.getenv("ANDROID_SIGNING_KEY_ALIAS")
