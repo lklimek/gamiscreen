@@ -11,17 +11,13 @@ name: Claude Code
   pull_request_review:
     types: [submitted]
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.issue.number || github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
-
 jobs:
   claude:
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
-      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claudius')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claudius')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claudius')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claudius') || contains(github.event.issue.title, '@claudius')))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -41,6 +37,7 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: "https://github.com/lklimek/claudius.git"
+          trigger_phrase: "@claudius"
           plugins: "claudius@claudius"
           claude_args: |
             --model opus
