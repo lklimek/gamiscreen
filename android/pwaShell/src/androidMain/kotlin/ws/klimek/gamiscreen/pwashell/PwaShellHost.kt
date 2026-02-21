@@ -311,7 +311,10 @@ private fun WebSettings.applyWebDefaults() {
     displayZoomControls = false
     useWideViewPort = true
     loadWithOverviewMode = true
-    mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+    // Block all mixed HTTP content within HTTPS pages to prevent MITM attacks.
+    // The app exclusively uses HTTPS for both API (https://gamiscreen.klimek.ws:443)
+    // and embedded assets (https://gamiscreen.klimek.ws/android-assets/).
+    mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
     userAgentString = buildString {
         val baseAgent = userAgentString
         append(baseAgent)
