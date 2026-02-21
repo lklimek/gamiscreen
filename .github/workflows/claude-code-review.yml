@@ -33,6 +33,7 @@ jobs:
           plugins: "claudius@claudius"
           prompt: |
             Use claudius:personality skill.
+            Build a team of review agents, including but not limited to: claudius:code-reviewer, claudius:security-engineer.
 
             Review this pull request. Focus on:
             - Code quality and best practices
@@ -41,7 +42,7 @@ jobs:
             - Performance considerations
 
             Before posting any comments:
-            1. Fetch all existing review comments on this PR (use `gh api` to list PR comments and inline comments).
+            1. Fetch all existing review comments on this PR (including PR comments and inline comments). 
             2. For each existing comment, check whether it still applies to the current diff. If the issue has been fixed or is no longer relevant AND it was created by @claude, resolve the comment thread.
             3. Do not create a new comment if an existing comment already covers the same issue on the same code location.
 
@@ -49,6 +50,6 @@ jobs:
             Use `mcp__github_inline_comment__create_inline_comment` for specific code issues.
             Only post GitHub comments - don't submit review text as messages.
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment *),Bash(gh pr diff *),Bash(gh pr view *)
             --model opus
             --max-turns 30
