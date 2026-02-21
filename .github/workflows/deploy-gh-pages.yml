@@ -1,8 +1,9 @@
+---
 name: Deploy Web to GitHub Pages
 
-on:
+"on":
   push:
-    branches: [ main, master ]
+    branches: [main, master]
     paths:
       - 'gamiscreen-web/**'
       - '.github/workflows/deploy-gh-pages.yml'
@@ -59,4 +60,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-

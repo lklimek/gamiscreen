@@ -1,6 +1,7 @@
+---
 name: Build Android APK
 
-on:
+"on":
   push:
     branches:
       # TODO: remove before merging to master, we don't want to build on every push, only when version is changed
@@ -83,7 +84,7 @@ jobs:
         with:
           path: |
             android/.gradle/configuration-cache
-            ~/.gradle/caches/jars-* 
+            ~/.gradle/caches/jars-*
             ~/.gradle/caches/build-cache-*
           key: gradle-config-${{ runner.os }}-${{ github.ref }}-${{ hashFiles('android/**/build.gradle*', 'android/**/gradle-wrapper.properties') }}
           restore-keys: |
