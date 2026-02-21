@@ -20,7 +20,7 @@ pub enum StorageError {
 
     /// Failed to acquire or build a connection from the pool.
     #[error("pool error: {0}")]
-    Pool(#[from] diesel::r2d2::Error),
+    Pool(#[from] diesel::r2d2::PoolError),
 
     /// A `spawn_blocking` task panicked or was cancelled.
     #[error("task error: {0}")]
@@ -122,7 +122,9 @@ impl Store {
         tokio::task::spawn_blocking(move || -> Result<Vec<Child>, StorageError> {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
-            Ok(children.order(display_name.asc()).load::<Child>(&mut conn)?)
+            Ok(children
+                .order(display_name.asc())
+                .load::<Child>(&mut conn)?)
         })
         .await?
     }
@@ -252,17 +254,15 @@ impl Store {
         let pool = self.pool.clone();
         let tenant_owned = tenant_id.to_string();
         let endpoint_owned = endpoint.to_string();
-        tokio::task::spawn_blocking(
-            move || -> Result<Option<PushSubscription>, StorageError> {
-                let mut conn = pool.get()?;
-                configure_sqlite_conn(&mut conn)?;
-                Ok(ps::push_subscriptions
-                    .filter(ps::tenant_id.eq(&tenant_owned))
-                    .filter(ps::endpoint.eq(&endpoint_owned))
-                    .first::<PushSubscription>(&mut conn)
-                    .optional()?)
-            },
-        )
+        tokio::task::spawn_blocking(move || -> Result<Option<PushSubscription>, StorageError> {
+            let mut conn = pool.get()?;
+            configure_sqlite_conn(&mut conn)?;
+            Ok(ps::push_subscriptions
+                .filter(ps::tenant_id.eq(&tenant_owned))
+                .filter(ps::endpoint.eq(&endpoint_owned))
+                .first::<PushSubscription>(&mut conn)
+                .optional()?)
+        })
         .await?
     }
 
@@ -393,9 +393,7 @@ impl Store {
                 configure_sqlite_conn(&mut conn)?;
                 // Fetch tasks
                 use crate::storage::schema::tasks::dsl as t;
-                let ts = t::tasks
-                    .order(t::name.asc())
-                    .load::<Task>(&mut conn)?;
+                let ts = t::tasks.order(t::name.asc()).load::<Task>(&mut conn)?;
                 // Fetch last done per task for child using Diesel aggregates
                 use diesel::dsl::max;
 
@@ -481,9 +479,7 @@ impl Store {
         tokio::task::spawn_blocking(move || -> Result<i64, StorageError> {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
-            Ok(ts::task_submissions
-                .count()
-                .get_result(&mut conn)?)
+            Ok(ts::task_submissions.count().get_result(&mut conn)?)
         })
         .await?
     }
@@ -500,7 +496,7 @@ impl Store {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
             let mut approved_child: Option<String> = None;
-            conn.immediate_transaction(|conn| {
+            conn.immediate_transaction(|conn| -> Result<(), StorageError> {
                 // Fetch submission with task info
                 let rec: Option<(String, String, i32, String)> = task_submissions::table
                     .inner_join(tasks::table.on(tasks::id.eq(task_submissions::task_id)))
@@ -639,8 +635,7 @@ impl Store {
                 .execute(&mut conn)?;
             Ok(())
         })
-        .await??;
-        Ok(())
+        .await?
     }
 
     pub async fn process_usage_minutes(
@@ -679,9 +674,7 @@ impl Store {
             }
             Ok(())
         })
-        .await??;
-
-        Ok(())
+        .await?
     }
 
     pub async fn list_usage_minutes(
@@ -779,8 +772,7 @@ impl Store {
         tokio::task::spawn_blocking(move || -> Result<bool, StorageError> {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
-            let deleted = diesel::delete(sessions.filter(jti.eq(&j)))
-                .execute(&mut conn)?;
+            let deleted = diesel::delete(sessions.filter(jti.eq(&j))).execute(&mut conn)?;
             Ok(deleted > 0)
         })
         .await?
