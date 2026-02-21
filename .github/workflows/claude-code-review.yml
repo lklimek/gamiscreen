@@ -26,7 +26,7 @@ jobs:
           plugin_marketplaces: "https://github.com/lklimek/claudius.git"
           plugins: "claudius@claudius"
           prompt: |
-            Use claudius:personality skill to communicate with the user.
+            Use claudius:personality skill.
 
             Review this pull request. Focus on:
             - Code quality and best practices
