@@ -6,6 +6,14 @@ Gamiscreen is a self-hosted parental control app that gamifies screen time. Pare
 minutes for completed tasks; children see remaining time at a glance. The Linux client
 enforces limits locally, even when the server is offline.
 
+## Workflow guidelines
+
+- Work in a team.
+- Check project architecture before doing any changes, to find best place for the changes.
+- When coding, follow best practices. Always lint and format your code.
+- Run code quality review and security review before concluding your work, and address findings.
+- Clearly communicate decisions and possible implications in a task summary.
+
 ## Tech Stack
 
 - **Server & Clients**: Rust (edition 2024, MSRV 1.91)

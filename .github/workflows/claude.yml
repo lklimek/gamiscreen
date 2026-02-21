@@ -41,3 +41,4 @@ jobs:
           claude_args: |
             --model opus
             --max-turns 50
+            --system-prompt "Always use the claudius:personality skill when communicating with the user."
