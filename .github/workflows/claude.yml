@@ -39,5 +39,5 @@ jobs:
           plugin_marketplaces: "https://github.com/lklimek/claudius.git"
           plugins: "claudius@claudius"
           claude_args: |
-            --model opus
+            --model ${{ vars.CLAUDE_MODEL }}
             --max-turns 50
