@@ -35,7 +35,6 @@
       "Bash(./scripts/build-windows-client.sh*)",
       "Bash(bash scripts/android_ci.sh*)",
       "Bash(bash scripts/build-windows-client.sh*)",
-      "Bash(bash scripts/*)",
       "Bash(./gradlew *)",
       "Bash(cd android && ./gradlew*)",
       "Bash(docker build -t *)",
@@ -43,7 +42,6 @@
       "Bash(docker build .)",
       "Bash(docker buildx build -t *)",
       "Bash(docker buildx build --tag *)",
-      "Bash(docker buildx build*)",
       "Bash(git status*)",
       "Bash(git diff*)",
       "Bash(git log*)",
@@ -95,7 +93,9 @@
       "Bash(gh api repos/lklimek/gamiscreen/releases*)",
       "Bash(gh pr comment*)",
       "Bash(gh pr review*)",
-      "Bash(gh issue comment*)"
+      "Bash(gh issue comment*)",
+      "Bash(gh pr create*)",
+      "Bash(gh issue create*)"
     ],
     "deny": [
       "Bash(git push --force)",
