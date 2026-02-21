@@ -41,9 +41,9 @@ jobs:
             - Performance considerations
 
             Before posting any comments:
-            1. Fetch all existing review comments on this PR authored by @claude (use `gh api` to list PR comments and inline comments).
-            2. For each existing @claude comment, check whether it still applies to the current diff. If the issue has been fixed or is no longer relevant, resolve the comment thread.
-            3. Do not create a new comment if an existing @claude comment already covers the same issue on the same code location.
+            1. Fetch all existing review comments on this PR (use `gh api` to list PR comments and inline comments).
+            2. For each existing comment, check whether it still applies to the current diff. If the issue has been fixed or is no longer relevant AND it was created by @claude, resolve the comment thread.
+            3. Do not create a new comment if an existing comment already covers the same issue on the same code location.
 
             Use `gh pr comment` for top-level feedback.
             Use `mcp__github_inline_comment__create_inline_comment` for specific code issues.
