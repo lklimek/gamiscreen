@@ -23,7 +23,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          plugin_marketplaces: "https://github.com/lklimek/claudius"
+          plugin_marketplaces: "https://github.com/lklimek/claudius.git"
           plugins: "claudius@claudius"
           prompt: |
             Use claudius:personality skill to communicate with the user.
