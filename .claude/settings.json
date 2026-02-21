@@ -54,7 +54,6 @@
       "Bash(git fetch*)",
       "Bash(git pull*)",
       "Bash(git push origin HEAD*)",
-      "Bash(git push origin master*)",
       "Bash(git push origin claude/*)",
       "Bash(git push --set-upstream*)",
       "Bash(git push -u *)",
@@ -88,10 +87,20 @@
       "Bash(gh status*)",
       "Bash(gh auth status*)",
       "Bash(gh label list*)",
-      "Bash(gh api *)",
+      "Bash(gh api repos/*/pulls/*/comments*)",
+      "Bash(gh api repos/*/pulls/*/reviews*)",
+      "Bash(gh api repos/*/issues/*/comments*)",
+      "Bash(gh api repos/*/commits/*/status*)",
+      "Bash(gh api repos/*/actions/runs*)",
+      "Bash(gh api repos/*/releases*)",
       "Bash(gh pr comment*)",
       "Bash(gh pr review*)",
       "Bash(gh issue comment*)"
+    ],
+    "deny": [
+      "Bash(git push --force)",
+      "Bash(git push --delete)",
+      "Bash(docker --push)"
     ]
   }
 }
