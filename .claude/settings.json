@@ -7,7 +7,6 @@
       "Bash(cargo check*)",
       "Bash(cargo +nightly fmt*)",
       "Bash(cargo fmt*)",
-      "Bash(cargo run*)",
       "Bash(cargo doc*)",
       "Bash(cargo clean*)",
       "Bash(cargo add*)",
@@ -53,7 +52,10 @@
       "Bash(gh status*)",
       "Bash(gh auth status*)",
       "Bash(gh label list*)",
-      "Bash(gh api *)"
+      "Bash(gh api *)",
+      "Bash(gh pr comment*)",
+      "Bash(gh pr review*)",
+      "Bash(gh issue comment*)"
     ]
   }
 }
