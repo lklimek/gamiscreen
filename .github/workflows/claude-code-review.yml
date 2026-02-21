@@ -3,10 +3,15 @@ name: Claude Code Review
 
 "on":
   pull_request:
-    types: [opened, synchronize]
+    types: [opened, synchronize, ready_for_review]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   review:
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -22,11 +27,13 @@ jobs:
         id: claude-review
         uses: anthropics/claude-code-action@v1
         with:
+          use_sticky_comment: true
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: "https://github.com/lklimek/claudius.git"
           plugins: "claudius@claudius"
           prompt: |
             Use claudius:personality skill.
+            Build a team of review agents, including but not limited to: claudius:code-reviewer, claudius:security-engineer.
 
             Review this pull request. Focus on:
             - Code quality and best practices
@@ -34,11 +41,15 @@ jobs:
             - Security implications
             - Performance considerations
 
+            Before posting any comments:
+            1. Fetch all existing review comments on this PR (including PR comments and inline comments). 
+            2. For each existing comment, check whether it still applies to the current diff. If the issue has been fixed or is no longer relevant AND it was created by @claude, resolve the comment thread.
+            3. Do not create a new comment if an existing comment already covers the same issue on the same code location.
+
             Use `gh pr comment` for top-level feedback.
             Use `mcp__github_inline_comment__create_inline_comment` for specific code issues.
             Only post GitHub comments - don't submit review text as messages.
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment *),Bash(gh pr diff *),Bash(gh pr view *)
             --model opus
             --max-turns 30
-            --system-prompt "Always use the claudius:personality skill when communicating with the user."
