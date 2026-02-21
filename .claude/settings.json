@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo build*)",
+      "Bash(cargo test*)",
+      "Bash(cargo clippy*)",
+      "Bash(cargo check*)",
+      "Bash(cargo +nightly fmt*)",
+      "Bash(cargo fmt*)",
+      "Bash(cargo run*)",
+      "Bash(cargo doc*)",
+      "Bash(cargo clean*)",
+      "Bash(cargo add*)",
+      "Bash(cargo remove*)",
+      "Bash(rustup *)",
+      "Bash(npm install*)",
+      "Bash(npm ci*)",
+      "Bash(npm run *)",
+      "Bash(npm run build*)",
+      "Bash(npm run dev*)",
+      "Bash(npm run preview*)",
+      "Bash(npx *)",
+      "Bash(tsc *)",
+      "Bash(cd gamiscreen-web*)",
+      "Bash(./scripts/*)",
+      "Bash(bash scripts/*)",
+      "Bash(./gradlew *)",
+      "Bash(cd android && ./gradlew*)",
+      "Bash(docker build*)",
+      "Bash(docker buildx build*)",
+      "Bash(git *)",
+      "Bash(gh *)"
+    ]
+  }
+}
