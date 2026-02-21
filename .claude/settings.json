@@ -105,9 +105,20 @@
       "WebFetch"
     ],
     "deny": [
-      "Bash(git push --force)",
-      "Bash(git push --delete)",
-      "Bash(docker --push)"
+      "Bash(git push*--force*)",
+      "Bash(git push*--force-with-lease*)",
+      "Bash(git push*--force-if-includes*)",
+      "Bash(git push*-f *)",
+      "Bash(git push*-f)",
+      "Bash(git push*+*:*)",
+      "Bash(git push*--delete*)",
+      "Bash(git push*-d *)",
+      "Bash(git push origin :*)",
+      "Bash(git reset --hard*)",
+      "Bash(git clean -f*)",
+      "Bash(git branch -D *)",
+      "Bash(docker push*)",
+      "Bash(docker buildx*--push*)"
     ]
   }
 }
