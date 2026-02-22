@@ -51,11 +51,32 @@ cd gamiscreen-web && npm run dev
 
 System dependencies for building: `pkg-config`, `libdbus-1-dev`, `libsqlite3-dev`.
 
+### Installing Dependencies
+
+Dependencies are split into per-technology scripts under `scripts/`:
+
+| Script | What it installs | When to run |
+|---|---|---|
+| `install-deps-system.sh` | System packages (`pkg-config`, `libdbus-1-dev`, `libsqlite3-dev`) | Auto-run at session start |
+| `install-deps-rust.sh` | Rust nightly toolchain (for `cargo +nightly fmt`) | Auto-run at session start |
+| `install-deps-web.sh` | npm dependencies for `gamiscreen-web` | Before working on the web UI |
+| `install-deps.sh` | All of the above (convenience wrapper) | Manual — do **not** run on every session |
+
+The SessionStart hook automatically runs the system and Rust scripts. Run the
+web or Android scripts only when you need them.
+
 ## Code Quality Checklist (before every commit)
 
 1. `cargo +nightly fmt`
 2. `cargo clippy --workspace`
 3. `cargo test --workspace`
+
+## Environment Issues
+
+If the build environment is missing dependencies or has technical issues that prevent
+running tests or linting, **commit and push your changes anyway**. Do not let environment
+problems block your work — note the issue in the commit message or PR description and
+move on.
 
 ## Conventions
 

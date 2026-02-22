@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "./scripts/install-deps.sh"
+            "command": "./scripts/install-deps-system.sh && ./scripts/install-deps-rust.sh"
           }
         ]
       }
@@ -121,7 +121,13 @@
       "Bash(*gh-pr-base-sha.sh *)",
       "Bash(*diff-anchors.py *)",
       "Bash(./scripts/install-deps.sh*)",
+      "Bash(./scripts/install-deps-system.sh*)",
+      "Bash(./scripts/install-deps-rust.sh*)",
+      "Bash(./scripts/install-deps-web.sh*)",
       "Bash(bash scripts/install-deps.sh*)",
+      "Bash(bash scripts/install-deps-system.sh*)",
+      "Bash(bash scripts/install-deps-rust.sh*)",
+      "Bash(bash scripts/install-deps-web.sh*)",
       "Bash(sudo apt-get update*)",
       "Bash(sudo apt-get install*)",
       "Bash(rustup toolchain install*)",
