@@ -1,4 +1,15 @@
 {
+  "extraKnownMarketplaces": {
+    "claudius": {
+      "source": {
+        "source": "github",
+        "repo": "lklimek/claudius"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "claudius@claudius": true
+  },
   "permissions": {
     "allow": [
       "Bash(cargo build*)",
