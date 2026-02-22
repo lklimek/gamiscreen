@@ -1080,3 +1080,37 @@ async fn authenticated_request_advances_last_used_at_for_device() {
         diff.num_seconds()
     );
 }
+
+#[tokio::test]
+async fn login_rate_limit_enforced() {
+    let Some(server) = TestServer::spawn().await else {
+        return;
+    };
+    // Exhaust the rate limit (default: 10 attempts per 60s window)
+    for _ in 0..10 {
+        let _ = server
+            .request_raw(
+                "POST",
+                LOGIN_PATH,
+                None,
+                Some(to_value(&api::AuthReq {
+                    username: "wrong".to_string(),
+                    password: "wrong".to_string(),
+                })),
+            )
+            .await;
+    }
+    // 11th attempt should be rate-limited, even with valid credentials
+    server
+        .request_expect_status(
+            "POST",
+            LOGIN_PATH,
+            None,
+            Some(to_value(&api::AuthReq {
+                username: "parent".to_string(),
+                password: "secret123".to_string(),
+            })),
+            StatusCode::TOO_MANY_REQUESTS,
+        )
+        .await;
+}

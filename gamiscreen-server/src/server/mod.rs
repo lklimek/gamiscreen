@@ -2,7 +2,7 @@ mod acl;
 pub mod auth;
 mod config;
 mod push;
-pub mod rate_limit;
+mod rate_limit;
 
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::{HeaderName, HeaderValue, Method, StatusCode, header};
@@ -1178,11 +1178,17 @@ impl axum::response::IntoResponse for AppError {
                 None,
             ),
         };
-        // Log any error responses at ERROR level to file for troubleshooting
-        if let Some(detail) = detail {
-            tracing::error!(status = %status, kind = kind, message = %msg, detail = %detail, "request failed");
-        } else {
+        // Log 5xx at ERROR, 4xx at WARN (client errors are expected, not server failures)
+        if let Some(detail) = &detail {
+            if status.is_server_error() {
+                tracing::error!(status = %status, kind = kind, message = %msg, detail = %detail, "request failed");
+            } else {
+                tracing::warn!(status = %status, kind = kind, message = %msg, detail = %detail, "request failed");
+            }
+        } else if status.is_server_error() {
             tracing::error!(status = %status, kind = kind, message = %msg, "request failed");
+        } else {
+            tracing::warn!(status = %status, kind = kind, message = %msg, "request failed");
         }
         let body = axum::Json(ErrorBody { error: msg });
         let mut resp = (status, body).into_response();

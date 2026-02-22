@@ -11,10 +11,16 @@ const WINDOW_SECS: u64 = 60;
 /// Simple in-memory per-IP rate limiter for login attempts.
 ///
 /// Tracks timestamps of recent attempts per IP address. Attempts older than the
-/// configured window are pruned on each check. Thread-safe via `std::sync::Mutex`
+/// configured window are pruned on each check. IPs with no recent attempts are
+/// evicted to prevent unbounded memory growth. Thread-safe via `std::sync::Mutex`
 /// (non-async — held only briefly for HashMap operations).
+///
+/// **Note:** When the server is behind a reverse proxy, `ConnectInfo<SocketAddr>`
+/// returns the proxy's IP, not the real client IP. In that case all clients share
+/// one rate-limit bucket. For proxy-aware IP extraction, consider
+/// `axum-client-ip` or configure the proxy to pass the real IP in a trusted header.
 #[derive(Debug)]
-pub struct LoginRateLimiter {
+pub(crate) struct LoginRateLimiter {
     attempts: Mutex<HashMap<IpAddr, Vec<Instant>>>,
     max_attempts: usize,
     window_secs: u64,
@@ -40,15 +46,22 @@ impl LoginRateLimiter {
     ///
     /// Returns `Ok(())` if the attempt is within limits, or `Err(seconds)` with
     /// the number of seconds the caller should wait before retrying.
+    ///
+    /// Note: both successful and failed login attempts count toward the limit.
+    /// This prevents attackers from using valid credentials to reset their window.
     pub fn check_rate_limit(&self, ip: IpAddr) -> Result<(), u64> {
         let now = Instant::now();
         let window = std::time::Duration::from_secs(self.window_secs);
 
         let mut map = self.attempts.lock().unwrap_or_else(|e| e.into_inner());
-        let entries = map.entry(ip).or_default();
 
-        // Prune expired entries
-        entries.retain(|&t| now.duration_since(t) < window);
+        // Evict IPs whose entries have all expired to prevent unbounded memory growth
+        map.retain(|_, entries| {
+            entries.retain(|&t| now.duration_since(t) < window);
+            !entries.is_empty()
+        });
+
+        let entries = map.entry(ip).or_default();
 
         if entries.len() >= self.max_attempts {
             // Calculate retry-after from oldest entry in window
@@ -117,5 +130,20 @@ mod tests {
         assert!(limiter.check_rate_limit(localhost()).is_ok());
         // With window_secs=0, all previous entries are expired
         assert!(limiter.check_rate_limit(localhost()).is_ok());
+    }
+
+    #[test]
+    fn evicts_idle_ips() {
+        // Use window_secs=0 so everything expires immediately
+        let limiter = LoginRateLimiter::new(10, 0);
+        // Add entries for two IPs
+        assert!(limiter.check_rate_limit(localhost()).is_ok());
+        assert!(limiter.check_rate_limit(other_ip()).is_ok());
+        // Next call should evict both expired IPs from the map
+        assert!(limiter.check_rate_limit(localhost()).is_ok());
+        let map = limiter.attempts.lock().unwrap();
+        // Only localhost should remain (just added); other_ip was evicted
+        assert!(!map.contains_key(&other_ip()));
+        assert_eq!(map.len(), 1);
     }
 }
