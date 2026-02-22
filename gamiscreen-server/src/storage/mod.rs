@@ -653,6 +653,19 @@ impl Store {
                 "no minutes provided".to_string(),
             ));
         }
+        // Validate timestamp bounds to prevent retroactive inflation or
+        // future-timestamp poisoning of screen-time accounting.
+        let now_minute = Utc::now().timestamp() / 60;
+        let window_past = 7 * 24 * 60; // 7 days back
+        let window_future = 5; // 5 minutes forward (clock skew tolerance)
+        if minutes
+            .iter()
+            .any(|&m| m < now_minute - window_past || m > now_minute + window_future)
+        {
+            return Err(StorageError::InvalidInput(
+                "minute timestamp out of acceptable range".to_string(),
+            ));
+        }
         let pool = self.pool.clone();
         let child_owned = child.to_string();
         let device_owned = device.to_string();
