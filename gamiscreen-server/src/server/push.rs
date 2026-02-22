@@ -95,7 +95,8 @@ impl PushServiceInner {
                 }
                 let subs = store
                     .list_push_subscriptions_for_child(&self.tenant_id, child_id)
-                    .await?;
+                    .await
+                    .map_err(|e| e.to_string())?;
                 if subs.is_empty() {
                     return Ok(());
                 }
@@ -103,7 +104,10 @@ impl PushServiceInner {
                 self.send_to_subscriptions(store, subs, payload).await
             }
             ServerEvent::PendingCount { .. } => {
-                let subs = store.list_all_push_subscriptions(&self.tenant_id).await?;
+                let subs = store
+                    .list_all_push_subscriptions(&self.tenant_id)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 if subs.is_empty() {
                     return Ok(());
                 }
