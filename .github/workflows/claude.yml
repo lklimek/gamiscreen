@@ -40,4 +40,4 @@ jobs:
           plugins: "claudius@claudius"
           claude_args: |
             --model ${{ vars.CLAUDE_MODEL }}
-            --max-turns 50
+            --max-turns 150
