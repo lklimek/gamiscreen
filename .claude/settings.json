@@ -1,4 +1,17 @@
 {
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./scripts/install-deps-system.sh && ./scripts/install-deps-rust.sh"
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "Bash(cargo build*)",
@@ -107,6 +120,28 @@
       "Bash(*gh-post-review.sh *)",
       "Bash(*gh-pr-base-sha.sh *)",
       "Bash(*diff-anchors.py *)",
+      "Bash(./scripts/install-deps.sh*)",
+      "Bash(./scripts/install-deps-system.sh*)",
+      "Bash(./scripts/install-deps-rust.sh*)",
+      "Bash(./scripts/install-deps-web.sh*)",
+      "Bash(bash scripts/install-deps.sh*)",
+      "Bash(bash scripts/install-deps-system.sh*)",
+      "Bash(bash scripts/install-deps-rust.sh*)",
+      "Bash(bash scripts/install-deps-web.sh*)",
+      "Bash(sudo apt-get update*)",
+      "Bash(sudo apt-get install -y -qq pkg-config*)",
+      "Bash(sudo apt-get install -y -qq libdbus-1-dev*)",
+      "Bash(sudo apt-get install -y -qq libsqlite3-dev*)",
+      "Bash(rustup toolchain list*)",
+      "Bash(rustup component list*)",
+      "Bash(rustc --version*)",
+      "Bash(cargo --version*)",
+      "Bash(node --version*)",
+      "Bash(npm --version*)",
+      "Bash(which *)",
+      "Bash(dpkg -s *)",
+      "Bash(dpkg -l *)",
+      "Bash(uname*)",
       "Bash(govulncheck*)",
       "Bash(cargo audit*)",
       "Bash(npm audit*)",
