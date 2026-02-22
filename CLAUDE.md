@@ -65,6 +65,11 @@ System dependencies for building: `pkg-config`, `libdbus-1-dev`, `libsqlite3-dev
 - TypeScript types are auto-generated from Rust structs via `ts-rs` — edit the Rust source, not the generated TS files in `gamiscreen-web/src/generated/`.
 - Refer to `docs/` before making architectural changes.
 
+## Resolving PR Review Threads
+
+After addressing a review comment, use the `claudius:github` skill to list and resolve
+review threads.
+
 ## Claudius Plugin
 
 This project uses the **claudius** plugin (`claudius@claudius` from the `lklimek/claudius` marketplace).
