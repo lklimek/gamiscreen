@@ -8,6 +8,8 @@
 #
 # Usage: ./scripts/install-deps.sh
 
+# -e deliberately omitted: we track errors manually so one failure doesn't
+# abort the remaining steps.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

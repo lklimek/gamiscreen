@@ -7,6 +7,8 @@
 #
 # Usage: ./scripts/install-deps-system.sh
 
+# -e deliberately omitted: we track errors manually and continue so that a
+# network outage doesn't block the session when packages are already present.
 set -uo pipefail
 
 info()  { printf '\033[1;34m[info]\033[0m  %s\n' "$*"; }

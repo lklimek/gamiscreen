@@ -4,6 +4,7 @@
 #
 # Usage: ./scripts/install-deps-web.sh
 
+# -e deliberately omitted: consistent with sibling scripts.
 set -uo pipefail
 
 info()  { printf '\033[1;34m[info]\033[0m  %s\n' "$*"; }
@@ -21,7 +22,7 @@ fi
 
 if [ ! -d "$WEB_DIR/node_modules" ]; then
     info "Installing npm dependencies in gamiscreen-web ..."
-    if npm ci --prefix "$WEB_DIR"; then
+    if npm ci --ignore-scripts --prefix "$WEB_DIR"; then
         ok "npm dependencies installed"
     else
         err "Failed to install npm dependencies"

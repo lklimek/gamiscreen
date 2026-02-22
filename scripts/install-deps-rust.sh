@@ -4,6 +4,7 @@
 #
 # Usage: ./scripts/install-deps-rust.sh
 
+# -e deliberately omitted: consistent with sibling scripts.
 set -uo pipefail
 
 info()  { printf '\033[1;34m[info]\033[0m  %s\n' "$*"; }
