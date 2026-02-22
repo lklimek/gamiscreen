@@ -33,14 +33,18 @@ jobs:
           plugins: "claudius@claudius"
           show_full_output: true
           prompt: |
+            Your task is to review changes done in this pull request since your last review.
+            
             Use claudius:personality skill.
-            Build a team of review agents, including but not limited to: claudius:code-reviewer, claudius:security-engineer.
+            Consider building a team of review agents, including but not limited to: claudius:code-reviewer, claudius:security-engineer.
 
             Fetch all existing review comments on this PR (including PR comments and inline comments). 
-            For each existing comment, check whether it still applies to the current diff. If the issue has been fixed or is no longer relevant AND it was created by @claude, resolve the comment thread.
+            Comments created by `@claude` or `@claude[bot]` are yours.
+            
+            For each existing comment, check whether it still applies.
+            If the issue has been fixed or is no longer relevant, resolve the comment thread.
 
-            Review new changes in this pull request, done since last review comment submitted by @claude.
-            Focus on:
+            During review, focus on:
             - Code quality and best practices
             - Potential bugs or issues
             - Security implications
