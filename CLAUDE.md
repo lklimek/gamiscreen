@@ -67,16 +67,8 @@ System dependencies for building: `pkg-config`, `libdbus-1-dev`, `libsqlite3-dev
 
 ## Resolving PR Review Threads
 
-After addressing a review comment, resolve its thread using the `claudius:github` skill's
-wrapper scripts (provided by the claudius plugin):
-
-```bash
-# 1. List unresolved threads for a PR
-gh-list-review-threads.sh {PR_NUMBER}
-
-# 2. Resolve a specific thread
-gh-resolve-review-thread.sh {PR_NUMBER} {THREAD_ID}
-```
+After addressing a review comment, use the `claudius:github` skill to list and resolve
+review threads.
 
 ## Claudius Plugin
 
