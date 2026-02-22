@@ -65,6 +65,15 @@ System dependencies for building: `pkg-config`, `libdbus-1-dev`, `libsqlite3-dev
 - TypeScript types are auto-generated from Rust structs via `ts-rs` — edit the Rust source, not the generated TS files in `gamiscreen-web/src/generated/`.
 - Refer to `docs/` before making architectural changes.
 
+## Permissions (`.claude/settings.json`)
+
+Allowed `gh api` commands follow these security rules:
+
+- **Scope to this repo** — every pattern includes the full `repos/lklimek/gamiscreen/` prefix; no wildcards in the owner or repo segments.
+- **No trailing wildcard on read-only endpoints** — patterns without an explicit HTTP method must end with the exact path (no trailing `*`), so a method flag cannot be appended to escalate privileges (e.g. `gh api .../review_threads` not `gh api .../review_threads*`).
+- **Pin the path on mutating endpoints** — patterns that include `-X PUT` or `--method PUT` must also pin the full path to the exact endpoint (e.g. `.../review_threads/*/resolve`), leaving no trailing `*` where a conflicting `--method DELETE` could be appended.
+- **Grant only what is needed** — do not add write/delete permissions speculatively; only add them when a concrete use case requires them.
+
 ## Claudius Plugin
 
 This project uses the **claudius** plugin (`claudius@claudius` from the `lklimek/claudius` marketplace).
