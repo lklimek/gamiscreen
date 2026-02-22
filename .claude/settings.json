@@ -1,4 +1,17 @@
 {
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "./scripts/install-deps.sh"
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "Bash(cargo build*)",
@@ -107,6 +120,23 @@
       "Bash(*gh-post-review.sh *)",
       "Bash(*gh-pr-base-sha.sh *)",
       "Bash(*diff-anchors.py *)",
+      "Bash(./scripts/install-deps.sh*)",
+      "Bash(bash scripts/install-deps.sh*)",
+      "Bash(sudo apt-get update*)",
+      "Bash(sudo apt-get install*)",
+      "Bash(rustup toolchain install*)",
+      "Bash(rustup toolchain list*)",
+      "Bash(rustup component list*)",
+      "Bash(rustc --version*)",
+      "Bash(cargo --version*)",
+      "Bash(node --version*)",
+      "Bash(npm --version*)",
+      "Bash(which *)",
+      "Bash(dpkg -s *)",
+      "Bash(dpkg -l *)",
+      "Bash(uname*)",
+      "Bash(ls *)",
+      "Bash(chmod +x *)",
       "Bash(govulncheck*)",
       "Bash(cargo audit*)",
       "Bash(npm audit*)",
