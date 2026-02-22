@@ -121,7 +121,6 @@
       "Bash(cargo audit *)",
       "Bash(npm audit *)",
       "Bash(pip-audit *)",
-      "Bash(rm -rf /tmp/claude/*)",
       "Read",
       "Edit",
       "Write",
