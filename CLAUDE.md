@@ -67,15 +67,15 @@ System dependencies for building: `pkg-config`, `libdbus-1-dev`, `libsqlite3-dev
 
 ## Resolving PR Review Threads
 
-After addressing a review comment, resolve its thread via the GitHub API:
+After addressing a review comment, resolve its thread using the `claudius:github` skill's
+wrapper scripts (provided by the claudius plugin):
 
 ```bash
-# 1. Find unresolved thread IDs for a PR
-gh api repos/lklimek/gamiscreen/pulls/{PR_NUMBER}/review_threads \
-  --jq '[.[] | select(.resolved == false) | {id, line, body: .comments[0].body}]'
+# 1. List unresolved threads for a PR
+gh-list-review-threads.sh {PR_NUMBER}
 
 # 2. Resolve a specific thread
-gh api -X PUT repos/lklimek/gamiscreen/pulls/{PR_NUMBER}/review_threads/{THREAD_ID}/resolve
+gh-resolve-review-thread.sh {PR_NUMBER} {THREAD_ID}
 ```
 
 ## Claudius Plugin
