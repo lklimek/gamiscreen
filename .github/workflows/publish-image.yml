@@ -9,6 +9,10 @@ name: Publish Server Image
     types:
       - published
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   publish:
     name: Build and Push Docker Image
