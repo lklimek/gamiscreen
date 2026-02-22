@@ -14,6 +14,22 @@ use super::config::AppConfig;
 use crate::storage::Store;
 use crate::storage::models::PushSubscription;
 
+/// Structured error type for the push notification subsystem.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum PushError {
+    /// Storage layer error.
+    #[error(transparent)]
+    Storage(#[from] crate::storage::StorageError),
+
+    /// JSON serialization error.
+    #[error("serialization: {0}")]
+    Serialization(#[from] serde_json::Error),
+
+    /// Web push protocol error (VAPID signing, message building, or delivery).
+    #[error("web push: {0}")]
+    WebPush(#[from] web_push::WebPushError),
+}
+
 #[derive(Clone)]
 pub struct PushService {
     inner: Arc<PushServiceInner>,
@@ -81,7 +97,11 @@ impl PushService {
 }
 
 impl PushServiceInner {
-    async fn handle_event(self: Arc<Self>, store: Store, event: ServerEvent) -> Result<(), String> {
+    async fn handle_event(
+        self: Arc<Self>,
+        store: Store,
+        event: ServerEvent,
+    ) -> Result<(), PushError> {
         match &event {
             ServerEvent::RemainingUpdated {
                 child_id,
@@ -99,7 +119,7 @@ impl PushServiceInner {
                 if subs.is_empty() {
                     return Ok(());
                 }
-                let payload = Arc::new(serde_json::to_vec(&event).map_err(|e| e.to_string())?);
+                let payload = Arc::new(serde_json::to_vec(&event)?);
                 self.send_to_subscriptions(store, subs, payload).await
             }
             ServerEvent::PendingCount { .. } => {
@@ -107,7 +127,7 @@ impl PushServiceInner {
                 if subs.is_empty() {
                     return Ok(());
                 }
-                let payload = Arc::new(serde_json::to_vec(&event).map_err(|e| e.to_string())?);
+                let payload = Arc::new(serde_json::to_vec(&event)?);
                 self.send_to_subscriptions(store, subs, payload).await
             }
         }
@@ -118,7 +138,7 @@ impl PushServiceInner {
         store: Store,
         subscriptions: Vec<PushSubscription>,
         payload: Arc<Vec<u8>>,
-    ) -> Result<(), String> {
+    ) -> Result<(), PushError> {
         for sub in subscriptions {
             let store_clone = store.clone();
             let payload_clone = payload.clone();
@@ -137,7 +157,7 @@ impl PushServiceInner {
         store: Store,
         subscription: PushSubscription,
         payload: Arc<Vec<u8>>,
-    ) -> Result<(), String> {
+    ) -> Result<(), PushError> {
         let endpoint = subscription.endpoint.clone();
 
         let subscription_info = SubscriptionInfo::new(
@@ -149,19 +169,15 @@ impl PushServiceInner {
         let mut builder = WebPushMessageBuilder::new(&subscription_info);
         builder.set_payload(ContentEncoding::Aes128Gcm, payload.as_ref());
 
-        let mut vapid = VapidSignatureBuilder::from_base64(&self.vapid_private, &subscription_info)
-            .map_err(|e| e.to_string())?;
+        let mut vapid =
+            VapidSignatureBuilder::from_base64(&self.vapid_private, &subscription_info)?;
         if let Some(contact) = &self.contact {
             vapid.add_claim("sub", contact.clone());
         }
-        let signature = vapid.build().map_err(|e| e.to_string())?;
+        let signature = vapid.build()?;
         builder.set_vapid_signature(signature);
 
-        match self
-            .client
-            .send(builder.build().map_err(|e| e.to_string())?)
-            .await
-        {
+        match self.client.send(builder.build()?).await {
             Ok(()) => {
                 info!(endpoint = %endpoint, "push: delivered");
                 if let Err(e) = store
@@ -197,7 +213,7 @@ impl PushServiceInner {
                     );
                 }
 
-                return Err(err_str);
+                return Err(PushError::WebPush(err));
             }
         }
 
