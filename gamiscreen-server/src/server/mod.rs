@@ -2,6 +2,7 @@ mod acl;
 pub mod auth;
 mod config;
 mod push;
+pub mod rate_limit;
 
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::{HeaderName, HeaderValue, Method, StatusCode, header};
@@ -25,6 +26,7 @@ use tracing::{Span, info_span};
 use uuid::Uuid;
 
 use crate::server::auth::AuthCtx;
+use crate::server::rate_limit::LoginRateLimiter;
 
 const MAX_PUSH_SUBSCRIPTIONS_PER_CHILD: i64 = 10;
 
@@ -42,6 +44,8 @@ pub struct AppState {
     // Global shutdown token to allow canceling long-lived streams (e.g., SSE)
     pub shutdown: CancellationToken,
     push: Option<PushService>,
+    // Per-IP rate limiter for login attempts
+    login_limiter: std::sync::Arc<LoginRateLimiter>,
 }
 
 impl AppState {
@@ -55,6 +59,7 @@ impl AppState {
             notif_tx,
             shutdown: CancellationToken::new(),
             push,
+            login_limiter: std::sync::Arc::new(LoginRateLimiter::default()),
         }
     }
 
@@ -1023,8 +1028,18 @@ async fn api_child_register(
 
 async fn api_auth_login(
     State(state): State<AppState>,
+    connect_info: axum::extract::ConnectInfo<std::net::SocketAddr>,
     Json(body): Json<api::AuthReq>,
 ) -> Result<Json<api::AuthResp>, AppError> {
+    // Rate-limit by client IP
+    let client_ip = connect_info.0.ip();
+    if let Err(retry_after) = state.login_limiter.check_rate_limit(client_ip) {
+        tracing::warn!(ip=%client_ip, retry_after, "login: rate limited");
+        return Err(AppError::TooManyRequests {
+            retry_after_secs: retry_after,
+        });
+    }
+
     // Find user in config
     let user = state
         .config
@@ -1102,6 +1117,7 @@ pub enum AppError {
     Unauthorized,
     Forbidden,
     NotFound(String),
+    TooManyRequests { retry_after_secs: u64 },
     Internal(String),
 }
 
@@ -1125,22 +1141,41 @@ impl AppError {
 
 impl axum::response::IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
-        let (status, msg, kind, detail) = match self {
-            AppError::BadRequest(m) => (StatusCode::BAD_REQUEST, m, "bad_request", None),
+        let (status, msg, kind, detail, extra_headers) = match self {
+            AppError::BadRequest(m) => (StatusCode::BAD_REQUEST, m, "bad_request", None, None),
             AppError::Unauthorized => (
                 StatusCode::UNAUTHORIZED,
                 "unauthorized".into(),
                 "unauthorized",
                 None,
+                None,
             ),
-            AppError::Forbidden => (StatusCode::FORBIDDEN, "forbidden".into(), "forbidden", None),
-            AppError::NotFound(m) => (StatusCode::NOT_FOUND, m, "not_found", None),
+            AppError::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "forbidden".into(),
+                "forbidden",
+                None,
+                None,
+            ),
+            AppError::NotFound(m) => (StatusCode::NOT_FOUND, m, "not_found", None, None),
+            AppError::TooManyRequests { retry_after_secs } => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "too many requests".into(),
+                "too_many_requests",
+                None,
+                Some(vec![(
+                    HeaderName::from_static("retry-after"),
+                    HeaderValue::from_str(&retry_after_secs.to_string())
+                        .unwrap_or(HeaderValue::from_static("60")),
+                )]),
+            ),
             // Do not leak internal error details to clients, but log them
             AppError::Internal(m) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal server error".into(),
                 "internal",
                 Some(m),
+                None,
             ),
         };
         // Log any error responses at ERROR level to file for troubleshooting
@@ -1150,7 +1185,13 @@ impl axum::response::IntoResponse for AppError {
             tracing::error!(status = %status, kind = kind, message = %msg, "request failed");
         }
         let body = axum::Json(ErrorBody { error: msg });
-        (status, body).into_response()
+        let mut resp = (status, body).into_response();
+        if let Some(headers) = extra_headers {
+            for (name, value) in headers {
+                resp.headers_mut().insert(name, value);
+            }
+        }
+        resp
     }
 }
 

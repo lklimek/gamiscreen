@@ -118,9 +118,12 @@ async fn main() {
 
     // Graceful shutdown on SIGINT/SIGTERM with fallback timeout to force-close long-lived connections (e.g., SSE)
     let mut server_task = tokio::spawn(async move {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown_token_for_server.cancelled_owned())
-            .await
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(shutdown_token_for_server.cancelled_owned())
+        .await
     });
 
     // Wait for OS signal; then trigger graceful, and if it hangs beyond timeout, force abort.
