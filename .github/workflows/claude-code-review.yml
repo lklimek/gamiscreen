@@ -23,6 +23,9 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Configure git to use HTTPS instead of SSH
+        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@v1
@@ -30,7 +33,7 @@ jobs:
           use_sticky_comment: true
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           plugin_marketplaces: "https://github.com/lklimek/agents.git"
-          plugins: "claudius@agents"
+          plugins: "claudius@lklimek"
           show_full_output: true
           allowed_bots: "dependabot[bot]"
           prompt: |
