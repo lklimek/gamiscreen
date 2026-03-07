@@ -86,6 +86,7 @@ impl PushServiceInner {
             ServerEvent::RemainingUpdated {
                 child_id,
                 remaining_minutes,
+                ..
             } => {
                 if !self
                     .should_push_remaining(child_id, *remaining_minutes)

@@ -81,18 +81,35 @@ impl AppState {
         guard: &mut MinutesGuard<'_>,
     ) -> Result<i32, AppError> {
         let prev = guard.take().unwrap_or_default();
-        // now we have None in cache, so remaining_minutes will recompute
-        let current = self.remaining_minutes(child_id, guard).await?;
+        let stored = self
+            .store
+            .get_remaining(child_id)
+            .await
+            .map_err(AppError::internal)?;
+        **guard = Some(stored);
+        let all_done = self
+            .store
+            .all_required_tasks_done_today(child_id)
+            .await
+            .map_err(AppError::internal)?;
+        let effective = if all_done { stored } else { 0 };
 
-        if current != prev {
+        if effective != prev {
+            let balance = self
+                .store
+                .compute_balance(child_id)
+                .await
+                .map_err(AppError::internal)?;
             let event = ServerEvent::RemainingUpdated {
                 child_id: child_id.to_string(),
-                remaining_minutes: current,
+                remaining_minutes: effective,
+                balance,
+                blocked_by_tasks: !all_done,
             };
             self.dispatch_event(event);
         }
 
-        Ok(current)
+        Ok(effective)
     }
 
     fn dispatch_event(&self, event: ServerEvent) {
@@ -107,20 +124,24 @@ impl AppState {
         child_id: &str,
         guard: &mut MinutesGuard<'_>,
     ) -> Result<i32, AppError> {
-        if let Some(v) = **guard {
-            return Ok(v);
-        }
-
-        // Compute and cache
-
-        let v = self
+        let stored = match **guard {
+            Some(v) => v,
+            None => {
+                let v = self
+                    .store
+                    .get_remaining(child_id)
+                    .await
+                    .map_err(AppError::internal)?;
+                **guard = Some(v);
+                v
+            }
+        };
+        let all_done = self
             .store
-            .compute_remaining(child_id)
+            .all_required_tasks_done_today(child_id)
             .await
             .map_err(AppError::internal)?;
-
-        **guard = Some(v);
-        Ok(v)
+        if all_done { Ok(stored) } else { Ok(0) }
     }
 }
 
@@ -403,6 +424,7 @@ async fn api_list_tasks(
             id: t.id,
             name: t.name,
             minutes: t.minutes,
+            required: t.required,
         })
         .collect();
     Ok(Json(items))
@@ -425,6 +447,7 @@ async fn api_list_child_tasks(
             id: t.id,
             name: t.name,
             minutes: t.minutes,
+            required: t.required,
             last_done: last.map(|dt| {
                 chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc)
                     .to_rfc3339()
@@ -444,9 +467,21 @@ async fn api_remaining(
     let mut child_guard = child_mutex.lock().await;
 
     let remaining = state.remaining_minutes(&id, &mut child_guard).await?;
+    let balance = state
+        .store
+        .compute_balance(&id)
+        .await
+        .map_err(AppError::internal)?;
+    let blocked = !state
+        .store
+        .all_required_tasks_done_today(&id)
+        .await
+        .map_err(AppError::internal)?;
     Ok(Json(api::RemainingDto {
         child_id: id,
         remaining_minutes: remaining,
+        balance,
+        blocked_by_tasks: blocked,
     }))
 }
 
@@ -516,21 +551,29 @@ async fn api_child_reward(
     } else {
         return Err(AppError::bad_request("minutes or task_id required"));
     };
+    let is_borrowed = body.is_borrowed.unwrap_or(false);
     // Validation: minutes must be non-zero (both task-derived and custom)
     if mins == 0 {
         return Err(AppError::bad_request("minutes must be non-zero"));
     }
+    if is_borrowed && mins <= 0 {
+        return Err(AppError::bad_request(
+            "borrowed minutes must be positive (> 0)",
+        ));
+    }
 
-    state
+    let new_remaining = state
         .store
         .add_reward_minutes(
             &p.id,
             mins,
             body.task_id.as_deref(),
             Some(desc_to_store.as_str()),
+            is_borrowed,
         )
         .await
         .map_err(AppError::internal)?;
+    *child_guard = Some(new_remaining);
     if let Some(tid) = body.task_id.as_deref() {
         state
             .store
@@ -538,12 +581,30 @@ async fn api_child_reward(
             .await
             .map_err(AppError::internal)?;
     }
-    let remaining = state
-        .reset_remaining_minutes(&p.id, &mut child_guard)
-        .await?;
+
+    let all_done = state
+        .store
+        .all_required_tasks_done_today(&p.id)
+        .await
+        .map_err(AppError::internal)?;
+    let effective = if all_done { new_remaining } else { 0 };
+    let balance = state
+        .store
+        .compute_balance(&p.id)
+        .await
+        .map_err(AppError::internal)?;
+
+    let event = ServerEvent::RemainingUpdated {
+        child_id: p.id.clone(),
+        remaining_minutes: effective,
+        balance,
+        blocked_by_tasks: !all_done,
+    };
+    state.dispatch_event(event);
 
     Ok(Json(api::RewardResp {
-        remaining_minutes: remaining,
+        remaining_minutes: effective,
+        balance,
     }))
 }
 
@@ -678,6 +739,7 @@ async fn api_list_child_rewards(
             .to_rfc3339(),
             description: r.description,
             minutes: r.minutes,
+            is_borrowed: r.is_borrowed,
         })
         .collect();
     Ok(Json(items))
@@ -804,9 +866,17 @@ async fn sse_notifications(
         let child_mutex = state.child_mutex(&cid).await;
         let mut guard = child_mutex.lock().await;
         if let Ok(rem) = state.remaining_minutes(&cid, &mut guard).await {
+            let balance = state.store.compute_balance(&cid).await.unwrap_or(0);
+            let blocked = !state
+                .store
+                .all_required_tasks_done_today(&cid)
+                .await
+                .unwrap_or(true);
             init_items.push(ServerEvent::RemainingUpdated {
                 child_id: cid.clone(),
                 remaining_minutes: rem,
+                balance,
+                blocked_by_tasks: blocked,
             });
         }
     }
@@ -818,7 +888,10 @@ async fn sse_notifications(
             futures::future::ready(match msg {
                 Ok(ev) => match (&claims.role, &ev) {
                     (Role::Parent, _) => Some(ev),
-                    (Role::Child, ServerEvent::RemainingUpdated { child_id, .. }) => {
+                    (
+                        Role::Child,
+                        ServerEvent::RemainingUpdated { child_id, .. },
+                    ) => {
                         if let Some(cid) = &claims2.child_id {
                             if cid == child_id { Some(ev) } else { None }
                         } else {
@@ -882,19 +955,33 @@ async fn api_approve_submission(
     if auth.claims.role != Role::Parent {
         return Err(AppError::forbidden());
     }
-    let child_opt = state
+    let result = state
         .store
         .approve_submission(id, &auth.claims.sub)
         .await
         .map_err(AppError::internal)?;
-    // Invalidate remaining cache for that child so subsequent reads reflect new reward
-    if let Some(child_id) = child_opt {
+    if let Some((child_id, new_remaining)) = result {
         let child_mutex = state.child_mutex(&child_id).await;
         let mut child_guard = child_mutex.lock().await;
-        state
-            .reset_remaining_minutes(&child_id, &mut child_guard)
-            .await?;
-        // Notify parents about updated count
+        *child_guard = Some(new_remaining);
+        let all_done = state
+            .store
+            .all_required_tasks_done_today(&child_id)
+            .await
+            .map_err(AppError::internal)?;
+        let effective = if all_done { new_remaining } else { 0 };
+        let balance = state
+            .store
+            .compute_balance(&child_id)
+            .await
+            .map_err(AppError::internal)?;
+        let event = ServerEvent::RemainingUpdated {
+            child_id: child_id.clone(),
+            remaining_minutes: effective,
+            balance,
+            blocked_by_tasks: !all_done,
+        };
+        state.dispatch_event(event);
         if let Ok(c) = state.store.pending_submissions_count().await {
             let event = ServerEvent::PendingCount { count: c as u32 };
             state.dispatch_event(event);
@@ -967,18 +1054,39 @@ async fn api_device_heartbeat(
     let child_mutex = state.child_mutex(&p.id).await;
     let mut child_guard = child_mutex.lock().await;
 
-    // Invalidate cache for this child; compute after DB update
-    state
+    let new_remaining = state
         .store
         .process_usage_minutes(&p.id, &p.device_id, &body.minutes)
         .await
         .map_err(AppError::internal)?;
-    // Update cache and return
-    let remaining = state
-        .reset_remaining_minutes(&p.id, &mut child_guard)
-        .await?;
+    *child_guard = Some(new_remaining);
+    let all_done = state
+        .store
+        .all_required_tasks_done_today(&p.id)
+        .await
+        .map_err(AppError::internal)?;
+    let effective = if all_done { new_remaining } else { 0 };
+    let balance = state
+        .store
+        .compute_balance(&p.id)
+        .await
+        .map_err(AppError::internal)?;
+
+    let prev_effective = child_guard.unwrap_or(0);
+    if effective != prev_effective {
+        let event = ServerEvent::RemainingUpdated {
+            child_id: p.id.clone(),
+            remaining_minutes: effective,
+            balance,
+            blocked_by_tasks: !all_done,
+        };
+        state.dispatch_event(event);
+    }
+
     Ok(Json(api::HeartbeatResp {
-        remaining_minutes: remaining,
+        remaining_minutes: effective,
+        balance,
+        blocked_by_tasks: !all_done,
     }))
 }
 

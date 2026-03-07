@@ -41,6 +41,7 @@ pub struct TaskDto {
     pub id: String,
     pub name: String,
     pub minutes: i32,
+    pub required: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -49,6 +50,7 @@ pub struct TaskWithStatusDto {
     pub id: String,
     pub name: String,
     pub minutes: i32,
+    pub required: bool,
     pub last_done: Option<String>, // RFC3339 UTC
 }
 
@@ -58,6 +60,8 @@ pub struct TaskWithStatusDto {
 pub struct RemainingDto {
     pub child_id: String,
     pub remaining_minutes: i32,
+    pub balance: i32,
+    pub blocked_by_tasks: bool,
 }
 
 // Reward
@@ -68,12 +72,15 @@ pub struct RewardReq {
     pub task_id: Option<String>,
     pub minutes: Option<i32>,
     pub description: Option<String>,
+    #[serde(default)]
+    pub is_borrowed: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct RewardResp {
     pub remaining_minutes: i32,
+    pub balance: i32,
 }
 
 // Heartbeat: batch of minute timestamps (UTC epoch minutes)
@@ -88,6 +95,8 @@ pub struct HeartbeatReq {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct HeartbeatResp {
     pub remaining_minutes: i32,
+    pub balance: i32,
+    pub blocked_by_tasks: bool,
 }
 
 // Web Push subscription management
@@ -139,6 +148,7 @@ pub struct RewardHistoryItemDto {
     pub time: String, // RFC3339 UTC
     pub description: Option<String>,
     pub minutes: i32,
+    pub is_borrowed: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -230,5 +240,7 @@ pub enum ServerEvent {
     RemainingUpdated {
         child_id: String,
         remaining_minutes: i32,
+        balance: i32,
+        blocked_by_tasks: bool,
     },
 }

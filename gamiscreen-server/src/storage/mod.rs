@@ -90,7 +90,11 @@ impl Store {
                     .set(children::display_name.eq(new_child.display_name))
                     .execute(&mut conn)?;
 
-                // No balances table anymore; remaining is computed dynamically
+                // Ensure every child has a balances row (migration populates existing data)
+                diesel::insert_into(schema::balances::table)
+                    .values(schema::balances::child_id.eq(&c.id))
+                    .on_conflict_do_nothing()
+                    .execute(&mut conn)?;
             }
 
             // Upsert tasks
@@ -108,6 +112,7 @@ impl Store {
                     .set((
                         tasks::name.eq(new_task.name),
                         tasks::minutes.eq(new_task.minutes),
+                        tasks::required.eq(new_task.required),
                     ))
                     .execute(&mut conn)?;
             }
@@ -485,20 +490,23 @@ impl Store {
         .await?
     }
 
+    /// Approve a task submission: insert reward, record completion, delete submission.
+    /// Returns (child_id, new_remaining) if a submission was found.
     pub async fn approve_submission(
         &self,
         submission_id: i32,
         approver: &str,
-    ) -> Result<Option<String>, StorageError> {
+    ) -> Result<Option<(String, i32)>, StorageError> {
         let pool = self.pool.clone();
         let approver = approver.to_string();
-        tokio::task::spawn_blocking(move || -> Result<Option<String>, StorageError> {
-            use crate::storage::schema::{rewards, task_completions, task_submissions, tasks};
+        tokio::task::spawn_blocking(move || -> Result<Option<(String, i32)>, StorageError> {
+            use crate::storage::schema::{
+                balances, rewards, task_completions, task_submissions, tasks,
+            };
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
-            let mut approved_child: Option<String> = None;
+            let mut result: Option<(String, i32)> = None;
             conn.immediate_transaction(|conn| -> Result<(), StorageError> {
-                // Fetch submission with task info
                 let rec: Option<(String, String, i32, String)> = task_submissions::table
                     .inner_join(tasks::table.on(tasks::id.eq(task_submissions::task_id)))
                     .filter(task_submissions::id.eq(submission_id))
@@ -511,12 +519,9 @@ impl Store {
                     .first::<(String, String, i32, String)>(conn)
                     .optional()?;
                 let Some((child_id, task_id, mins, task_name)) = rec else {
-                    // Treat missing submission as success (idempotent)
                     return Ok(());
                 };
-                // remember child for cache invalidation by caller
-                approved_child = Some(child_id.clone());
-                // Insert reward with description = task name
+                let balance = compute_balance_inner(conn, &child_id)?;
                 let new_reward = NewReward {
                     child_id: &child_id,
                     task_id: Some(&task_id),
@@ -527,7 +532,14 @@ impl Store {
                 diesel::insert_into(rewards::table)
                     .values(&new_reward)
                     .execute(conn)?;
-                // Record task completion
+                let delta = compute_remaining_delta(mins, false, balance);
+                diesel::update(balances::table.filter(balances::child_id.eq(&child_id)))
+                    .set(balances::minutes_remaining.eq(balances::minutes_remaining + delta))
+                    .execute(conn)?;
+                let new_remaining: i32 = balances::table
+                    .filter(balances::child_id.eq(&child_id))
+                    .select(balances::minutes_remaining)
+                    .first(conn)?;
                 let tc = models::NewTaskCompletion {
                     child_id: &child_id,
                     task_id: &task_id,
@@ -536,14 +548,14 @@ impl Store {
                 diesel::insert_into(task_completions::table)
                     .values(&tc)
                     .execute(conn)?;
-                // Delete submission
                 diesel::delete(
                     task_submissions::table.filter(task_submissions::id.eq(submission_id)),
                 )
                 .execute(conn)?;
+                result = Some((child_id, new_remaining));
                 Ok(())
             })?;
-            Ok(approved_child)
+            Ok(result)
         })
         .await?
     }
@@ -617,27 +629,38 @@ impl Store {
         mins: i32,
         task: Option<&str>,
         description: Option<&str>,
-    ) -> Result<(), StorageError> {
-        use schema::rewards;
+        is_borrowed: bool,
+    ) -> Result<i32, StorageError> {
+        use schema::{balances, rewards};
         let pool = self.pool.clone();
         let child = child_id.to_string();
         let task_opt = task.map(|s| s.to_string());
         let description_opt = description.map(|s| s.to_string());
-        tokio::task::spawn_blocking(move || -> Result<(), StorageError> {
+        tokio::task::spawn_blocking(move || -> Result<i32, StorageError> {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
-            // Insert reward row only; remaining is computed dynamically
-            let new_reward = NewReward {
-                child_id: &child,
-                task_id: task_opt.as_deref(),
-                minutes: mins,
-                description: description_opt.as_deref(),
-                is_borrowed: false,
-            };
-            diesel::insert_into(rewards::table)
-                .values(&new_reward)
-                .execute(&mut conn)?;
-            Ok(())
+            conn.immediate_transaction(|conn| -> Result<i32, StorageError> {
+                let balance = compute_balance_inner(conn, &child)?;
+                let new_reward = NewReward {
+                    child_id: &child,
+                    task_id: task_opt.as_deref(),
+                    minutes: mins,
+                    description: description_opt.as_deref(),
+                    is_borrowed,
+                };
+                diesel::insert_into(rewards::table)
+                    .values(&new_reward)
+                    .execute(conn)?;
+                let delta = compute_remaining_delta(mins, is_borrowed, balance);
+                diesel::update(balances::table.filter(balances::child_id.eq(&child)))
+                    .set(balances::minutes_remaining.eq(balances::minutes_remaining + delta))
+                    .execute(conn)?;
+                let new_remaining: i32 = balances::table
+                    .filter(balances::child_id.eq(&child))
+                    .select(balances::minutes_remaining)
+                    .first(conn)?;
+                Ok(new_remaining)
+            })
         })
         .await?
     }
@@ -647,12 +670,11 @@ impl Store {
         child: &str,
         device: &str,
         minutes: &[i64],
-    ) -> Result<(), StorageError> {
-        use schema::usage_minutes;
+    ) -> Result<i32, StorageError> {
+        use schema::{balances, usage_minutes};
 
         use crate::storage::models::NewUsageMinute;
         if minutes.is_empty() {
-            // this is an error condition
             return Err(StorageError::InvalidInput(
                 "no minutes provided".to_string(),
             ));
@@ -674,22 +696,37 @@ impl Store {
         let child_owned = child.to_string();
         let device_owned = device.to_string();
         let minutes_vec = minutes.to_vec();
-        tokio::task::spawn_blocking(move || -> Result<(), StorageError> {
+        tokio::task::spawn_blocking(move || -> Result<i32, StorageError> {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
-            for m in minutes_vec.into_iter() {
-                let row = NewUsageMinute {
-                    child_id: &child_owned,
-                    minute_ts: m,
-                    device_id: &device_owned,
-                };
-                // Use INSERT OR IGNORE equivalent
-                let _ = diesel::insert_into(usage_minutes::table)
-                    .values(&row)
-                    .on_conflict_do_nothing()
-                    .execute(&mut conn)?;
-            }
-            Ok(())
+            conn.immediate_transaction(|conn| -> Result<i32, StorageError> {
+                let mut new_count = 0i32;
+                for m in &minutes_vec {
+                    let row = NewUsageMinute {
+                        child_id: &child_owned,
+                        minute_ts: *m,
+                        device_id: &device_owned,
+                    };
+                    let inserted = diesel::insert_into(usage_minutes::table)
+                        .values(&row)
+                        .on_conflict_do_nothing()
+                        .execute(conn)?;
+                    new_count += inserted as i32;
+                }
+                if new_count > 0 {
+                    diesel::update(balances::table.filter(balances::child_id.eq(&child_owned)))
+                        .set(
+                            balances::minutes_remaining
+                                .eq(balances::minutes_remaining - new_count),
+                        )
+                        .execute(conn)?;
+                }
+                let new_remaining: i32 = balances::table
+                    .filter(balances::child_id.eq(&child_owned))
+                    .select(balances::minutes_remaining)
+                    .first(conn)?;
+                Ok(new_remaining)
+            })
         })
         .await?
     }
@@ -721,26 +758,42 @@ impl Store {
         .await?
     }
 
-    pub async fn compute_remaining(&self, child: &str) -> Result<i32, StorageError> {
-        use diesel::dsl::sum;
+    pub async fn get_remaining(&self, child_id: &str) -> Result<i32, StorageError> {
+        use schema::balances;
         let pool = self.pool.clone();
-        let child_owned = child.to_string();
+        let child = child_id.to_string();
         tokio::task::spawn_blocking(move || -> Result<i32, StorageError> {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
-            let rewards_sum: Option<i64> = schema::rewards::dsl::rewards
-                .filter(schema::rewards::dsl::child_id.eq(&child_owned))
-                .select(sum(schema::rewards::dsl::minutes))
-                .first::<Option<i64>>(&mut conn)?;
-            let used: i64 = schema::usage_minutes::dsl::usage_minutes
-                .filter(schema::usage_minutes::dsl::child_id.eq(&child_owned))
-                .select(schema::usage_minutes::dsl::minute_ts)
-                .distinct()
-                .count()
-                .get_result::<i64>(&mut conn)?;
-            // Allow remaining time to go negative when usage exceeds rewards
-            let remaining = (rewards_sum.unwrap_or(0) - used) as i32;
-            Ok(remaining)
+            Ok(balances::table
+                .filter(balances::child_id.eq(&child))
+                .select(balances::minutes_remaining)
+                .first(&mut conn)?)
+        })
+        .await?
+    }
+
+    pub async fn compute_balance(&self, child_id: &str) -> Result<i32, StorageError> {
+        let pool = self.pool.clone();
+        let child = child_id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<i32, StorageError> {
+            let mut conn = pool.get()?;
+            configure_sqlite_conn(&mut conn)?;
+            compute_balance_inner(&mut conn, &child)
+        })
+        .await?
+    }
+
+    pub async fn all_required_tasks_done_today(
+        &self,
+        child_id: &str,
+    ) -> Result<bool, StorageError> {
+        let pool = self.pool.clone();
+        let child = child_id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<bool, StorageError> {
+            let mut conn = pool.get()?;
+            configure_sqlite_conn(&mut conn)?;
+            all_required_tasks_done_today_inner(&mut conn, &child)
         })
         .await?
     }
@@ -820,6 +873,78 @@ impl Store {
             Ok(updated > 0)
         })
         .await?
+    }
+}
+
+fn compute_balance_inner(
+    conn: &mut SqliteConnection,
+    child_id: &str,
+) -> Result<i32, StorageError> {
+    use diesel::dsl::sum;
+    let earned: Option<i64> = schema::rewards::table
+        .filter(schema::rewards::child_id.eq(child_id))
+        .filter(schema::rewards::is_borrowed.eq(false))
+        .select(sum(schema::rewards::minutes))
+        .first::<Option<i64>>(conn)?;
+    let borrowed: Option<i64> = schema::rewards::table
+        .filter(schema::rewards::child_id.eq(child_id))
+        .filter(schema::rewards::is_borrowed.eq(true))
+        .select(sum(schema::rewards::minutes))
+        .first::<Option<i64>>(conn)?;
+    let used: i64 = schema::usage_minutes::table
+        .filter(schema::usage_minutes::child_id.eq(child_id))
+        .select(schema::usage_minutes::minute_ts)
+        .distinct()
+        .count()
+        .get_result::<i64>(conn)?;
+    Ok((earned.unwrap_or(0) - borrowed.unwrap_or(0) - used) as i32)
+}
+
+fn all_required_tasks_done_today_inner(
+    conn: &mut SqliteConnection,
+    child_id: &str,
+) -> Result<bool, StorageError> {
+    let today = Utc::now().date_naive();
+    let today_start = today
+        .and_hms_opt(0, 0, 0)
+        .expect("valid midnight timestamp");
+    let tomorrow_start = (today + chrono::Days::new(1))
+        .and_hms_opt(0, 0, 0)
+        .expect("valid midnight timestamp");
+
+    let required_task_ids: Vec<String> = schema::tasks::table
+        .filter(schema::tasks::required.eq(true))
+        .select(schema::tasks::id)
+        .load(conn)?;
+
+    if required_task_ids.is_empty() {
+        return Ok(true);
+    }
+
+    let completed_task_ids: Vec<String> = schema::task_completions::table
+        .filter(schema::task_completions::child_id.eq(child_id))
+        .filter(schema::task_completions::done_at.ge(today_start))
+        .filter(schema::task_completions::done_at.lt(tomorrow_start))
+        .select(schema::task_completions::task_id)
+        .distinct()
+        .load(conn)?;
+
+    Ok(required_task_ids
+        .iter()
+        .all(|tid| completed_task_ids.contains(tid)))
+}
+
+fn compute_remaining_delta(mins: i32, is_borrowed: bool, balance: i32) -> i32 {
+    if is_borrowed {
+        mins
+    } else if mins < 0 {
+        mins
+    } else if balance >= 0 {
+        mins
+    } else if balance + mins <= 0 {
+        0
+    } else {
+        balance + mins
     }
 }
 
