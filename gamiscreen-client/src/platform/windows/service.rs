@@ -1,16 +1,14 @@
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::os::windows::ffi::OsStrExt;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
-use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
-use windows_sys::Win32::Foundation::{GetLastError, NO_ERROR};
+use windows_sys::Win32::Foundation::NO_ERROR;
 use windows_sys::Win32::System::RemoteDesktop::WTSSESSION_NOTIFICATION;
 use windows_sys::Win32::System::Services::{
     RegisterServiceCtrlHandlerExW, SERVICE_ACCEPT_SESSIONCHANGE, SERVICE_ACCEPT_SHUTDOWN,
@@ -24,9 +22,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WTS_SESSION_LOCK, WTS_SESSION_LOGOFF, WTS_SESSION_LOGON, WTS_SESSION_UNLOCK,
 };
 
+use super::util::{SERVICE_NAME, last_error, to_wide_null};
 use crate::AppError;
 
-const SERVICE_NAME: &str = "GamiScreenAgent";
 const SERVICE_DISPLAY_WAIT_HINT_MS: u32 = 5_000;
 
 pub fn run_service_host() -> Result<(), AppError> {
@@ -148,7 +146,9 @@ unsafe extern "system" fn service_control_handler(
     if context.is_null() {
         return NO_ERROR;
     }
-    let ctx = &*(context as *const ServiceContext);
+    // SAFETY: `context` was set to an `Arc::into_raw(ctx)` pointer in `service_main_impl`
+    // and is guaranteed non-null (checked above) and valid for the service lifetime.
+    let ctx = unsafe { &*(context as *const ServiceContext) };
 
     trace!(control, event_type, "service control handler invoked");
 
@@ -168,7 +168,9 @@ unsafe extern "system" fn service_control_handler(
             if event_data.is_null() {
                 return NO_ERROR;
             }
-            let notification = *(event_data as *const WTSSESSION_NOTIFICATION);
+            // SAFETY: SCM guarantees `event_data` points to a valid WTSSESSION_NOTIFICATION
+            // for SERVICE_CONTROL_SESSIONCHANGE events. Null check is above.
+            let notification = unsafe { *(event_data as *const WTSSESSION_NOTIFICATION) };
             let session_id = notification.dwSessionId;
             trace!(event_type, session_id, "received session change event");
             if let Some(kind) = map_session_event(event_type) {
@@ -238,7 +240,7 @@ impl ServiceContext {
     }
 
     fn set_handle(&self, handle: SERVICE_STATUS_HANDLE) {
-        self.handle.store(handle as *mut c_void, Ordering::Release);
+        self.handle.store(handle, Ordering::Release);
     }
 
     fn update_status<F>(&self, update: F)
@@ -255,25 +257,25 @@ impl ServiceContext {
             }
             unsafe {
                 let handle = self.handle.load(Ordering::Acquire);
-                if !handle.is_null() {
-                    if SetServiceStatus(handle as SERVICE_STATUS_HANDLE, &mut *status) == 0 {
-                        let err = last_error();
-                        warn!(error=%err, "SetServiceStatus failed");
-                    }
+                if !handle.is_null()
+                    && SetServiceStatus(handle as SERVICE_STATUS_HANDLE, &*status) == 0
+                {
+                    let err = last_error();
+                    warn!(error=%err, "SetServiceStatus failed");
                 }
             }
         }
     }
 
     fn resend_status(&self) {
-        if let Ok(mut status) = self.status.lock() {
+        if let Ok(status) = self.status.lock() {
             unsafe {
                 let handle = self.handle.load(Ordering::Acquire);
-                if !handle.is_null() {
-                    if SetServiceStatus(handle as SERVICE_STATUS_HANDLE, &mut *status) == 0 {
-                        let err = last_error();
-                        warn!(error=%err, "SetServiceStatus failed while interrogating");
-                    }
+                if !handle.is_null()
+                    && SetServiceStatus(handle as SERVICE_STATUS_HANDLE, &*status) == 0
+                {
+                    let err = last_error();
+                    warn!(error=%err, "SetServiceStatus failed while interrogating");
                 }
             }
         }
@@ -549,20 +551,196 @@ async fn session_worker_task(
     generation: u64,
     cancel: CancellationToken,
 ) -> WorkerExitKind {
-    info!(session_id, generation, "session worker started");
-    let mut ticker = tokio::time::interval(Duration::from_secs(60));
-    ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    loop {
-        tokio::select! {
-            _ = cancel.cancelled() => {
-                info!(session_id, generation, "session worker stopped (requested)");
-                return WorkerExitKind::Requested;
+    info!(
+        session_id,
+        generation, "session worker starting child process"
+    );
+
+    let child = match spawn_session_agent(session_id) {
+        Ok(child) => child,
+        Err(e) => {
+            error!(session_id, generation, error=%e, "failed to spawn session agent");
+            return WorkerExitKind::Failed(e.to_string());
+        }
+    };
+
+    info!(
+        session_id,
+        generation,
+        pid = child.pid,
+        "session agent process spawned"
+    );
+
+    // Cast handles to usize so they are Send-safe for use across await points.
+    // SendHandle is not Copy/Clone to prevent aliasing; we consume it here.
+    let proc_h = child.process_handle.0 as usize;
+    let thread_h = child.thread_handle.0 as usize;
+
+    // Wait for either the child process to exit or cancellation (F1 fix)
+    let result = tokio::select! {
+        _ = cancel.cancelled() => {
+            info!(session_id, generation, "cancel requested; terminating session agent");
+            unsafe {
+                let h = proc_h as windows_sys::Win32::Foundation::HANDLE;
+                windows_sys::Win32::System::Threading::TerminateProcess(h, 1);
+                // Wait for the process to actually exit so the spawn_blocking thread
+                // in wait_for_process finishes before we close handles.
+                windows_sys::Win32::System::Threading::WaitForSingleObject(h, 5000);
             }
-            _ = ticker.tick() => {
-                debug!(session_id, generation, "session worker heartbeat");
+            WorkerExitKind::Requested
+        }
+        exit_code = wait_for_process(proc_h) => {
+            match exit_code {
+                Ok(0) => {
+                    info!(session_id, generation, "session agent exited cleanly");
+                    WorkerExitKind::Completed
+                }
+                Ok(code) => {
+                    warn!(session_id, generation, exit_code = code, "session agent exited with error");
+                    WorkerExitKind::Failed(format!("exit code {code}"))
+                }
+                Err(e) => {
+                    error!(session_id, generation, error=%e, "failed to wait for session agent");
+                    WorkerExitKind::Failed(e.to_string())
+                }
+            }
+        }
+    };
+
+    // Clean up handles
+    unsafe {
+        windows_sys::Win32::Foundation::CloseHandle(
+            proc_h as windows_sys::Win32::Foundation::HANDLE,
+        );
+        windows_sys::Win32::Foundation::CloseHandle(
+            thread_h as windows_sys::Win32::Foundation::HANDLE,
+        );
+    }
+
+    result
+}
+
+/// Wrapper to make a Win32 HANDLE sendable across threads.
+/// SAFETY: Win32 handles are safe to send between threads; the OS manages synchronization.
+struct SendHandle(windows_sys::Win32::Foundation::HANDLE);
+unsafe impl Send for SendHandle {}
+
+struct ChildProcess {
+    process_handle: SendHandle,
+    thread_handle: SendHandle,
+    pid: u32,
+}
+
+/// RAII guard for user token and environment block allocated during process spawning.
+struct SpawnResources {
+    user_token: windows_sys::Win32::Foundation::HANDLE,
+    env_block: *mut std::ffi::c_void,
+}
+
+impl Drop for SpawnResources {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.env_block.is_null() {
+                windows_sys::Win32::System::Environment::DestroyEnvironmentBlock(self.env_block);
+            }
+            if !self.user_token.is_null() {
+                windows_sys::Win32::Foundation::CloseHandle(self.user_token);
             }
         }
     }
+}
+
+fn spawn_session_agent(session_id: u32) -> Result<ChildProcess, std::io::Error> {
+    use windows_sys::Win32::System::Environment::CreateEnvironmentBlock;
+    use windows_sys::Win32::System::RemoteDesktop::WTSQueryUserToken;
+    use windows_sys::Win32::System::Threading::{
+        CREATE_NEW_CONSOLE, CREATE_UNICODE_ENVIRONMENT, CreateProcessAsUserW, PROCESS_INFORMATION,
+        STARTUPINFOW,
+    };
+
+    unsafe {
+        let mut user_token: windows_sys::Win32::Foundation::HANDLE = std::ptr::null_mut();
+        if WTSQueryUserToken(session_id, &mut user_token) == 0 {
+            return Err(last_error());
+        }
+
+        let mut env_block: *mut std::ffi::c_void = std::ptr::null_mut();
+        if CreateEnvironmentBlock(&mut env_block, user_token, 0) == 0 {
+            let err = last_error();
+            windows_sys::Win32::Foundation::CloseHandle(user_token);
+            return Err(err);
+        }
+
+        // RAII guard ensures cleanup on any error path below (F9 fix)
+        let resources = SpawnResources {
+            user_token,
+            env_block,
+        };
+
+        let exe_path = std::env::current_exe()?;
+        let cmd = format!(
+            "\"{}\" session-agent --session-id {}",
+            exe_path.display(),
+            session_id
+        );
+        let mut cmd_w = to_wide_null(&cmd);
+
+        let si: STARTUPINFOW = {
+            let mut si: STARTUPINFOW = std::mem::zeroed();
+            si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+            si
+        };
+        let mut pi: PROCESS_INFORMATION = std::mem::zeroed();
+
+        let create_result = CreateProcessAsUserW(
+            resources.user_token,
+            std::ptr::null(),   // application name (use command line)
+            cmd_w.as_mut_ptr(), // command line
+            std::ptr::null(),   // process security attributes
+            std::ptr::null(),   // thread security attributes
+            0,                  // don't inherit handles
+            CREATE_NEW_CONSOLE | CREATE_UNICODE_ENVIRONMENT,
+            resources.env_block, // environment
+            std::ptr::null(),    // current directory (inherit)
+            &si,
+            &mut pi,
+        );
+
+        // resources dropped here automatically via RAII
+        drop(resources);
+
+        if create_result == 0 {
+            return Err(last_error());
+        }
+
+        Ok(ChildProcess {
+            process_handle: SendHandle(pi.hProcess),
+            thread_handle: SendHandle(pi.hThread),
+            pid: pi.dwProcessId,
+        })
+    }
+}
+
+async fn wait_for_process(handle_val: usize) -> Result<u32, std::io::Error> {
+    tokio::task::spawn_blocking(move || unsafe {
+        let h = handle_val as windows_sys::Win32::Foundation::HANDLE;
+        const INFINITE: u32 = 0xFFFFFFFF;
+        const WAIT_FAILED_VAL: u32 = 0xFFFFFFFF;
+
+        // F2 fix: check WaitForSingleObject return value
+        let wait_result = windows_sys::Win32::System::Threading::WaitForSingleObject(h, INFINITE);
+        if wait_result == WAIT_FAILED_VAL {
+            return Err(last_error());
+        }
+
+        let mut exit_code: u32 = 0;
+        if windows_sys::Win32::System::Threading::GetExitCodeProcess(h, &mut exit_code) == 0 {
+            return Err(last_error());
+        }
+        Ok(exit_code)
+    })
+    .await
+    .map_err(std::io::Error::other)?
 }
 
 enum ServiceEvent {
@@ -619,15 +797,4 @@ impl SessionDeactivateReason {
             SessionDeactivateReason::RemoteDisconnect => "remote-disconnect",
         }
     }
-}
-
-fn to_wide_null(value: &str) -> Vec<u16> {
-    std::ffi::OsStr::new(value)
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect()
-}
-
-fn last_error() -> std::io::Error {
-    std::io::Error::from_raw_os_error(unsafe { GetLastError() } as i32)
 }

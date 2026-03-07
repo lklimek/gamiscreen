@@ -66,8 +66,10 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_System_Memory",
     "Win32_Foundation",
     "Win32_System_Services",
+    "Win32_System_Environment",
 ] }
 keyring = { version = "3.6.3", features = ["windows-native"] }
+winrt-notification = "0.5"
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 zbus = { version = "5.13.2", default-features = false, features = ["tokio"] }
