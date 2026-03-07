@@ -29,6 +29,7 @@ Top-level fields
   - `id` (string)
   - `name` (string)
   - `minutes` (number): minutes rewarded when completed.
+  - `required` (bool, optional, default: false): when true, the child must complete this task daily (UTC) before screen time is unlocked. All required tasks must be completed.
 
 Example
 See `gamiscreen-server/config.yaml.example` for a complete, annotated example including example bcrypt hashes and two children.

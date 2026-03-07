@@ -365,8 +365,6 @@ impl Store {
         task: &str,
         by_username: &str,
     ) -> Result<(), StorageError> {
-        use models::NewTaskCompletion;
-        use schema::task_completions;
         let pool = self.pool.clone();
         let child = child.to_string();
         let task = task.to_string();
@@ -374,15 +372,7 @@ impl Store {
         tokio::task::spawn_blocking(move || -> Result<(), StorageError> {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
-            let rec = NewTaskCompletion {
-                child_id: &child,
-                task_id: &task,
-                by_username: &user,
-            };
-            diesel::insert_into(task_completions::table)
-                .values(&rec)
-                .execute(&mut conn)?;
-            Ok(())
+            record_task_done_inner(&mut conn, &child, &task, &user)
         })
         .await?
     }
@@ -500,9 +490,7 @@ impl Store {
         let pool = self.pool.clone();
         let approver = approver.to_string();
         tokio::task::spawn_blocking(move || -> Result<Option<(String, i32)>, StorageError> {
-            use crate::storage::schema::{
-                balances, rewards, task_completions, task_submissions, tasks,
-            };
+            use crate::storage::schema::{balances, rewards, task_submissions, tasks};
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
             let mut result: Option<(String, i32)> = None;
@@ -521,6 +509,7 @@ impl Store {
                 let Some((child_id, task_id, mins, task_name)) = rec else {
                     return Ok(());
                 };
+                // Balance BEFORE this reward — used to determine how much goes to remaining vs debt repayment
                 let balance = compute_balance_inner(conn, &child_id)?;
                 let new_reward = NewReward {
                     child_id: &child_id,
@@ -540,14 +529,7 @@ impl Store {
                     .filter(balances::child_id.eq(&child_id))
                     .select(balances::minutes_remaining)
                     .first(conn)?;
-                let tc = models::NewTaskCompletion {
-                    child_id: &child_id,
-                    task_id: &task_id,
-                    by_username: &approver,
-                };
-                diesel::insert_into(task_completions::table)
-                    .values(&tc)
-                    .execute(conn)?;
+                record_task_done_inner(conn, &child_id, &task_id, &approver)?;
                 diesel::delete(
                     task_submissions::table.filter(task_submissions::id.eq(submission_id)),
                 )
@@ -623,6 +605,10 @@ impl Store {
         .await?
     }
 
+    /// Add a reward and optionally record task completion in a single transaction.
+    ///
+    /// When `task_completion` is `Some((task_id, approved_by))`, the task is marked
+    /// done inside the same transaction as the reward, ensuring atomicity.
     pub async fn add_reward_minutes(
         &self,
         child_id: &str,
@@ -630,16 +616,19 @@ impl Store {
         task: Option<&str>,
         description: Option<&str>,
         is_borrowed: bool,
+        task_completion: Option<(&str, &str)>,
     ) -> Result<i32, StorageError> {
         use schema::{balances, rewards};
         let pool = self.pool.clone();
         let child = child_id.to_string();
         let task_opt = task.map(|s| s.to_string());
         let description_opt = description.map(|s| s.to_string());
+        let completion_opt = task_completion.map(|(tid, user)| (tid.to_string(), user.to_string()));
         tokio::task::spawn_blocking(move || -> Result<i32, StorageError> {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
             conn.immediate_transaction(|conn| -> Result<i32, StorageError> {
+                // Balance BEFORE this reward — used to determine how much goes to remaining vs debt repayment
                 let balance = compute_balance_inner(conn, &child)?;
                 let new_reward = NewReward {
                     child_id: &child,
@@ -655,6 +644,9 @@ impl Store {
                 diesel::update(balances::table.filter(balances::child_id.eq(&child)))
                     .set(balances::minutes_remaining.eq(balances::minutes_remaining + delta))
                     .execute(conn)?;
+                if let Some((ref tid, ref user)) = completion_opt {
+                    record_task_done_inner(conn, &child, tid, user)?;
+                }
                 let new_remaining: i32 = balances::table
                     .filter(balances::child_id.eq(&child))
                     .select(balances::minutes_remaining)
@@ -875,6 +867,25 @@ impl Store {
     }
 }
 
+fn record_task_done_inner(
+    conn: &mut SqliteConnection,
+    child_id: &str,
+    task_id: &str,
+    by_username: &str,
+) -> Result<(), StorageError> {
+    use models::NewTaskCompletion;
+    use schema::task_completions;
+    let rec = NewTaskCompletion {
+        child_id,
+        task_id,
+        by_username,
+    };
+    diesel::insert_into(task_completions::table)
+        .values(&rec)
+        .execute(conn)?;
+    Ok(())
+}
+
 fn compute_balance_inner(conn: &mut SqliteConnection, child_id: &str) -> Result<i32, StorageError> {
     use diesel::dsl::sum;
     let earned: Option<i64> = schema::rewards::table
@@ -893,9 +904,12 @@ fn compute_balance_inner(conn: &mut SqliteConnection, child_id: &str) -> Result<
         .distinct()
         .count()
         .get_result::<i64>(conn)?;
-    Ok((earned.unwrap_or(0) - borrowed.unwrap_or(0) - used) as i32)
+    let result = earned.unwrap_or(0) - borrowed.unwrap_or(0) - used;
+    Ok(result.clamp(i32::MIN as i64, i32::MAX as i64) as i32)
 }
 
+// Note: required tasks are global, not per-child. All children must complete all required tasks.
+// Day boundary uses UTC. Configure server timezone or document for users in non-UTC zones.
 fn all_required_tasks_done_today_inner(
     conn: &mut SqliteConnection,
     child_id: &str,
@@ -930,6 +944,10 @@ fn all_required_tasks_done_today_inner(
         .all(|tid| completed_task_ids.contains(tid)))
 }
 
+/// Compute how much `minutes_remaining` should change for a reward/penalty.
+///
+/// Penalties (negative mins) always reduce remaining directly, even when balance is
+/// negative. This is intentional -- penalties are punitive and should have immediate effect.
 fn compute_remaining_delta(mins: i32, is_borrowed: bool, balance: i32) -> i32 {
     if is_borrowed || mins < 0 || balance >= 0 {
         // Borrow: always adds to remaining
@@ -942,6 +960,65 @@ fn compute_remaining_delta(mins: i32, is_borrowed: bool, balance: i32) -> i32 {
     } else {
         // Surplus after debt repayment
         balance + mins
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compute_remaining_delta;
+
+    #[test]
+    fn earned_reward_positive_balance() {
+        // Balance 5, earn 10 -> full amount goes to remaining
+        assert_eq!(compute_remaining_delta(10, false, 5), 10);
+    }
+
+    #[test]
+    fn earned_reward_negative_balance_partial_repay() {
+        // Balance -10, earn 5 -> all goes to debt repayment, delta = 0
+        assert_eq!(compute_remaining_delta(5, false, -10), 0);
+    }
+
+    #[test]
+    fn earned_reward_negative_balance_full_repay_with_surplus() {
+        // Balance -5, earn 8 -> 5 repays debt, 3 surplus goes to remaining
+        assert_eq!(compute_remaining_delta(8, false, -5), 3); // balance + mins = -5 + 8 = 3
+    }
+
+    #[test]
+    fn borrowed_time_positive_balance() {
+        // Borrowing always adds directly to remaining
+        assert_eq!(compute_remaining_delta(10, true, 5), 10);
+    }
+
+    #[test]
+    fn borrowed_time_negative_balance() {
+        // Borrowing always adds directly to remaining, even when in debt
+        assert_eq!(compute_remaining_delta(10, true, -5), 10);
+    }
+
+    #[test]
+    fn penalty_positive_balance() {
+        // Penalty (negative mins) always reduces remaining directly
+        assert_eq!(compute_remaining_delta(-5, false, 10), -5);
+    }
+
+    #[test]
+    fn penalty_negative_balance() {
+        // Penalty always reduces remaining directly, even when already in debt
+        assert_eq!(compute_remaining_delta(-5, false, -10), -5);
+    }
+
+    #[test]
+    fn earned_reward_zero_balance() {
+        // Balance exactly 0 -> full amount goes to remaining
+        assert_eq!(compute_remaining_delta(10, false, 0), 10);
+    }
+
+    #[test]
+    fn earned_reward_exact_debt_repayment() {
+        // Balance -5, earn 5 -> exactly repays debt, balance+mins = 0
+        assert_eq!(compute_remaining_delta(5, false, -5), 0);
     }
 }
 

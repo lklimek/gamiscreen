@@ -112,6 +112,27 @@ impl AppState {
         Ok(effective)
     }
 
+    /// Compute (effective_remaining, balance, blocked_by_tasks) for a child.
+    async fn compute_child_status(&self, child_id: &str) -> Result<(i32, i32, bool), AppError> {
+        let remaining = self
+            .store
+            .get_remaining(child_id)
+            .await
+            .map_err(AppError::internal)?;
+        let all_done = self
+            .store
+            .all_required_tasks_done_today(child_id)
+            .await
+            .map_err(AppError::internal)?;
+        let effective = if all_done { remaining } else { 0 };
+        let balance = self
+            .store
+            .compute_balance(child_id)
+            .await
+            .map_err(AppError::internal)?;
+        Ok((effective, balance, !all_done))
+    }
+
     fn dispatch_event(&self, event: ServerEvent) {
         let _ = self.notif_tx.send(event.clone());
         if let Some(push) = &self.push {
@@ -463,23 +484,16 @@ async fn api_remaining(
     Path(id): Path<String>,
 ) -> Result<Json<api::RemainingDto>, AppError> {
     // ACL enforced by middleware
+    // Warm the cache if needed
     let child_mutex = state.child_mutex(&id).await;
     let mut child_guard = child_mutex.lock().await;
+    let _ = state.remaining_minutes(&id, &mut child_guard).await?;
+    drop(child_guard);
 
-    let remaining = state.remaining_minutes(&id, &mut child_guard).await?;
-    let balance = state
-        .store
-        .compute_balance(&id)
-        .await
-        .map_err(AppError::internal)?;
-    let blocked = !state
-        .store
-        .all_required_tasks_done_today(&id)
-        .await
-        .map_err(AppError::internal)?;
+    let (effective, balance, blocked) = state.compute_child_status(&id).await?;
     Ok(Json(api::RemainingDto {
         child_id: id,
-        remaining_minutes: remaining,
+        remaining_minutes: effective,
         balance,
         blocked_by_tasks: blocked,
     }))
@@ -562,6 +576,10 @@ async fn api_child_reward(
         ));
     }
 
+    let task_completion = body
+        .task_id
+        .as_deref()
+        .map(|tid| (tid, auth.claims.sub.as_str()));
     let new_remaining = state
         .store
         .add_reward_minutes(
@@ -570,35 +588,19 @@ async fn api_child_reward(
             body.task_id.as_deref(),
             Some(desc_to_store.as_str()),
             is_borrowed,
+            task_completion,
         )
         .await
         .map_err(AppError::internal)?;
     *child_guard = Some(new_remaining);
-    if let Some(tid) = body.task_id.as_deref() {
-        state
-            .store
-            .record_task_done(&p.id, tid, &auth.claims.sub)
-            .await
-            .map_err(AppError::internal)?;
-    }
 
-    let all_done = state
-        .store
-        .all_required_tasks_done_today(&p.id)
-        .await
-        .map_err(AppError::internal)?;
-    let effective = if all_done { new_remaining } else { 0 };
-    let balance = state
-        .store
-        .compute_balance(&p.id)
-        .await
-        .map_err(AppError::internal)?;
+    let (effective, balance, blocked) = state.compute_child_status(&p.id).await?;
 
     let event = ServerEvent::RemainingUpdated {
         child_id: p.id.clone(),
         remaining_minutes: effective,
         balance,
-        blocked_by_tasks: !all_done,
+        blocked_by_tasks: blocked,
     };
     state.dispatch_event(event);
 
@@ -871,7 +873,7 @@ async fn sse_notifications(
                 .store
                 .all_required_tasks_done_today(&cid)
                 .await
-                .unwrap_or(true);
+                .unwrap_or(false); // on failure, assume tasks NOT done (blocked)
             init_items.push(ServerEvent::RemainingUpdated {
                 child_id: cid.clone(),
                 remaining_minutes: rem,
@@ -961,22 +963,14 @@ async fn api_approve_submission(
         let child_mutex = state.child_mutex(&child_id).await;
         let mut child_guard = child_mutex.lock().await;
         *child_guard = Some(new_remaining);
-        let all_done = state
-            .store
-            .all_required_tasks_done_today(&child_id)
-            .await
-            .map_err(AppError::internal)?;
-        let effective = if all_done { new_remaining } else { 0 };
-        let balance = state
-            .store
-            .compute_balance(&child_id)
-            .await
-            .map_err(AppError::internal)?;
+        drop(child_guard);
+
+        let (effective, balance, blocked) = state.compute_child_status(&child_id).await?;
         let event = ServerEvent::RemainingUpdated {
             child_id: child_id.clone(),
             remaining_minutes: effective,
             balance,
-            blocked_by_tasks: !all_done,
+            blocked_by_tasks: blocked,
         };
         state.dispatch_event(event);
         if let Ok(c) = state.store.pending_submissions_count().await {
@@ -1058,17 +1052,10 @@ async fn api_device_heartbeat(
         .await
         .map_err(AppError::internal)?;
     *child_guard = Some(new_remaining);
-    let all_done = state
-        .store
-        .all_required_tasks_done_today(&p.id)
-        .await
-        .map_err(AppError::internal)?;
-    let effective = if all_done { new_remaining } else { 0 };
-    let balance = state
-        .store
-        .compute_balance(&p.id)
-        .await
-        .map_err(AppError::internal)?;
+    drop(child_guard);
+
+    let (effective, balance, blocked) = state.compute_child_status(&p.id).await?;
+    let all_done = !blocked;
 
     let prev_effective = if all_done { prev } else { 0 };
     if effective != prev_effective {
@@ -1076,7 +1063,7 @@ async fn api_device_heartbeat(
             child_id: p.id.clone(),
             remaining_minutes: effective,
             balance,
-            blocked_by_tasks: !all_done,
+            blocked_by_tasks: blocked,
         };
         state.dispatch_event(event);
     }
@@ -1084,7 +1071,7 @@ async fn api_device_heartbeat(
     Ok(Json(api::HeartbeatResp {
         remaining_minutes: effective,
         balance,
-        blocked_by_tasks: !all_done,
+        blocked_by_tasks: blocked,
     }))
 }
 

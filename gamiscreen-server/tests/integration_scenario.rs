@@ -272,6 +272,94 @@ async fn start_server(
     Ok((addr, handle))
 }
 
+async fn start_server_with_tasks(
+    tmp_db: &Path,
+    tasks: Vec<Task>,
+) -> Result<(SocketAddr, tokio::task::JoinHandle<()>), std::io::Error> {
+    let parent_pwd = "secret123";
+    let child_pwd = "kidpass";
+    let parent_hash = bcrypt::hash(parent_pwd, bcrypt::DEFAULT_COST).unwrap();
+    let child_hash = bcrypt::hash(child_pwd, bcrypt::DEFAULT_COST).unwrap();
+    let config = server::AppConfig {
+        config_version: env!("CARGO_PKG_VERSION").to_string(),
+        push: None,
+        tenant_id: TENANT_ID.into(),
+        children: vec![
+            Child {
+                id: "alice".into(),
+                display_name: "Alice".into(),
+            },
+            Child {
+                id: "bob".into(),
+                display_name: "Bob".into(),
+            },
+        ],
+        tasks,
+        jwt_secret: "testsecret".into(),
+        users: vec![
+            server::UserConfig {
+                username: "parent".into(),
+                password_hash: parent_hash,
+                role: server::Role::Parent,
+                child_id: None,
+            },
+            server::UserConfig {
+                username: "alice".into(),
+                password_hash: child_hash,
+                role: server::Role::Child,
+                child_id: Some("alice".into()),
+            },
+        ],
+        dev_cors_origin: None,
+        listen_port: None,
+    };
+
+    let store = storage::Store::connect_sqlite(tmp_db.to_str().unwrap())
+        .await
+        .expect("db");
+    store
+        .seed_from_config(&config.children, &config.tasks)
+        .await
+        .expect("seed");
+
+    let state = server::AppState::new(config, store);
+    let app = server::router(state);
+
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
+    let addr = listener.local_addr()?;
+    let handle = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    Ok((addr, handle))
+}
+
+impl TestServer {
+    async fn spawn_with_tasks(tasks: Vec<Task>) -> Option<Self> {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let (addr, handle) = match start_server_with_tasks(&db_path, tasks).await {
+            Ok(v) => v,
+            Err(e) if e.kind() == ErrorKind::PermissionDenied => {
+                eprintln!("Skipping test due to sandbox restrictions: {e}");
+                return None;
+            }
+            Err(e) => panic!("failed to start server: {e}"),
+        };
+        Some(Self {
+            base: format!("http://{}", addr),
+            client: Client::new(),
+            handle,
+            db_path: db_path.clone(),
+            _tempdir: dir,
+        })
+    }
+}
+
 fn tenant_path(suffix: &str) -> String {
     format!(
         "{}/{}",
@@ -477,6 +565,7 @@ async fn parent_access_control() {
         )
         .await;
     assert_eq!(reward_body.remaining_minutes, 2);
+    assert_eq!(reward_body.balance, 2);
 
     let rewards_list: Vec<api::RewardHistoryItemDto> = server
         .request_expect_json(
@@ -500,6 +589,8 @@ async fn parent_access_control() {
         .await;
     assert_eq!(remaining.child_id, "alice");
     assert_eq!(remaining.remaining_minutes, 2);
+    assert_eq!(remaining.balance, 2);
+    assert!(!remaining.blocked_by_tasks);
 
     let notifications: Vec<api::NotificationItemDto> = server
         .request_expect_json(
@@ -1119,4 +1210,192 @@ async fn login_rate_limit_enforced() {
             StatusCode::TOO_MANY_REQUESTS,
         )
         .await;
+}
+
+#[tokio::test]
+async fn test_borrowing_flow() {
+    let Some(server) = TestServer::spawn().await else {
+        return;
+    };
+    let token = server.login("parent", "secret123").await;
+
+    // Step 1: Borrow 10 min for alice
+    let borrow_resp: api::RewardResp = server
+        .request_expect_json(
+            "POST",
+            &tenant_path("children/alice/reward"),
+            Some(&token),
+            Some(to_value(&api::RewardReq {
+                child_id: "alice".to_string(),
+                task_id: None,
+                minutes: Some(10),
+                description: Some("Borrowed time".to_string()),
+                is_borrowed: Some(true),
+            })),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(borrow_resp.remaining_minutes, 10);
+    assert_eq!(borrow_resp.balance, -10);
+
+    let remaining: api::RemainingDto = server
+        .request_expect_json(
+            "GET",
+            &tenant_path("children/alice/remaining"),
+            Some(&token),
+            None,
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(remaining.remaining_minutes, 10);
+    assert_eq!(remaining.balance, -10);
+
+    // Step 2: Earn 5 min via homework task (partial debt repay)
+    let earn_resp: api::RewardResp = server
+        .request_expect_json(
+            "POST",
+            &tenant_path("children/alice/reward"),
+            Some(&token),
+            Some(to_value(&api::RewardReq {
+                child_id: "alice".to_string(),
+                task_id: Some("homework".to_string()),
+                minutes: None,
+                description: None,
+                is_borrowed: None,
+            })),
+            StatusCode::OK,
+        )
+        .await;
+    // homework = 2 min in test config. Balance was -10, now -10+2 = -8. Remaining unchanged (all goes to debt).
+    assert_eq!(earn_resp.remaining_minutes, 10);
+    assert_eq!(earn_resp.balance, -8);
+
+    // Step 3: Earn 8 min custom (full debt repay + surplus)
+    let earn_resp2: api::RewardResp = server
+        .request_expect_json(
+            "POST",
+            &tenant_path("children/alice/reward"),
+            Some(&token),
+            Some(to_value(&api::RewardReq {
+                child_id: "alice".to_string(),
+                task_id: None,
+                minutes: Some(8),
+                description: Some("Extra time".to_string()),
+                is_borrowed: None,
+            })),
+            StatusCode::OK,
+        )
+        .await;
+    // Balance was -8, earn 8 -> balance = 0. Surplus = -8 + 8 = 0 -> delta = 0
+    assert_eq!(earn_resp2.remaining_minutes, 10);
+    assert_eq!(earn_resp2.balance, 0);
+
+    // Step 4: Earn 5 more to verify positive balance works
+    let earn_resp3: api::RewardResp = server
+        .request_expect_json(
+            "POST",
+            &tenant_path("children/alice/reward"),
+            Some(&token),
+            Some(to_value(&api::RewardReq {
+                child_id: "alice".to_string(),
+                task_id: None,
+                minutes: Some(5),
+                description: Some("Bonus".to_string()),
+                is_borrowed: None,
+            })),
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(earn_resp3.remaining_minutes, 15);
+    assert_eq!(earn_resp3.balance, 5);
+}
+
+#[tokio::test]
+async fn test_required_tasks_blocking() {
+    let tasks = vec![
+        Task {
+            id: "homework".into(),
+            name: "Homework".into(),
+            minutes: 5,
+            required: true,
+        },
+        Task {
+            id: "chores".into(),
+            name: "Chores".into(),
+            minutes: 3,
+            required: false,
+        },
+    ];
+    let Some(server) = TestServer::spawn_with_tasks(tasks).await else {
+        return;
+    };
+    let token = server.login("parent", "secret123").await;
+
+    // Step 1: Grant alice 10 min custom reward
+    let reward_resp: api::RewardResp = server
+        .request_expect_json(
+            "POST",
+            &tenant_path("children/alice/reward"),
+            Some(&token),
+            Some(to_value(&api::RewardReq {
+                child_id: "alice".to_string(),
+                task_id: None,
+                minutes: Some(10),
+                description: Some("Custom".to_string()),
+                is_borrowed: None,
+            })),
+            StatusCode::OK,
+        )
+        .await;
+    // Blocked by required tasks, so effective remaining = 0
+    assert_eq!(reward_resp.remaining_minutes, 0);
+    assert_eq!(reward_resp.balance, 10);
+
+    // Step 2: Verify remaining shows blocked
+    let remaining: api::RemainingDto = server
+        .request_expect_json(
+            "GET",
+            &tenant_path("children/alice/remaining"),
+            Some(&token),
+            None,
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(remaining.remaining_minutes, 0);
+    assert!(remaining.blocked_by_tasks);
+    assert_eq!(remaining.balance, 10);
+
+    // Step 3: Complete the required task via reward with task_id (triggers record_task_done)
+    let task_reward: api::RewardResp = server
+        .request_expect_json(
+            "POST",
+            &tenant_path("children/alice/reward"),
+            Some(&token),
+            Some(to_value(&api::RewardReq {
+                child_id: "alice".to_string(),
+                task_id: Some("homework".to_string()),
+                minutes: None,
+                description: None,
+                is_borrowed: None,
+            })),
+            StatusCode::OK,
+        )
+        .await;
+    // Now unblocked: remaining = 10 (custom) + 5 (homework) = 15
+    assert!(task_reward.remaining_minutes > 0);
+    assert_eq!(task_reward.remaining_minutes, 15);
+    assert_eq!(task_reward.balance, 15);
+
+    // Step 4: Verify remaining is now unblocked
+    let remaining_after: api::RemainingDto = server
+        .request_expect_json(
+            "GET",
+            &tenant_path("children/alice/remaining"),
+            Some(&token),
+            None,
+            StatusCode::OK,
+        )
+        .await;
+    assert!(remaining_after.remaining_minutes > 0);
+    assert!(!remaining_after.blocked_by_tasks);
 }
