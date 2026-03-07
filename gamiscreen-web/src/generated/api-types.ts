@@ -3,55 +3,284 @@
 
 export type AuthReq = { username: string, password: string, };
 
-export type AuthResp = { token: string, };
+export type AuthResp = { 
+/**
+ * JWT bearer token for subsequent authenticated requests.
+ */
+token: string, };
 
-export type ChildDto = { id: string, display_name: string, };
+export type ChildDto = { id: string, 
+/**
+ * Human-readable name shown in the UI.
+ */
+display_name: string, };
 
-export type TaskDto = { id: string, name: string, minutes: number, required: boolean, };
+export type TaskDto = { id: string, 
+/**
+ * Short label shown to the child (e.g. "Brush teeth").
+ */
+name: string, 
+/**
+ * Screen-time minutes awarded when this task is completed.
+ */
+minutes: number, 
+/**
+ * When true, the child must complete this task daily before any screen time unlocks.
+ */
+required: boolean, };
 
-export type TaskWithStatusDto = { id: string, name: string, minutes: number, required: boolean, last_done: string | null, };
+export type TaskWithStatusDto = { id: string, name: string, 
+/**
+ * Screen-time minutes awarded on completion.
+ */
+minutes: number, 
+/**
+ * When true, this task blocks screen time until completed today.
+ */
+required: boolean, 
+/**
+ * RFC 3339 UTC timestamp of the most recent completion, or `None` if never done.
+ */
+last_done: string | null, };
 
-export type RemainingDto = { child_id: string, remaining_minutes: number, balance: number, blocked_by_tasks: boolean, };
+export type RemainingDto = { child_id: string, 
+/**
+ * Actual usable screen-time minutes (stored in DB, updated transactionally).
+ * May include borrowed time. When `blocked_by_tasks` is true, effective remaining is 0.
+ */
+remaining_minutes: number, 
+/**
+ * Computed as `earned_rewards - borrowed_rewards - usage_minutes`.
+ * Can be negative when borrowing creates debt. Earned minutes repay debt before
+ * adding to remaining.
+ */
+balance: number, 
+/**
+ * True when required daily tasks have not been completed.
+ * While blocked, effective remaining is 0 even if `remaining_minutes` > 0.
+ */
+blocked_by_tasks: boolean, };
 
-export type RewardReq = { child_id: string, task_id: string | null, minutes: number | null, description: string | null, is_borrowed: boolean | null, };
+export type RewardReq = { child_id: string, 
+/**
+ * If set, reward is for completing this task (minutes taken from task definition).
+ */
+task_id: string | null, 
+/**
+ * Ad-hoc minutes to grant (used when `task_id` is absent).
+ */
+minutes: number | null, 
+/**
+ * Free-text reason for the ad-hoc grant.
+ */
+description: string | null, 
+/**
+ * When true, granted minutes add to remaining but create debt (negative balance).
+ * Subsequent earned minutes repay the debt before increasing remaining.
+ */
+is_borrowed: boolean | null, };
 
-export type RewardResp = { remaining_minutes: number, balance: number, };
+export type RewardResp = { 
+/**
+ * New remaining minutes after the reward.
+ */
+remaining_minutes: number, 
+/**
+ * New balance after the reward (may be negative if borrowing).
+ */
+balance: number, };
 
-export type HeartbeatReq = { minutes: Array<number>, };
+export type HeartbeatReq = { 
+/**
+ * UTC epoch-minute timestamps (seconds since epoch / 60).
+ */
+minutes: Array<number>, };
 
-export type HeartbeatResp = { remaining_minutes: number, balance: number, blocked_by_tasks: boolean, };
+export type HeartbeatResp = { 
+/**
+ * Remaining minutes after deducting newly reported usage.
+ */
+remaining_minutes: number, 
+/**
+ * Current balance after usage deduction.
+ */
+balance: number, 
+/**
+ * Whether required tasks still block screen time.
+ */
+blocked_by_tasks: boolean, };
 
-export type ConfigResp = { push_public_key: string | null, };
+export type ConfigResp = { 
+/**
+ * VAPID public key for Web Push. `None` if push notifications are not configured.
+ */
+push_public_key: string | null, };
 
-export type PushSubscribeReq = { endpoint: string, p256dh: string, auth: string, };
+export type PushSubscribeReq = { 
+/**
+ * Push service endpoint URL provided by the browser.
+ */
+endpoint: string, 
+/**
+ * P-256 ECDH public key for payload encryption (base64url).
+ */
+p256dh: string, 
+/**
+ * Authentication secret for payload encryption (base64url).
+ */
+auth: string, };
 
-export type PushSubscribeResp = { subscription_id: number, };
+export type PushSubscribeResp = { 
+/**
+ * Server-assigned ID for managing this subscription.
+ */
+subscription_id: number, };
 
-export type PushUnsubscribeReq = { endpoint: string, };
+export type PushUnsubscribeReq = { 
+/**
+ * The push service endpoint URL to unsubscribe.
+ */
+endpoint: string, };
 
-export type ClientRegisterReq = { child_id: string | null, device_id: string, };
+export type ClientRegisterReq = { 
+/**
+ * Child to associate with this device. If `None`, the server may auto-assign.
+ */
+child_id: string | null, 
+/**
+ * Unique device identifier (e.g. machine-id).
+ */
+device_id: string, };
 
-export type ClientRegisterResp = { token: string, child_id: string, device_id: string, };
+export type ClientRegisterResp = { 
+/**
+ * JWT bearer token the device uses for heartbeat and remaining calls.
+ */
+token: string, 
+/**
+ * The child this device is now bound to.
+ */
+child_id: string, device_id: string, };
 
-export type RewardHistoryItemDto = { time: string, description: string | null, minutes: number, is_borrowed: boolean, };
+export type RewardHistoryItemDto = { 
+/**
+ * RFC 3339 UTC timestamp when the reward was granted.
+ */
+time: string, 
+/**
+ * Free-text reason, or `None` for task-based rewards.
+ */
+description: string | null, 
+/**
+ * Minutes granted (always positive).
+ */
+minutes: number, 
+/**
+ * True if these minutes were borrowed, creating debt.
+ */
+is_borrowed: boolean, };
 
-export type UsageBucketDto = { start: string, minutes: number, };
+export type UsageBucketDto = { 
+/**
+ * RFC 3339 UTC timestamp for the start of this bucket.
+ */
+start: string, 
+/**
+ * Total active-use minutes within this bucket.
+ */
+minutes: number, };
 
-export type UsageSeriesDto = { start: string, end: string, bucket_minutes: number, buckets: Array<UsageBucketDto>, total_minutes: number, };
+export type UsageSeriesDto = { 
+/**
+ * RFC 3339 UTC start of the requested range (inclusive).
+ */
+start: string, 
+/**
+ * RFC 3339 UTC end of the requested range (exclusive).
+ */
+end: string, 
+/**
+ * Duration of each bucket in minutes.
+ */
+bucket_minutes: number, 
+/**
+ * Ordered list of buckets covering the range.
+ */
+buckets: Array<UsageBucketDto>, 
+/**
+ * Sum of all bucket minutes (convenience total).
+ */
+total_minutes: number, };
 
 export type SubmitTaskReq = { child_id: string, task_id: string, };
 
 export type NotificationsCountDto = { count: number, };
 
-export type NotificationItemDto = { id: number, kind: string, child_id: string, child_display_name: string, task_id: string, task_name: string, submitted_at: string, };
+export type NotificationItemDto = { 
+/**
+ * Server-assigned notification ID.
+ */
+id: number, 
+/**
+ * Notification type discriminator (currently always `"task_submission"`).
+ */
+kind: string, child_id: string, child_display_name: string, task_id: string, task_name: string, 
+/**
+ * RFC 3339 UTC timestamp when the child submitted the task.
+ */
+submitted_at: string, };
 
-export type UpdateManifestDto = { schema_version: number, generated_at: string, items: Array<UpdateItemDto>, };
+export type UpdateManifestDto = { 
+/**
+ * Manifest schema version (currently 2).
+ */
+schema_version: number, 
+/**
+ * RFC 3339 UTC timestamp when this manifest was generated.
+ */
+generated_at: string, 
+/**
+ * Available update packages.
+ */
+items: Array<UpdateItemDto>, };
 
-export type UpdateItemDto = { package: string, version: string, artifacts: Array<UpdateArtifactDto>, };
+export type UpdateItemDto = { 
+/**
+ * Package name (e.g. `"gamiscreen-client"`).
+ */
+package: string, 
+/**
+ * Semantic version string (e.g. `"1.2.3"`).
+ */
+version: string, 
+/**
+ * Platform-specific downloadable artifacts.
+ */
+artifacts: Array<UpdateArtifactDto>, };
 
-export type UpdateArtifactDto = { os: string, arch: string, url: string, sha256: string, };
+export type UpdateArtifactDto = { 
+/**
+ * Target operating system (e.g. `"linux"`, `"windows"`).
+ */
+os: string, 
+/**
+ * Target CPU architecture (e.g. `"x86_64"`, `"aarch64"`).
+ */
+arch: string, 
+/**
+ * Download URL for the artifact.
+ */
+url: string, 
+/**
+ * SHA-256 hex digest for integrity verification.
+ */
+sha256: string, };
 
-export type VersionInfoDto = { version: string, };
+export type VersionInfoDto = { 
+/**
+ * Semantic version string (e.g. `"1.2.3"`).
+ */
+version: string, };
 
 export type Role = "parent" | "child";
 
