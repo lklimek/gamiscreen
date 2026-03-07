@@ -65,7 +65,11 @@ pub enum Command {
     Service(ServiceCommand),
     #[cfg(target_os = "windows")]
     /// Run the Windows session agent worker (spawned by the service)
-    SessionAgent,
+    SessionAgent {
+        /// Windows session ID this agent is running in
+        #[arg(long)]
+        session_id: u32,
+    },
     #[cfg(not(target_os = "windows"))]
     /// Try lock methods and report status
     Lock {

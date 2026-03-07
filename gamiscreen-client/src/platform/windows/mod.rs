@@ -2,7 +2,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
-use tracing::warn;
 
 use super::Platform;
 use crate::AppError;
@@ -14,7 +13,7 @@ pub mod service_cli;
 
 /// Windows implementation of the cross-platform interface.
 pub struct WindowsPlatform {
-    notifier: Arc<Mutex<notify::Notifier>>, // simple logging-based notifier for now
+    notifier: Arc<Mutex<notify::Notifier>>,
 }
 
 impl WindowsPlatform {
@@ -128,17 +127,11 @@ impl Platform for WindowsPlatform {
     }
 
     async fn install(&self, _user: Option<String>) -> Result<(), AppError> {
-        warn!("Windows per-user install path invoked; directing to service commands");
-        Err(AppError::Config(
-            "Windows per-user install has been removed; use `gamiscreen-client service install` instead.".into(),
-        ))
+        service_cli::handle_service_command(crate::cli::ServiceCommand::Install).await
     }
 
     async fn uninstall(&self, _user: Option<String>) -> Result<(), AppError> {
-        warn!("Windows per-user uninstall path invoked; directing to service commands");
-        Err(AppError::Config(
-            "Windows per-user uninstall has been removed; use the Windows service commands instead.".into(),
-        ))
+        service_cli::handle_service_command(crate::cli::ServiceCommand::Uninstall).await
     }
 }
 

@@ -60,9 +60,10 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
             platform::windows::service_cli::handle_service_command(action).await
         }
         #[cfg(target_os = "windows")]
-        Command::SessionAgent => Err(AppError::Config(
-            "session-agent command not implemented yet".into(),
-        )),
+        Command::SessionAgent { session_id } => {
+            tracing::info!(session_id, "starting session agent");
+            app::agent::run(config.clone()).await
+        }
         #[cfg(not(target_os = "windows"))]
         Command::Lock { method } => {
             platform::linux::lock_tester::run_lock_cmd(method).await;
