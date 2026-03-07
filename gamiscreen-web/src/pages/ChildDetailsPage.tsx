@@ -46,6 +46,8 @@ export function ChildDetailsPage(props: { childId: string }) {
   const { childId } = props
   const [displayName, setDisplayName] = useState<string>(childId)
   const [remaining, setRemaining] = useState<number | null>(null)
+  const [balance, setBalance] = useState<number | null>(null)
+  const [blocked, setBlocked] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const claims = getAuthClaims()
@@ -55,10 +57,11 @@ export function ChildDetailsPage(props: { childId: string }) {
   const [notificationPermission, setNotificationPermission] = useState<PermissionState>(() => currentNotificationPermission())
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(() => getNotificationSettings().enabled)
   const [tasks, setTasks] = useState<TaskWithStatusDto[]>([])
-  const [confirm, setConfirm] = useState<null | { mode: 'task', task: TaskWithStatusDto } | { mode: 'custom', minutes: number }>(null)
+  const [confirm, setConfirm] = useState<null | { mode: 'task', task: TaskWithStatusDto } | { mode: 'custom', minutes: number, isBorrowed: boolean }>(null)
   const [taskNote, setTaskNote] = useState('')
   const [customMinutes, setCustomMinutes] = useState('')
   const [customLabel, setCustomLabel] = useState('')
+  const [isBorrowed, setIsBorrowed] = useState(false)
   const [rewards, setRewards] = useState<RewardHistoryItemDto[]>([])
   const [usage, setUsage] = useState<UsageSeriesDto | null>(null)
   const [usageLoading, setUsageLoading] = useState(false)
@@ -185,6 +188,8 @@ export function ChildDetailsPage(props: { childId: string }) {
       }
       const rem = await getRemaining(childId)
       setRemaining(rem.remaining_minutes)
+      setBalance(rem.balance)
+      setBlocked(rem.blocked_by_tasks)
     } catch (e: any) {
       setError(e.message || 'Failed to load')
     } finally {
@@ -198,6 +203,8 @@ export function ChildDetailsPage(props: { childId: string }) {
     const handler = (e: any) => {
       if (e?.detail?.child_id === childId && typeof e.detail.remaining_minutes === 'number') {
         setRemaining(e.detail.remaining_minutes)
+        if (typeof e.detail.balance === 'number') setBalance(e.detail.balance)
+        if (typeof e.detail.blocked_by_tasks === 'boolean') setBlocked(e.detail.blocked_by_tasks)
       }
     }
     window.addEventListener('gamiscreen:remaining-updated', handler as EventListener)
@@ -270,9 +277,10 @@ export function ChildDetailsPage(props: { childId: string }) {
           task_id: confirm.task.id,
           minutes: null,
           description,
+          is_borrowed: null,
         })
         setRemaining(resp.remaining_minutes)
-        // Update last_done locally for immediate UI feedback
+        setBalance(resp.balance)
         const nowIso = new Date().toISOString()
         setTasks(prev => prev.map(t => t.id === confirm.task.id ? { ...t, last_done: nowIso } : t))
       } else {
@@ -283,13 +291,16 @@ export function ChildDetailsPage(props: { childId: string }) {
           task_id: null,
           minutes: mins,
           description,
+          is_borrowed: confirm.isBorrowed || null,
         })
         setRemaining(resp.remaining_minutes)
+        setBalance(resp.balance)
       }
       setConfirm(null)
       setTaskNote('')
       setCustomMinutes('')
       setCustomLabel('')
+      setIsBorrowed(false)
       // Refresh reward history (show newest on first page)
       setPage(1)
       await loadRewards(1)
@@ -320,10 +331,51 @@ export function ChildDetailsPage(props: { childId: string }) {
       <div className="card" style={{ padding: '12px' }}>
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <div>Remaining</div>
-          <div style={{ color: (typeof remaining === 'number' && remaining < 0) ? '#d00' as const : undefined }}>
+          <div style={{ color: (typeof remaining === 'number' && remaining <= 0) ? '#d00' : undefined }}>
             {remaining ?? '—'} min
           </div>
         </div>
+        <div className="row" style={{ justifyContent: 'space-between', marginTop: 4 }}>
+          <div>Balance</div>
+          <div
+            style={{ color: (typeof balance === 'number' && balance < 0) ? '#b91c1c' : undefined }}
+            aria-label={typeof balance === 'number' && balance < 0 ? `Balance: negative ${Math.abs(balance)} minutes` : undefined}
+          >
+            {typeof balance === 'number' ? `${balance > 0 ? '+' : ''}${balance}` : '—'} min
+          </div>
+        </div>
+        {blocked && (
+          <div
+            role="alert"
+            style={{
+              marginTop: 8,
+              padding: '8px 12px',
+              borderRadius: 8,
+              fontSize: 14,
+              background: '#fef2f2',
+              color: '#dc2626',
+              border: '1px solid #fecaca',
+            }}
+          >
+            [!] Complete required tasks to unlock screen time
+          </div>
+        )}
+        {!blocked && typeof balance === 'number' && balance < 0 && (
+          <div
+            role="status"
+            style={{
+              marginTop: 8,
+              padding: '8px 12px',
+              borderRadius: 8,
+              fontSize: 14,
+              background: '#fffbeb',
+              color: '#92400e',
+              border: '1px solid #fde68a',
+            }}
+          >
+            You owe {Math.abs(balance)} min. Earned minutes pay off debt first.
+          </div>
+        )}
       </div>
       {isChild && notificationsSupported && (!notificationsEnabled || notificationPermission !== 'granted') && (
         <div className="card" style={{ padding: '12px' }}>
@@ -340,18 +392,31 @@ export function ChildDetailsPage(props: { childId: string }) {
       )}
       <div className="card" style={{ padding: '12px' }}>
         <h3 className="title" style={{ fontSize: 16, marginBottom: 8 }}>Tasks</h3>
+        {blocked && (
+          <p role="alert" style={{ fontSize: 14, color: '#dc2626', margin: '0 0 8px' }}>
+            Complete all starred (*) tasks to unlock screen time.
+          </p>
+        )}
         <div className="col" style={{ gap: 6 }}>
-          {tasks.map(t => {
+          {[...tasks].sort((a, b) => (a.required === b.required ? 0 : a.required ? -1 : 1)).map(t => {
             const last = t.last_done ? new Date(t.last_done) : null
             const todayStr = new Date().toISOString().slice(0, 10)
             const isDoneToday = last ? last.toISOString().slice(0, 10) === todayStr : false
             const wasSubmitted = submitted.has(t.id)
             const canClick = isParent || (isChild && !wasSubmitted && !isDoneToday)
             const isNegative = t.minutes < 0
+            const taskRowStyle: React.CSSProperties = t.required
+              ? { borderLeft: '4px solid #2563eb', background: '#eff6ff', borderRadius: 8, paddingLeft: 12 }
+              : {}
             return (
-              <div className={`row taskRow${isNegative ? ' taskRowNegative' : ''}`} key={t.id}>
+              <div
+                className={`row taskRow${isNegative ? ' taskRowNegative' : ''}`}
+                key={t.id}
+                style={taskRowStyle}
+                aria-label={t.required ? `Required task: ${t.name}, ${t.minutes} minutes` : undefined}
+              >
                 <div className="row taskRowHeader">
-                  <span>{t.name}</span>
+                  <span>{t.required ? <strong>* {t.name}</strong> : t.name}</span>
                   {isDoneToday && (
                     <mark title={last?.toLocaleString() || ''}>Done</mark>
                   )}
@@ -402,8 +467,9 @@ export function ChildDetailsPage(props: { childId: string }) {
             onSubmit={(e) => {
               e.preventDefault();
               const n = parseInt(customMinutes, 10);
+              if (isBorrowed && (!Number.isFinite(n) || n <= 0)) return;
               if (Number.isFinite(n) && n !== 0) {
-                setConfirm({ mode: 'custom', minutes: n });
+                setConfirm({ mode: 'custom', minutes: n, isBorrowed });
               }
             }}
             className="col"
@@ -412,14 +478,14 @@ export function ChildDetailsPage(props: { childId: string }) {
             <div className="row" style={{ gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <input
                 type="number"
-                min={-100000}
+                min={isBorrowed ? 1 : -100000}
                 step={1}
-                placeholder="15 or -15"
+                placeholder={isBorrowed ? '30' : '15 or -15'}
                 aria-label="Minutes"
                 value={customMinutes}
                 onChange={e => setCustomMinutes(e.target.value)}
                 inputMode="numeric"
-                pattern="-?[0-9]*"
+                pattern={isBorrowed ? '[0-9]*' : '-?[0-9]*'}
                 style={{ width: '14ch', textAlign: 'right' }}
               />
               <span className="subtitle" style={{ whiteSpace: 'nowrap', alignSelf: 'center' }}>minutes</span>
@@ -433,7 +499,16 @@ export function ChildDetailsPage(props: { childId: string }) {
                 onChange={e => setCustomLabel(e.target.value)}
               />
             </label>
-            <button type="submit" className="acceptButton">Accept</button>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={isBorrowed}
+                onChange={e => setIsBorrowed(e.target.checked)}
+                style={{ margin: 0, width: 'auto' }}
+              />
+              <span>Borrow (adds to remaining, creates debt)</span>
+            </label>
+            <button type="submit" className="acceptButton">{isBorrowed ? 'Lend Time' : 'Accept'}</button>
           </form>
         </div>
       )}
@@ -509,10 +584,10 @@ export function ChildDetailsPage(props: { childId: string }) {
               </thead>
               <tbody>
                 {rewards.map((r, idx) => (
-                  <tr key={idx}>
+                  <tr key={idx} style={r.is_borrowed ? { background: '#fffbeb' } : undefined}>
                     <td>{new Date(r.time).toLocaleString()}</td>
                     <td>{r.description ?? 'Additional time'}</td>
-                    <td>{r.minutes > 0 ? '+' : ''}{r.minutes}</td>
+                    <td>{r.minutes > 0 ? '+' : ''}{r.minutes}{r.is_borrowed ? ' (lent)' : ''}</td>
                   </tr>
                 ))}
                 {rewards.length === 0 && (
@@ -531,7 +606,7 @@ export function ChildDetailsPage(props: { childId: string }) {
         <dialog open>
           <article className="col" style={{ gap: 12 }}>
             <header>
-              <strong>Confirm</strong>
+              <strong>{confirm.mode === 'custom' && confirm.isBorrowed ? 'Confirm Borrow' : 'Confirm'}</strong>
             </header>
             <p className="subtitle">
               {confirm.mode === 'task'
@@ -546,6 +621,9 @@ export function ChildDetailsPage(props: { childId: string }) {
                 })()
                 : (() => {
                   const m = confirm.minutes
+                  if (confirm.isBorrowed) {
+                    return <>Lend <strong>+{m}</strong> minutes to <strong>{displayName}</strong>?</>
+                  }
                   const isNegative = m < 0
                   return (
                     <>
@@ -554,6 +632,11 @@ export function ChildDetailsPage(props: { childId: string }) {
                   )
                 })()}
             </p>
+            {confirm.mode === 'custom' && confirm.isBorrowed && (
+              <p style={{ fontSize: 14, color: 'var(--muted-color, #666)' }}>
+                This adds {confirm.minutes} min of screen time and creates a debt of {confirm.minutes} min. Earned time will pay off the debt before adding to remaining.
+              </p>
+            )}
             {confirm.mode === 'task' && (
               <label className="col" style={{ gap: 4 }}>
                 <span>Note (optional)</span>
@@ -566,7 +649,9 @@ export function ChildDetailsPage(props: { childId: string }) {
               </label>
             )}
             <footer className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
-              <button onClick={doConfirm} disabled={loading}>Accept</button>
+              <button onClick={doConfirm} disabled={loading}>
+                {confirm.mode === 'custom' && confirm.isBorrowed ? 'Lend Time' : 'Accept'}
+              </button>
               <button className="secondary" onClick={() => { setConfirm(null); setTaskNote('') }} disabled={loading}>Cancel</button>
             </footer>
           </article>

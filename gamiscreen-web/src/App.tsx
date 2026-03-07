@@ -249,7 +249,7 @@ export function App() {
           if (msg && msg.type === 'pending_count' && typeof msg.count === 'number') {
             setNotifCount(msg.count)
           } else if (msg && msg.type === 'remaining_updated' && msg.child_id && typeof msg.remaining_minutes === 'number') {
-            window.dispatchEvent(new CustomEvent('gamiscreen:remaining-updated', { detail: { child_id: msg.child_id, remaining_minutes: msg.remaining_minutes } }))
+            window.dispatchEvent(new CustomEvent('gamiscreen:remaining-updated', { detail: { child_id: msg.child_id, remaining_minutes: msg.remaining_minutes, balance: msg.balance, blocked_by_tasks: msg.blocked_by_tasks } }))
           }
         } catch { }
       }
