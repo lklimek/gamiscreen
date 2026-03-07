@@ -23,38 +23,21 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Configure git to use HTTPS instead of SSH
+        run: git config --global url."https://github.com/".insteadOf "git@github.com:"
+
       - name: Run Claude Code Review
         id: claude-review
         uses: anthropics/claude-code-action@v1
         with:
           use_sticky_comment: true
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          plugin_marketplaces: "https://github.com/lklimek/claudius.git"
-          plugins: "claudius@claudius"
+          plugin_marketplaces: "https://github.com/lklimek/agents.git"
+          plugins: "claudius@lklimek"
           show_full_output: true
+          allowed_bots: "dependabot[bot]"
           prompt: |
-            Your task is to review changes done in this pull request since your last review.
-            
-            Use claudius:personality skill.
-            Consider building a team of review agents, including but not limited to: claudius:code-reviewer, claudius:security-engineer.
-
-            Fetch all existing review comments on this PR (including PR comments and inline comments). 
-            Comments created by `@claude` or `@claude[bot]` are yours.
-            
-            For each existing comment, check whether it still applies.
-            If the issue has been fixed or is no longer relevant, resolve the comment thread.
-
-            During review, focus on:
-            - Code quality and best practices
-            - Potential bugs or issues
-            - Security implications
-            - Performance considerations
-
-            Use `gh pr comment` for top-level feedback.
-            Use `mcp__github_inline_comment__create_inline_comment` for specific code issues.
-            Only post GitHub comments - don't submit review text as messages.
-            Do not create a new comment if an existing comment already covers the same issue on the same code location.
-
+            Run /claudius:grumpy-review then publish PR comments. Use GitHub MCP.
           claude_args: |
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment *),Bash(gh pr diff *),Bash(gh pr view *)"
             --model ${{ vars.CLAUDE_MODEL }}
