@@ -1,6 +1,26 @@
 # Windows Client Architecture
 
-This document explains the redesigned Windows deployment strategy for `gamiscreen-client`. The goal is to provide a reliable, admin-installable agent that still stores credentials in each child's user context.
+This document explains the Windows deployment strategy for `gamiscreen-client`. The goal is to provide a reliable, admin-installable agent that still stores credentials in each child's user context.
+
+## Quick Start
+
+All commands require an elevated (Administrator) PowerShell unless noted.
+
+```powershell
+# 1. Install the Windows service
+gamiscreen-client service install
+
+# 2. Provision each child account (run from the child's Windows session, no admin needed)
+gamiscreen-client login --server http://your-server:5151 --username parent
+
+# 3. Start the service
+gamiscreen-client service start
+
+# 4. Verify
+Get-Service GamiScreenAgent
+```
+
+The service handles everything else: it detects user sessions and spawns per-session agents automatically. For full setup details, see docs/INSTALL.md.
 
 ## Components
 
