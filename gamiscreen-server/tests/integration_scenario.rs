@@ -1399,3 +1399,555 @@ async fn test_required_tasks_blocking() {
     assert!(remaining_after.remaining_minutes > 0);
     assert!(!remaining_after.blocked_by_tasks);
 }
+
+// ---------------------------------------------------------------------------
+// Shared helpers for scenario tests
+// ---------------------------------------------------------------------------
+
+async fn parent_reward(
+    server: &TestServer,
+    token: &str,
+    child_id: &str,
+    req: &api::RewardReq,
+) -> api::RewardResp {
+    server
+        .request_expect_json(
+            "POST",
+            &tenant_path(&format!("children/{child_id}/reward")),
+            Some(token),
+            Some(to_value(req)),
+            StatusCode::OK,
+        )
+        .await
+}
+
+async fn get_remaining(server: &TestServer, token: &str, child_id: &str) -> api::RemainingDto {
+    server
+        .request_expect_json(
+            "GET",
+            &tenant_path(&format!("children/{child_id}/remaining")),
+            Some(token),
+            None,
+            StatusCode::OK,
+        )
+        .await
+}
+
+async fn register_device(
+    server: &TestServer,
+    child_token: &str,
+    child_id: &str,
+    device_id: &str,
+) -> api::ClientRegisterResp {
+    server
+        .request_expect_json(
+            "POST",
+            &tenant_path(&format!("children/{child_id}/register")),
+            Some(child_token),
+            Some(to_value(&api::ClientRegisterReq {
+                child_id: None,
+                device_id: device_id.to_string(),
+            })),
+            StatusCode::OK,
+        )
+        .await
+}
+
+async fn send_heartbeat(
+    server: &TestServer,
+    device_token: &str,
+    child_id: &str,
+    device_id: &str,
+    minutes: &[i64],
+) -> api::HeartbeatResp {
+    server
+        .request_expect_json(
+            "POST",
+            &tenant_path(&format!("children/{child_id}/device/{device_id}/heartbeat")),
+            Some(device_token),
+            Some(to_value(&api::HeartbeatReq {
+                minutes: minutes.to_vec(),
+            })),
+            StatusCode::OK,
+        )
+        .await
+}
+
+async fn get_reward_history(
+    server: &TestServer,
+    token: &str,
+    child_id: &str,
+) -> Vec<api::RewardHistoryItemDto> {
+    server
+        .request_expect_json(
+            "GET",
+            &tenant_path(&format!("children/{child_id}/reward")),
+            Some(token),
+            None,
+            StatusCode::OK,
+        )
+        .await
+}
+
+fn reward_req(
+    child_id: &str,
+    task_id: Option<&str>,
+    minutes: Option<i32>,
+    description: Option<&str>,
+    is_borrowed: Option<bool>,
+) -> api::RewardReq {
+    api::RewardReq {
+        child_id: child_id.to_string(),
+        task_id: task_id.map(String::from),
+        minutes,
+        description: description.map(String::from),
+        is_borrowed,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 12 real-life usage scenario tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_scenario_fresh_start_normal_day() {
+    let Some(server) = TestServer::spawn().await else {
+        return;
+    };
+    let parent = server.login("parent", "secret123").await;
+    let child = server.login("alice", "kidpass").await;
+
+    // Fresh start: zero everything
+    let rem = get_remaining(&server, &parent, "alice").await;
+    assert_eq!(rem.remaining_minutes, 0);
+    assert_eq!(rem.balance, 0);
+    assert!(!rem.blocked_by_tasks);
+
+    // Reward homework (task config = 2 min)
+    let resp = parent_reward(
+        &server,
+        &parent,
+        "alice",
+        &reward_req("alice", Some("homework"), None, None, None),
+    )
+    .await;
+    assert_eq!(resp.remaining_minutes, 2);
+    assert_eq!(resp.balance, 2);
+
+    // Register device and send heartbeat for 2 past minutes
+    let dev = register_device(&server, &child, "alice", "laptop1").await;
+    let m = now_minute();
+    let hb = send_heartbeat(&server, &dev.token, "alice", "laptop1", &[m - 2, m - 1]).await;
+    assert_eq!(hb.remaining_minutes, 0);
+    assert_eq!(hb.balance, 0);
+}
+
+#[tokio::test]
+async fn test_scenario_multiple_rewards_stack() {
+    let Some(server) = TestServer::spawn().await else {
+        return;
+    };
+    let parent = server.login("parent", "secret123").await;
+
+    // Homework = 2 min
+    let r1 = parent_reward(
+        &server,
+        &parent,
+        "alice",
+        &reward_req("alice", Some("homework"), None, None, None),
+    )
+    .await;
+    assert_eq!(r1.remaining_minutes, 2);
+    assert_eq!(r1.balance, 2);
+
+    // Chores = 1 min, stacks on top
+    let r2 = parent_reward(
+        &server,
+        &parent,
+        "alice",
+        &reward_req("alice", Some("chores"), None, None, None),
+    )
+    .await;
+    assert_eq!(r2.remaining_minutes, 3);
+    assert_eq!(r2.balance, 3);
+}
+
+#[tokio::test]
+async fn test_scenario_borrowing_time() {
+    let Some(server) = TestServer::spawn().await else {
+        return;
+    };
+    let parent = server.login("parent", "secret123").await;
+    let child = server.login("alice", "kidpass").await;
+
+    // Borrow 20
+    let resp = parent_reward(
+        &server,
+        &parent,
+        "alice",
+        &reward_req("alice", None, Some(20), Some("Borrow"), Some(true)),
+    )
+    .await;
+    assert_eq!(resp.remaining_minutes, 20);
+    assert_eq!(resp.balance, -20);
+
+    // Use 10 minutes via heartbeat
+    let dev = register_device(&server, &child, "alice", "dev1").await;
+    let m = now_minute();
+    let timestamps: Vec<i64> = (1..=10).map(|i| m - i).collect();
+    let hb = send_heartbeat(&server, &dev.token, "alice", "dev1", &timestamps).await;
+    assert_eq!(hb.remaining_minutes, 10);
+    assert_eq!(hb.balance, -30);
+}
+
+#[tokio::test]
+async fn test_scenario_paying_off_debt() {
+    let Some(server) = TestServer::spawn().await else {
+        return;
+    };
+    let parent = server.login("parent", "secret123").await;
+
+    // Step 1: Borrow 20
+    let r1 = parent_reward(
+        &server,
+        &parent,
+        "alice",
+        &reward_req("alice", None, Some(20), Some("Borrow"), Some(true)),
+    )
+    .await;
+    assert_eq!(r1.remaining_minutes, 20);
+    assert_eq!(r1.balance, -20);
+
+    // Step 2: Earn homework (2 min) — goes to debt repayment
+    let r2 = parent_reward(
+        &server,
+        &parent,
+        "alice",
+        &reward_req("alice", Some("homework"), None, None, None),
+    )
+    .await;
+    assert_eq!(r2.remaining_minutes, 20);
+    assert_eq!(r2.balance, -18);
+
+    // Step 3: Earn 25 custom — pays off -18 debt, surplus 7 goes to remaining
+    let r3 = parent_reward(
+        &server,
+        &parent,
+        "alice",
+        &reward_req("alice", None, Some(25), Some("Big task"), None),
+    )
+    .await;
+    assert_eq!(r3.balance, 7);
+    assert_eq!(r3.remaining_minutes, 27);
+}
+
+#[tokio::test]
+async fn test_scenario_borrow_while_in_debt() {
+    let Some(server) = TestServer::spawn().await else {
+        return;
+    };
+    let parent = server.login("parent", "secret123").await;
+
+    // Step 1: Borrow 10
+    let r1 = parent_reward(
+        &server,
+        &parent,
+        "alice",
+        &reward_req("alice", None, Some(10), None, Some(true)),
+    )
+    .await;
+    assert_eq!(r1.remaining_minutes, 10);
+    assert_eq!(r1.balance, -10);
+
+    // Step 2: Earn 5 custom — partial debt repay
+    let r2 = parent_reward(
+        &server,
+        &parent,
+        "alice",
+        &reward_req("alice", None, Some(5), Some("Partial"), None),
+    )
+    .await;
+    assert_eq!(r2.remaining_minutes, 10);
+    assert_eq!(r2.balance, -5);
+
+    // Step 3: Borrow 15 more while still in debt
+    let r3 = parent_reward(
+        &server,
+        &parent,
+        "alice",
+        &reward_req("alice", None, Some(15), None, Some(true)),
+    )
+    .await;
+    assert_eq!(r3.remaining_minutes, 25);
+    assert_eq!(r3.balance, -20);
+}
+
+#[tokio::test]
+async fn test_scenario_required_tasks_blocking() {
+    let tasks = vec![
+        Task {
+            id: "homework".into(),
+            name: "Homework".into(),
+            minutes: 2,
+            required: true,
+        },
+        Task {
+            id: "chores".into(),
+            name: "Chores".into(),
+            minutes: 1,
+            required: false,
+        },
+    ];
+    let Some(server) = TestServer::spawn_with_tasks(tasks).await else {
+        return;
+    };
+    let parent = server.login("parent", "secret123").await;
+
+    // Custom reward while required task not done
+    let r1 = parent_reward(
+        &server,
+        &parent,
+        "alice",
+        &reward_req("alice", None, Some(30), Some("Custom"), None),
+    )
+    .await;
+    assert_eq!(r1.remaining_minutes, 0);
+    assert_eq!(r1.balance, 30);
+
+    let rem = get_remaining(&server, &parent, "alice").await;
+    assert!(rem.blocked_by_tasks);
+    assert_eq!(rem.remaining_minutes, 0);
+    assert_eq!(rem.balance, 30);
+
+    // Complete required task — unblocks and adds 2 min
+    let r2 = parent_reward(
+        &server,
+        &parent,
+        "alice",
+        &reward_req("alice", Some("homework"), None, None, None),
+    )
+    .await;
+    assert_eq!(r2.remaining_minutes, 32);
+    assert_eq!(r2.balance, 32);
+
+    let rem2 = get_remaining(&server, &parent, "alice").await;
+    assert!(!rem2.blocked_by_tasks);
+}
+
+#[tokio::test]
+async fn test_scenario_penalty() {
+    let Some(server) = TestServer::spawn().await else {
+        return;
+    };
+    let parent = server.login("parent", "secret123").await;
+
+    // Earn 20 custom
+    let r1 = parent_reward(
+        &server,
+        &parent,
+        "alice",
+        &reward_req("alice", None, Some(20), Some("Earned"), None),
+    )
+    .await;
+    assert_eq!(r1.remaining_minutes, 20);
+    assert_eq!(r1.balance, 20);
+
+    // Penalty: -10
+    let r2 = parent_reward(
+        &server,
+        &parent,
+        "alice",
+        &reward_req("alice", None, Some(-10), Some("Penalty"), None),
+    )
+    .await;
+    assert_eq!(r2.remaining_minutes, 10);
+    assert_eq!(r2.balance, 10);
+}
+
+#[tokio::test]
+async fn test_scenario_custom_reward_no_task() {
+    let Some(server) = TestServer::spawn().await else {
+        return;
+    };
+    let parent = server.login("parent", "secret123").await;
+
+    // Custom reward with description, no task_id
+    let resp = parent_reward(
+        &server,
+        &parent,
+        "alice",
+        &reward_req("alice", None, Some(15), Some("Helped with groceries"), None),
+    )
+    .await;
+    assert_eq!(resp.remaining_minutes, 15);
+    assert_eq!(resp.balance, 15);
+
+    // Check reward history
+    let history = get_reward_history(&server, &parent, "alice").await;
+    assert!(!history.is_empty());
+    let entry = &history[0];
+    assert_eq!(entry.minutes, 15);
+    assert_eq!(
+        entry.description.as_deref().unwrap(),
+        "Helped with groceries"
+    );
+    assert!(!entry.is_borrowed);
+}
+
+#[tokio::test]
+async fn test_scenario_children_independent() {
+    let Some(server) = TestServer::spawn().await else {
+        return;
+    };
+    let parent = server.login("parent", "secret123").await;
+
+    // Borrow 10 for alice
+    parent_reward(
+        &server,
+        &parent,
+        "alice",
+        &reward_req("alice", None, Some(10), None, Some(true)),
+    )
+    .await;
+
+    // Earn 20 for bob
+    parent_reward(
+        &server,
+        &parent,
+        "bob",
+        &reward_req("bob", None, Some(20), Some("Great work"), None),
+    )
+    .await;
+
+    // Verify alice: 10 remaining, -10 balance
+    let alice = get_remaining(&server, &parent, "alice").await;
+    assert_eq!(alice.remaining_minutes, 10);
+    assert_eq!(alice.balance, -10);
+
+    // Verify bob: 20 remaining, 20 balance
+    let bob = get_remaining(&server, &parent, "bob").await;
+    assert_eq!(bob.remaining_minutes, 20);
+    assert_eq!(bob.balance, 20);
+}
+
+#[tokio::test]
+async fn test_scenario_heartbeat_idempotent() {
+    let Some(server) = TestServer::spawn().await else {
+        return;
+    };
+    let parent = server.login("parent", "secret123").await;
+    let child = server.login("alice", "kidpass").await;
+
+    // Earn 10 custom
+    parent_reward(
+        &server,
+        &parent,
+        "alice",
+        &reward_req("alice", None, Some(10), Some("Study"), None),
+    )
+    .await;
+
+    let dev = register_device(&server, &child, "alice", "pc1").await;
+    let m = now_minute() - 5;
+
+    // First heartbeat with minute m
+    let hb1 = send_heartbeat(&server, &dev.token, "alice", "pc1", &[m]).await;
+    assert_eq!(hb1.remaining_minutes, 9);
+
+    // Replay same minute — idempotent
+    let hb2 = send_heartbeat(&server, &dev.token, "alice", "pc1", &[m]).await;
+    assert_eq!(hb2.remaining_minutes, 9);
+
+    // Send m again plus m+1 — only m+1 is new
+    let hb3 = send_heartbeat(&server, &dev.token, "alice", "pc1", &[m, m + 1]).await;
+    assert_eq!(hb3.remaining_minutes, 8);
+}
+
+#[tokio::test]
+async fn test_scenario_required_task_plus_borrowing() {
+    let tasks = vec![
+        Task {
+            id: "homework".into(),
+            name: "Homework".into(),
+            minutes: 2,
+            required: true,
+        },
+        Task {
+            id: "chores".into(),
+            name: "Chores".into(),
+            minutes: 1,
+            required: false,
+        },
+    ];
+    let Some(server) = TestServer::spawn_with_tasks(tasks).await else {
+        return;
+    };
+    let parent = server.login("parent", "secret123").await;
+
+    // Borrow 30 — blocked by required task
+    let r1 = parent_reward(
+        &server,
+        &parent,
+        "alice",
+        &reward_req("alice", None, Some(30), None, Some(true)),
+    )
+    .await;
+    assert_eq!(r1.balance, -30);
+
+    let rem = get_remaining(&server, &parent, "alice").await;
+    assert_eq!(rem.remaining_minutes, 0);
+    assert!(rem.blocked_by_tasks);
+    assert_eq!(rem.balance, -30);
+
+    // Complete required task — unblocks, adds 2 min to balance
+    let r2 = parent_reward(
+        &server,
+        &parent,
+        "alice",
+        &reward_req("alice", Some("homework"), None, None, None),
+    )
+    .await;
+    assert_eq!(r2.remaining_minutes, 30);
+    assert!(
+        !get_remaining(&server, &parent, "alice")
+            .await
+            .blocked_by_tasks
+    );
+    assert_eq!(r2.balance, -28);
+}
+
+#[tokio::test]
+async fn test_scenario_reward_history_borrowed_vs_earned() {
+    let Some(server) = TestServer::spawn().await else {
+        return;
+    };
+    let parent = server.login("parent", "secret123").await;
+
+    // Earned reward via homework task
+    parent_reward(
+        &server,
+        &parent,
+        "alice",
+        &reward_req("alice", Some("homework"), None, None, None),
+    )
+    .await;
+
+    // Borrowed reward
+    parent_reward(
+        &server,
+        &parent,
+        "alice",
+        &reward_req("alice", None, Some(20), Some("Borrowed time"), Some(true)),
+    )
+    .await;
+
+    let history = get_reward_history(&server, &parent, "alice").await;
+    assert_eq!(history.len(), 2);
+
+    // History is newest-first typically, but let's find by content
+    let borrowed = history.iter().find(|h| h.minutes == 20).unwrap();
+    assert!(borrowed.is_borrowed);
+
+    let earned = history.iter().find(|h| h.minutes == 2).unwrap();
+    assert!(!earned.is_borrowed);
+}
