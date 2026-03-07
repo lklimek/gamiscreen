@@ -888,10 +888,7 @@ async fn sse_notifications(
             futures::future::ready(match msg {
                 Ok(ev) => match (&claims.role, &ev) {
                     (Role::Parent, _) => Some(ev),
-                    (
-                        Role::Child,
-                        ServerEvent::RemainingUpdated { child_id, .. },
-                    ) => {
+                    (Role::Child, ServerEvent::RemainingUpdated { child_id, .. }) => {
                         if let Some(cid) = &claims2.child_id {
                             if cid == child_id { Some(ev) } else { None }
                         } else {

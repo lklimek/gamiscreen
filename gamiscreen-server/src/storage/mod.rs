@@ -716,8 +716,7 @@ impl Store {
                 if new_count > 0 {
                     diesel::update(balances::table.filter(balances::child_id.eq(&child_owned)))
                         .set(
-                            balances::minutes_remaining
-                                .eq(balances::minutes_remaining - new_count),
+                            balances::minutes_remaining.eq(balances::minutes_remaining - new_count),
                         )
                         .execute(conn)?;
                 }
@@ -876,10 +875,7 @@ impl Store {
     }
 }
 
-fn compute_balance_inner(
-    conn: &mut SqliteConnection,
-    child_id: &str,
-) -> Result<i32, StorageError> {
+fn compute_balance_inner(conn: &mut SqliteConnection, child_id: &str) -> Result<i32, StorageError> {
     use diesel::dsl::sum;
     let earned: Option<i64> = schema::rewards::table
         .filter(schema::rewards::child_id.eq(child_id))
@@ -935,15 +931,16 @@ fn all_required_tasks_done_today_inner(
 }
 
 fn compute_remaining_delta(mins: i32, is_borrowed: bool, balance: i32) -> i32 {
-    if is_borrowed {
-        mins
-    } else if mins < 0 {
-        mins
-    } else if balance >= 0 {
+    if is_borrowed || mins < 0 || balance >= 0 {
+        // Borrow: always adds to remaining
+        // Penalty (negative mins): always reduces remaining directly
+        // Positive balance: full amount goes to remaining
         mins
     } else if balance + mins <= 0 {
+        // All earnings go to debt repayment
         0
     } else {
+        // Surplus after debt repayment
         balance + mins
     }
 }

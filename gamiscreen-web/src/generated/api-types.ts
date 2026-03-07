@@ -7,19 +7,19 @@ export type AuthResp = { token: string, };
 
 export type ChildDto = { id: string, display_name: string, };
 
-export type TaskDto = { id: string, name: string, minutes: number, };
+export type TaskDto = { id: string, name: string, minutes: number, required: boolean, };
 
-export type TaskWithStatusDto = { id: string, name: string, minutes: number, last_done: string | null, };
+export type TaskWithStatusDto = { id: string, name: string, minutes: number, required: boolean, last_done: string | null, };
 
-export type RemainingDto = { child_id: string, remaining_minutes: number, };
+export type RemainingDto = { child_id: string, remaining_minutes: number, balance: number, blocked_by_tasks: boolean, };
 
-export type RewardReq = { child_id: string, task_id: string | null, minutes: number | null, description: string | null, };
+export type RewardReq = { child_id: string, task_id: string | null, minutes: number | null, description: string | null, is_borrowed: boolean | null, };
 
-export type RewardResp = { remaining_minutes: number, };
+export type RewardResp = { remaining_minutes: number, balance: number, };
 
 export type HeartbeatReq = { minutes: Array<number>, };
 
-export type HeartbeatResp = { remaining_minutes: number, };
+export type HeartbeatResp = { remaining_minutes: number, balance: number, blocked_by_tasks: boolean, };
 
 export type ConfigResp = { push_public_key: string | null, };
 
@@ -33,7 +33,7 @@ export type ClientRegisterReq = { child_id: string | null, device_id: string, };
 
 export type ClientRegisterResp = { token: string, child_id: string, device_id: string, };
 
-export type RewardHistoryItemDto = { time: string, description: string | null, minutes: number, };
+export type RewardHistoryItemDto = { time: string, description: string | null, minutes: number, is_borrowed: boolean, };
 
 export type UsageBucketDto = { start: string, minutes: number, };
 
