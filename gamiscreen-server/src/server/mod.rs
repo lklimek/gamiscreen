@@ -1051,6 +1051,7 @@ async fn api_device_heartbeat(
     let child_mutex = state.child_mutex(&p.id).await;
     let mut child_guard = child_mutex.lock().await;
 
+    let prev = child_guard.unwrap_or(0);
     let new_remaining = state
         .store
         .process_usage_minutes(&p.id, &p.device_id, &body.minutes)
@@ -1069,7 +1070,7 @@ async fn api_device_heartbeat(
         .await
         .map_err(AppError::internal)?;
 
-    let prev_effective = child_guard.unwrap_or(0);
+    let prev_effective = if all_done { prev } else { 0 };
     if effective != prev_effective {
         let event = ServerEvent::RemainingUpdated {
             child_id: p.id.clone(),
