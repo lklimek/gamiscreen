@@ -64,6 +64,8 @@ pub struct Task {
     pub id: String,
     pub name: String,
     pub minutes: i32,
+    #[serde(default)]
+    pub required: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

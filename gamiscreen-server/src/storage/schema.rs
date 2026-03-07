@@ -1,5 +1,12 @@
 // @generated automatically by Diesel CLI or defined manually
 diesel::table! {
+    balances (child_id) {
+        child_id -> Text,
+        minutes_remaining -> Integer,
+    }
+}
+
+diesel::table! {
     children (id) {
         id -> Text,
         display_name -> Text,
@@ -11,6 +18,7 @@ diesel::table! {
         id -> Text,
         name -> Text,
         minutes -> Integer,
+        required -> Bool,
     }
 }
 
@@ -22,6 +30,7 @@ diesel::table! {
         minutes -> Integer,
         description -> Nullable<Text>,
         created_at -> Timestamp,
+        is_borrowed -> Bool,
     }
 }
 
@@ -81,6 +90,7 @@ diesel::joinable!(rewards -> tasks (task_id));
 diesel::joinable!(push_subscriptions -> children (child_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
+    balances,
     children,
     rewards,
     tasks,

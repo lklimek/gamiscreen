@@ -2,7 +2,8 @@ use chrono::NaiveDateTime;
 use diesel::prelude::*;
 
 use crate::storage::schema::{
-    children, push_subscriptions, rewards, task_completions, task_submissions, tasks, usage_minutes,
+    balances, children, push_subscriptions, rewards, task_completions, task_submissions, tasks,
+    usage_minutes,
 };
 
 #[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
@@ -25,6 +26,7 @@ pub struct Task {
     pub id: String,
     pub name: String,
     pub minutes: i32,
+    pub required: bool,
 }
 
 #[derive(Insertable)]
@@ -33,6 +35,7 @@ pub struct NewTask<'a> {
     pub id: &'a str,
     pub name: &'a str,
     pub minutes: i32,
+    pub required: bool,
 }
 
 #[derive(Debug, Clone, Queryable, Identifiable, Associations, Selectable)]
@@ -46,6 +49,7 @@ pub struct Reward {
     pub minutes: i32,
     pub description: Option<String>,
     pub created_at: NaiveDateTime,
+    pub is_borrowed: bool,
 }
 
 #[derive(Insertable)]
@@ -55,6 +59,7 @@ pub struct NewReward<'a> {
     pub task_id: Option<&'a str>,
     pub minutes: i32,
     pub description: Option<&'a str>,
+    pub is_borrowed: bool,
 }
 
 use crate::storage::schema::sessions;
@@ -148,4 +153,12 @@ pub struct NewPushSubscription<'a> {
     pub auth: &'a str,
     pub created_at: NaiveDateTime,
     pub updated_at: NaiveDateTime,
+}
+
+#[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
+#[diesel(table_name = balances)]
+#[diesel(primary_key(child_id))]
+pub struct Balance {
+    pub child_id: String,
+    pub minutes_remaining: i32,
 }

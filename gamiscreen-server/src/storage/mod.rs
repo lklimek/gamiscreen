@@ -99,6 +99,7 @@ impl Store {
                     id: &t.id,
                     name: &t.name,
                     minutes: t.minutes,
+                    required: t.required,
                 };
                 diesel::insert_into(tasks::table)
                     .values(&new_task)
@@ -464,7 +465,7 @@ impl Store {
                             task_submissions::submitted_at,
                         ),
                         (children::id, children::display_name),
-                        (tasks::id, tasks::name, tasks::minutes),
+                        (tasks::id, tasks::name, tasks::minutes, tasks::required),
                     ))
                     .load::<(models::TaskSubmission, Child, Task)>(&mut conn)?;
                 Ok(rows)
@@ -521,6 +522,7 @@ impl Store {
                     task_id: Some(&task_id),
                     minutes: mins,
                     description: Some(&task_name),
+                    is_borrowed: false,
                 };
                 diesel::insert_into(rewards::table)
                     .values(&new_reward)
@@ -587,6 +589,7 @@ impl Store {
                     rewards::minutes,
                     rewards::description,
                     rewards::created_at,
+                    rewards::is_borrowed,
                 ))
                 .load::<models::Reward>(&mut conn)?)
         })
@@ -629,6 +632,7 @@ impl Store {
                 task_id: task_opt.as_deref(),
                 minutes: mins,
                 description: description_opt.as_deref(),
+                is_borrowed: false,
             };
             diesel::insert_into(rewards::table)
                 .values(&new_reward)
