@@ -107,8 +107,8 @@ fn run_session_watcher(state: Arc<AtomicBool>) {
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DispatchMessageW, GWLP_USERDATA,
-        GetMessageW, MSG, RegisterClassW, SetWindowLongPtrW, TranslateMessage, WNDCLASSW,
-        WS_OVERLAPPEDWINDOW,
+        GetMessageW, GetWindowLongPtrW, MSG, RegisterClassW, SetWindowLongPtrW, TranslateMessage,
+        WNDCLASSW, WS_OVERLAPPEDWINDOW,
     };
 
     unsafe {
@@ -180,6 +180,13 @@ fn run_session_watcher(state: Arc<AtomicBool>) {
                 break;
             }
         }
+
+        // F8 fix: reclaim the Arc<AtomicBool> stored in window user data
+        let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const AtomicBool;
+        if !ptr.is_null() {
+            let _ = Arc::from_raw(ptr);
+        }
+
         info!("Windows: session watcher thread exiting");
     }
 }

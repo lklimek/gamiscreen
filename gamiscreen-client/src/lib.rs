@@ -62,6 +62,24 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
         #[cfg(target_os = "windows")]
         Command::SessionAgent { session_id } => {
             tracing::info!(session_id, "starting session agent");
+            // F3: validate that the process is actually in the claimed session
+            {
+                let mut actual_session: u32 = 0;
+                let pid = std::process::id();
+                unsafe {
+                    windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId(
+                        pid,
+                        &mut actual_session,
+                    );
+                }
+                if actual_session != session_id {
+                    tracing::warn!(
+                        expected = session_id,
+                        actual = actual_session,
+                        "session ID mismatch"
+                    );
+                }
+            }
             app::agent::run(config.clone()).await
         }
         #[cfg(not(target_os = "windows"))]

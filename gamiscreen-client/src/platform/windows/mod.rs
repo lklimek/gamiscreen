@@ -10,6 +10,7 @@ pub mod lock;
 pub mod notify;
 pub mod service;
 pub mod service_cli;
+pub mod util;
 
 /// Windows implementation of the cross-platform interface.
 pub struct WindowsPlatform {
