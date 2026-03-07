@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use directories::ProjectDirs;
 use gamiscreen_shared::api::rest::RestError;
-use gamiscreen_shared::api::{self};
+use gamiscreen_shared::api::{self, HeartbeatResp};
 use gamiscreen_shared::jwt::{self, JwtClaims};
 use tokio::time::{Instant, Sleep, sleep};
 use tracing::{debug, error, info, warn};
@@ -211,18 +211,27 @@ async fn main_loop(
         )
         .await
         {
-            Ok(Some(rem)) => {
-                info!(remaining = rem, "heartbeat ok");
+            Ok(Some(resp)) => {
+                info!(
+                    remaining = resp.remaining_minutes,
+                    balance = resp.balance,
+                    blocked_by_tasks = resp.blocked_by_tasks,
+                    "heartbeat ok"
+                );
                 failures = 0;
-                if rem >= 1 {
-                    countdown_task.tick(rem as u64).await;
+                if resp.remaining_minutes >= 1 {
+                    countdown_task.tick(resp.remaining_minutes as u64).await;
                     relocker.disable().await;
                 } else {
                     countdown_task.cancel().await;
                 }
-                if rem <= 0 {
-                    warn!("minutes exhausted; enabling re-lock loop");
-                    relocker.enable(Some(rem)).await;
+                if resp.remaining_minutes <= 0 {
+                    if resp.blocked_by_tasks {
+                        warn!("required tasks incomplete; enabling re-lock loop");
+                    } else {
+                        warn!("minutes exhausted; enabling re-lock loop");
+                    }
+                    relocker.enable(Some(resp.remaining_minutes)).await;
                 }
             }
             Ok(None) => {}
@@ -261,7 +270,7 @@ async fn send_pending(
     device_id: &str,
     token: &str,
     pending_minutes: &mut PendingMinutes,
-) -> Result<Option<i32>, AppError> {
+) -> Result<Option<HeartbeatResp>, AppError> {
     if pending_minutes.is_empty() {
         return Ok(None);
     }
@@ -273,7 +282,7 @@ async fn send_pending(
     .await
     .map_err(|e| AppError::Http(format!("heartbeat error: {e}")))?;
     pending_minutes.mark_sent(&minutes)?;
-    Ok(Some(resp.remaining_minutes))
+    Ok(Some(resp))
 }
 
 fn read_token_from_keyring(server_url: &str) -> Result<String, AppError> {
