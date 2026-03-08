@@ -78,6 +78,22 @@ running tests or linting, **commit and push your changes anyway**. Do not let en
 problems block your work — note the issue in the commit message or PR description and
 move on.
 
+## Release Process
+
+This project follows [Semantic Versioning 2.0](https://semver.org/). While pre-1.0,
+minor bumps (0.x.0) may include breaking changes.
+
+### Steps
+
+1. Bump `version` in `Cargo.toml` under `[workspace.package]`
+2. `cargo build --workspace` — updates `Cargo.lock`
+3. Bump `version` in `gamiscreen-web/package.json`
+4. `cd gamiscreen-web && npm install` — updates `package-lock.json`
+5. Check `git status` for any other generated file changes and stage them
+6. Commit: `chore: release vX.Y.Z`
+7. Tag: `git tag vX.Y.Z`
+8. Push: `git push && git push --tags`
+
 ## Conventions
 
 - Follow Rust idiomatic patterns; don't duplicate existing code.
