@@ -1315,8 +1315,7 @@ async fn test_borrowing_flow() {
 async fn test_penalty_borrow_earn_remaining_converges_to_balance() {
     // Regression test for: penalty → borrow → earn leaves remaining > balance.
     //
-    // Reported sequence (starting from balance=remaining=137 not reproduced here
-    // but the logic is equivalent starting from 0):
+    // Reported sequence (reproduced below, starting from balance=remaining=137):
     //   +137 earn   -> balance=137, remaining=137
     //   -100 penalty -> balance=37,  remaining=37
     //   -40  penalty -> balance=-3,  remaining=-3
