@@ -2,7 +2,7 @@ use std::ffi::c_void;
 use std::mem::{MaybeUninit, size_of};
 
 use tracing::{error, info, warn};
-use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE, WAIT_OBJECT_0};
+use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, HANDLE};
 use windows_sys::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TokenElevation};
 use windows_sys::Win32::System::Services::{
     ChangeServiceConfig2W, CloseServiceHandle, ControlService, CreateServiceW, DeleteService,
@@ -96,7 +96,7 @@ fn relaunch_elevated(args: &[&str]) -> Result<(), AppError> {
                 // ERROR_CANCELLED: user declined the UAC prompt
                 return Err(AppError::Config("elevation cancelled by user".into()));
             }
-            let err = last_error();
+            let err = std::io::Error::from_raw_os_error(code as i32);
             error!(os_error = err.raw_os_error(), %err, "ShellExecuteExW failed");
             return Err(AppError::Io(err));
         }
@@ -106,9 +106,19 @@ fn relaunch_elevated(args: &[&str]) -> Result<(), AppError> {
             return Err(AppError::Config("elevated process handle is null".into()));
         }
 
-        WaitForSingleObject(proc_handle, 0xFFFFFFFF); // INFINITE
+        const WAIT_FAILED_VAL: u32 = 0xFFFFFFFF;
+        let wait_result = WaitForSingleObject(proc_handle, 0xFFFFFFFF); // INFINITE
+        if wait_result == WAIT_FAILED_VAL {
+            let err = last_error();
+            error!(os_error = err.raw_os_error(), %err, "WaitForSingleObject failed for elevated process");
+            CloseHandle(proc_handle);
+            return Err(AppError::Io(err));
+        }
         let mut exit_code: u32 = 0;
-        GetExitCodeProcess(proc_handle, &mut exit_code);
+        if GetExitCodeProcess(proc_handle, &mut exit_code) == 0 {
+            let err = last_error();
+            warn!(os_error = err.raw_os_error(), %err, "GetExitCodeProcess failed");
+        }
         CloseHandle(proc_handle);
 
         if exit_code != 0 {
