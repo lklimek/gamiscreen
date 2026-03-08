@@ -21,7 +21,7 @@ use windows_sys::Win32::System::Services::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     WTS_CONSOLE_CONNECT, WTS_CONSOLE_DISCONNECT, WTS_REMOTE_CONNECT, WTS_REMOTE_DISCONNECT,
-    WTS_SESSION_LOCK, WTS_SESSION_LOGOFF, WTS_SESSION_LOGON, WTS_SESSION_UNLOCK,
+    WTS_SESSION_LOGOFF, WTS_SESSION_LOGON,
 };
 
 use super::util::{SERVICE_NAME, last_error, to_wide_null};
@@ -196,7 +196,6 @@ unsafe extern "system" fn service_control_handler(
 fn map_session_event(event_type: u32) -> Option<SessionEventKind> {
     match event_type {
         WTS_SESSION_LOGON => Some(SessionEventKind::Activate(SessionActivateReason::Logon)),
-        WTS_SESSION_UNLOCK => Some(SessionEventKind::Activate(SessionActivateReason::Unlock)),
         WTS_CONSOLE_CONNECT => Some(SessionEventKind::Activate(
             SessionActivateReason::ConsoleConnect,
         )),
@@ -206,13 +205,14 @@ fn map_session_event(event_type: u32) -> Option<SessionEventKind> {
         WTS_SESSION_LOGOFF => Some(SessionEventKind::Deactivate(
             SessionDeactivateReason::Logoff,
         )),
-        WTS_SESSION_LOCK => Some(SessionEventKind::Deactivate(SessionDeactivateReason::Lock)),
         WTS_CONSOLE_DISCONNECT => Some(SessionEventKind::Deactivate(
             SessionDeactivateReason::ConsoleDisconnect,
         )),
         WTS_REMOTE_DISCONNECT => Some(SessionEventKind::Deactivate(
             SessionDeactivateReason::RemoteDisconnect,
         )),
+        // Lock/Unlock: the session agent detects lock state internally via
+        // is_session_locked() and skips heartbeats accordingly.
         _ => None,
     }
 }
@@ -808,7 +808,6 @@ enum SessionEventKind {
 #[derive(Clone, Copy)]
 enum SessionActivateReason {
     Logon,
-    Unlock,
     ConsoleConnect,
     RemoteConnect,
 }
@@ -816,7 +815,6 @@ enum SessionActivateReason {
 #[derive(Clone, Copy)]
 enum SessionDeactivateReason {
     Logoff,
-    Lock,
     ConsoleDisconnect,
     RemoteDisconnect,
 }
@@ -825,7 +823,6 @@ impl SessionActivateReason {
     fn as_str(&self) -> &'static str {
         match self {
             SessionActivateReason::Logon => "logon",
-            SessionActivateReason::Unlock => "unlock",
             SessionActivateReason::ConsoleConnect => "console-connect",
             SessionActivateReason::RemoteConnect => "remote-connect",
         }
@@ -836,7 +833,6 @@ impl SessionDeactivateReason {
     fn as_str(&self) -> &'static str {
         match self {
             SessionDeactivateReason::Logoff => "logoff",
-            SessionDeactivateReason::Lock => "lock",
             SessionDeactivateReason::ConsoleDisconnect => "console-disconnect",
             SessionDeactivateReason::RemoteDisconnect => "remote-disconnect",
         }
