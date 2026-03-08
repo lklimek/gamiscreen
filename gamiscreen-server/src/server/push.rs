@@ -6,7 +6,7 @@ use gamiscreen_shared::api::ServerEvent;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
 use web_push::{
-    ContentEncoding, IsahcWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient,
+    ContentEncoding, HyperWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient,
     WebPushMessageBuilder,
 };
 
@@ -20,7 +20,7 @@ pub struct PushService {
 }
 
 struct PushServiceInner {
-    client: IsahcWebPushClient,
+    client: HyperWebPushClient,
     vapid_private: String,
     contact: Option<String>,
     tenant_id: String,
@@ -51,13 +51,7 @@ impl PushService {
             return None;
         }
 
-        let client = match IsahcWebPushClient::new() {
-            Ok(c) => c,
-            Err(err) => {
-                warn!(error = %err, "push: failed to build HTTP client; disabling push service");
-                return None;
-            }
-        };
+        let client = HyperWebPushClient::new();
 
         Some(Self {
             inner: Arc::new(PushServiceInner {
@@ -162,11 +156,11 @@ impl PushServiceInner {
         let signature = vapid.build().map_err(|e| e.to_string())?;
         builder.set_vapid_signature(signature);
 
-        match self
+        let result: Result<(), web_push::WebPushError> = self
             .client
             .send(builder.build().map_err(|e| e.to_string())?)
-            .await
-        {
+            .await;
+        match result {
             Ok(()) => {
                 info!(endpoint = %endpoint, "push: delivered");
                 if let Err(e) = store
