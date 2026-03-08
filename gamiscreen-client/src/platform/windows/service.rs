@@ -616,42 +616,71 @@ async fn session_worker_task(
     );
 
     // Cast handles to usize so they are Send-safe for use across await points.
-    // SendHandle is not Copy/Clone to prevent aliasing; we consume it here.
     let proc_h = child.process_handle.0 as usize;
     let thread_h = child.thread_handle.0 as usize;
 
-    // Wait for either the child process to exit or cancellation (F1 fix)
+    // Spawn the blocking wait as a JoinHandle so we can await it on both paths.
+    let wait_handle = tokio::task::spawn_blocking(move || unsafe {
+        let h = proc_h as windows_sys::Win32::Foundation::HANDLE;
+        const INFINITE: u32 = 0xFFFFFFFF;
+        const WAIT_FAILED_VAL: u32 = 0xFFFFFFFF;
+
+        let wait_result = windows_sys::Win32::System::Threading::WaitForSingleObject(h, INFINITE);
+        if wait_result == WAIT_FAILED_VAL {
+            return Err(last_error());
+        }
+
+        let mut exit_code: u32 = 0;
+        if windows_sys::Win32::System::Threading::GetExitCodeProcess(h, &mut exit_code) == 0 {
+            return Err(last_error());
+        }
+        Ok(exit_code)
+    });
+
     let result = tokio::select! {
         _ = cancel.cancelled() => {
             info!(session_id, generation, "cancel requested; terminating session agent");
             unsafe {
                 let h = proc_h as windows_sys::Win32::Foundation::HANDLE;
                 windows_sys::Win32::System::Threading::TerminateProcess(h, 1);
-                // Wait for the process to actually exit so the spawn_blocking thread
-                // in wait_for_process finishes before we close handles.
-                windows_sys::Win32::System::Threading::WaitForSingleObject(h, 5000);
+                let wait_ret = windows_sys::Win32::System::Threading::WaitForSingleObject(h, 5000);
+                const WAIT_TIMEOUT: u32 = 0x00000102;
+                const WAIT_FAILED_VAL: u32 = 0xFFFFFFFF;
+                match wait_ret {
+                    WAIT_TIMEOUT => warn!(session_id, "timed out waiting for terminated process to exit"),
+                    WAIT_FAILED_VAL => {
+                        let err = last_error();
+                        warn!(session_id, error=%err, "WaitForSingleObject failed after TerminateProcess");
+                    }
+                    _ => {}
+                }
             }
+            // Await the blocking thread to ensure it has exited before we close handles.
+            let _ = wait_handle.await;
             WorkerExitKind::Requested
         }
-        exit_code = wait_for_process(proc_h) => {
-            match exit_code {
-                Ok(0) => {
+        join_result = wait_handle => {
+            match join_result {
+                Ok(Ok(0)) => {
                     info!(session_id, generation, "session agent exited cleanly");
                     WorkerExitKind::Completed
                 }
-                Ok(code) => {
+                Ok(Ok(code)) => {
                     warn!(session_id, generation, exit_code = code, "session agent exited with error");
                     WorkerExitKind::Failed(format!("exit code {code}"))
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     error!(session_id, generation, error=%e, "failed to wait for session agent");
+                    WorkerExitKind::Failed(e.to_string())
+                }
+                Err(e) => {
+                    error!(session_id, generation, error=%e, "wait task panicked");
                     WorkerExitKind::Failed(e.to_string())
                 }
             }
         }
     };
 
-    // Clean up handles
     unsafe {
         windows_sys::Win32::Foundation::CloseHandle(
             proc_h as windows_sys::Win32::Foundation::HANDLE,
@@ -675,9 +704,10 @@ struct ChildProcess {
     pid: u32,
 }
 
-/// RAII guard for user token and environment block allocated during process spawning.
+/// RAII guard for tokens and environment block allocated during process spawning.
 struct SpawnResources {
-    user_token: windows_sys::Win32::Foundation::HANDLE,
+    /// Primary token (duplicated from the impersonation token via DuplicateTokenEx)
+    primary_token: windows_sys::Win32::Foundation::HANDLE,
     env_block: *mut std::ffi::c_void,
 }
 
@@ -687,14 +717,18 @@ impl Drop for SpawnResources {
             if !self.env_block.is_null() {
                 windows_sys::Win32::System::Environment::DestroyEnvironmentBlock(self.env_block);
             }
-            if !self.user_token.is_null() {
-                windows_sys::Win32::Foundation::CloseHandle(self.user_token);
+            if !self.primary_token.is_null() {
+                windows_sys::Win32::Foundation::CloseHandle(self.primary_token);
             }
         }
     }
 }
 
 fn spawn_session_agent(session_id: u32) -> Result<ChildProcess, std::io::Error> {
+    use windows_sys::Win32::Security::{
+        DuplicateTokenEx, SecurityImpersonation, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE,
+        TOKEN_QUERY, TokenPrimary,
+    };
     use windows_sys::Win32::System::Environment::CreateEnvironmentBlock;
     use windows_sys::Win32::System::RemoteDesktop::WTSQueryUserToken;
     use windows_sys::Win32::System::Threading::{
@@ -703,21 +737,36 @@ fn spawn_session_agent(session_id: u32) -> Result<ChildProcess, std::io::Error> 
     };
 
     unsafe {
-        let mut user_token: windows_sys::Win32::Foundation::HANDLE = std::ptr::null_mut();
-        if WTSQueryUserToken(session_id, &mut user_token) == 0 {
+        // WTSQueryUserToken returns an impersonation token; we must convert it
+        // to a primary token via DuplicateTokenEx for CreateProcessAsUserW.
+        let mut impersonation_token: windows_sys::Win32::Foundation::HANDLE = std::ptr::null_mut();
+        if WTSQueryUserToken(session_id, &mut impersonation_token) == 0 {
+            return Err(last_error());
+        }
+
+        let mut primary_token: windows_sys::Win32::Foundation::HANDLE = std::ptr::null_mut();
+        let dup_result = DuplicateTokenEx(
+            impersonation_token,
+            TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY,
+            std::ptr::null(),
+            SecurityImpersonation,
+            TokenPrimary,
+            &mut primary_token,
+        );
+        windows_sys::Win32::Foundation::CloseHandle(impersonation_token);
+        if dup_result == 0 {
             return Err(last_error());
         }
 
         let mut env_block: *mut std::ffi::c_void = std::ptr::null_mut();
-        if CreateEnvironmentBlock(&mut env_block, user_token, 0) == 0 {
+        if CreateEnvironmentBlock(&mut env_block, primary_token, 0) == 0 {
             let err = last_error();
-            windows_sys::Win32::Foundation::CloseHandle(user_token);
+            windows_sys::Win32::Foundation::CloseHandle(primary_token);
             return Err(err);
         }
 
-        // RAII guard ensures cleanup on any error path below (F9 fix)
         let resources = SpawnResources {
-            user_token,
+            primary_token,
             env_block,
         };
 
@@ -737,7 +786,7 @@ fn spawn_session_agent(session_id: u32) -> Result<ChildProcess, std::io::Error> 
         let mut pi: PROCESS_INFORMATION = std::mem::zeroed();
 
         let create_result = CreateProcessAsUserW(
-            resources.user_token,
+            resources.primary_token,
             std::ptr::null(),   // application name (use command line)
             cmd_w.as_mut_ptr(), // command line
             std::ptr::null(),   // process security attributes
@@ -750,7 +799,6 @@ fn spawn_session_agent(session_id: u32) -> Result<ChildProcess, std::io::Error> 
             &mut pi,
         );
 
-        // resources dropped here automatically via RAII
         drop(resources);
 
         if create_result == 0 {
@@ -763,28 +811,6 @@ fn spawn_session_agent(session_id: u32) -> Result<ChildProcess, std::io::Error> 
             pid: pi.dwProcessId,
         })
     }
-}
-
-async fn wait_for_process(handle_val: usize) -> Result<u32, std::io::Error> {
-    tokio::task::spawn_blocking(move || unsafe {
-        let h = handle_val as windows_sys::Win32::Foundation::HANDLE;
-        const INFINITE: u32 = 0xFFFFFFFF;
-        const WAIT_FAILED_VAL: u32 = 0xFFFFFFFF;
-
-        // F2 fix: check WaitForSingleObject return value
-        let wait_result = windows_sys::Win32::System::Threading::WaitForSingleObject(h, INFINITE);
-        if wait_result == WAIT_FAILED_VAL {
-            return Err(last_error());
-        }
-
-        let mut exit_code: u32 = 0;
-        if windows_sys::Win32::System::Threading::GetExitCodeProcess(h, &mut exit_code) == 0 {
-            return Err(last_error());
-        }
-        Ok(exit_code)
-    })
-    .await
-    .map_err(std::io::Error::other)?
 }
 
 enum ServiceEvent {

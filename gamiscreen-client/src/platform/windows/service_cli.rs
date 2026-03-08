@@ -7,7 +7,7 @@ use windows_sys::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TokenElevat
 use windows_sys::Win32::System::Services::{
     ChangeServiceConfig2W, CloseServiceHandle, ControlService, CreateServiceW, DeleteService,
     OpenSCManagerW, OpenServiceW, SC_MANAGER_CONNECT, SC_MANAGER_CREATE_SERVICE,
-    SERVICE_ALL_ACCESS, SERVICE_AUTO_START, SERVICE_CONFIG_DESCRIPTION, SERVICE_CONTROL_STOP,
+    SERVICE_AUTO_START, SERVICE_CHANGE_CONFIG, SERVICE_CONFIG_DESCRIPTION, SERVICE_CONTROL_STOP,
     SERVICE_DESCRIPTIONW, SERVICE_ERROR_NORMAL, SERVICE_QUERY_STATUS, SERVICE_START,
     SERVICE_STATUS, SERVICE_STOP, SERVICE_WIN32_OWN_PROCESS, StartServiceW,
 };
@@ -166,11 +166,12 @@ fn install_service() -> Result<(), AppError> {
         }
         let scm = ScHandle(scm_raw);
 
+        // Only request rights needed: set description + start the service after creation
         let svc_raw = CreateServiceW(
             scm.0,
             service_name_w.as_ptr(),
             display_name_w.as_ptr(),
-            SERVICE_ALL_ACCESS,
+            SERVICE_CHANGE_CONFIG | SERVICE_START,
             SERVICE_WIN32_OWN_PROCESS,
             SERVICE_AUTO_START,
             SERVICE_ERROR_NORMAL,
