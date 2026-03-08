@@ -49,7 +49,7 @@ gamiscreen-shared = { path = "../gamiscreen-shared", features = [
     "rest-client",
 ] }
 tokio-util = { version = "0.7.18" }
-zip = { version = "7.4.0", default-features = false, features = ["deflate"] }
+zip = { version = "8.2.0", default-features = false, features = ["deflate"] }
 tempfile = "3.24.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
