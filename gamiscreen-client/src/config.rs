@@ -29,8 +29,19 @@ pub fn default_config_path() -> Option<PathBuf> {
 }
 
 pub fn load_config(path: &PathBuf) -> Result<ClientConfig, AppError> {
-    let data = std::fs::read_to_string(path)
-        .map_err(|e| AppError::Config(format!("read {} failed: {e}", path.display())))?;
+    let data = std::fs::read_to_string(path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            let p = path.display();
+            AppError::Config(format!(
+                "config file not found: {p}\n\n\
+                 Create it with:\n  \
+                 echo 'server_url: \"https://your-server.example\"' > {p}\n\n\
+                 Or specify a path with --config or ${ENV_CONFIG}"
+            ))
+        } else {
+            AppError::Config(format!("read {} failed: {e}", path.display()))
+        }
+    })?;
     let cfg: ClientConfig = serde_yaml::from_str(&data)
         .map_err(|e| AppError::Config(format!("parse {} failed: {e}", path.display())))?;
     Ok(cfg)
@@ -133,7 +144,53 @@ impl ClientConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_server_url;
+    use super::*;
+
+    #[test]
+    fn load_config_not_found_gives_actionable_message() {
+        let path = PathBuf::from("/tmp/gamiscreen-test-nonexistent/client.yaml");
+        let err = load_config(&path).unwrap_err();
+        let msg = err.to_string();
+
+        assert!(
+            msg.contains(&path.display().to_string()),
+            "error should contain the path, got: {msg}"
+        );
+        assert!(
+            msg.contains("server_url"),
+            "error should show a minimal config example, got: {msg}"
+        );
+        assert!(
+            msg.contains("Create"),
+            "error should tell user how to create the file, got: {msg}"
+        );
+        assert!(
+            msg.contains("--config"),
+            "error should mention --config flag, got: {msg}"
+        );
+        assert!(
+            msg.contains(ENV_CONFIG),
+            "error should mention the env var, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn load_config_other_io_errors_unchanged() {
+        // A directory path triggers a non-NotFound IO error
+        let path = PathBuf::from("/tmp");
+        let err = load_config(&path).unwrap_err();
+        let msg = err.to_string();
+
+        // Should NOT contain the actionable "Create" message
+        assert!(
+            !msg.contains("Create"),
+            "non-NotFound errors should keep generic message, got: {msg}"
+        );
+        assert!(
+            msg.contains("read"),
+            "should still contain 'read' prefix, got: {msg}"
+        );
+    }
 
     #[test]
     fn keeps_explicit_https() {
