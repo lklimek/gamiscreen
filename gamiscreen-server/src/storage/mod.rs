@@ -509,8 +509,19 @@ impl Store {
                 let Some((child_id, task_id, mins, task_name)) = rec else {
                     return Ok(());
                 };
-                // Balance BEFORE this reward — used to determine how much goes to remaining vs debt repayment
+                // Balance and remaining BEFORE this reward — used to determine how much
+                // goes to remaining vs debt repayment.
                 let balance = compute_balance_inner(conn, &child_id)?;
+                // `remaining` is only consulted when balance crosses the debt boundary
+                // (balance < 0 and balance + mins >= 0). Skip the DB read otherwise.
+                let remaining: i32 = if balance < 0 {
+                    balances::table
+                        .filter(balances::child_id.eq(&child_id))
+                        .select(balances::minutes_remaining)
+                        .first(conn)?
+                } else {
+                    balance
+                };
                 let new_reward = NewReward {
                     child_id: &child_id,
                     task_id: Some(&task_id),
@@ -521,7 +532,7 @@ impl Store {
                 diesel::insert_into(rewards::table)
                     .values(&new_reward)
                     .execute(conn)?;
-                let delta = compute_remaining_delta(mins, false, balance);
+                let delta = compute_remaining_delta(mins, false, balance, remaining);
                 diesel::update(balances::table.filter(balances::child_id.eq(&child_id)))
                     .set(balances::minutes_remaining.eq(balances::minutes_remaining + delta))
                     .execute(conn)?;
@@ -628,8 +639,19 @@ impl Store {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
             conn.immediate_transaction(|conn| -> Result<i32, StorageError> {
-                // Balance BEFORE this reward — used to determine how much goes to remaining vs debt repayment
+                // Balance and remaining BEFORE this reward — used to determine how much
+                // goes to remaining vs debt repayment.
                 let balance = compute_balance_inner(conn, &child)?;
+                // `remaining` is only consulted when balance crosses the debt boundary
+                // (balance < 0 and balance + mins >= 0). Skip the DB read otherwise.
+                let remaining: i32 = if balance < 0 {
+                    balances::table
+                        .filter(balances::child_id.eq(&child))
+                        .select(balances::minutes_remaining)
+                        .first(conn)?
+                } else {
+                    balance
+                };
                 let new_reward = NewReward {
                     child_id: &child,
                     task_id: task_opt.as_deref(),
@@ -640,7 +662,7 @@ impl Store {
                 diesel::insert_into(rewards::table)
                     .values(&new_reward)
                     .execute(conn)?;
-                let delta = compute_remaining_delta(mins, is_borrowed, balance);
+                let delta = compute_remaining_delta(mins, is_borrowed, balance, remaining);
                 diesel::update(balances::table.filter(balances::child_id.eq(&child)))
                     .set(balances::minutes_remaining.eq(balances::minutes_remaining + delta))
                     .execute(conn)?;
@@ -948,18 +970,26 @@ fn all_required_tasks_done_today_inner(
 ///
 /// Penalties (negative mins) always reduce remaining directly, even when balance is
 /// negative. This is intentional -- penalties are punitive and should have immediate effect.
-fn compute_remaining_delta(mins: i32, is_borrowed: bool, balance: i32) -> i32 {
+///
+/// When `balance >= 0`, the invariant `remaining == balance` holds and the full `mins`
+/// is added to remaining. When earnings bring a negative balance to zero or positive
+/// (crossing the debt boundary), `remaining` is converged to the new balance level,
+/// which maintains the invariant. `remaining` is only consulted in this crossing case.
+fn compute_remaining_delta(mins: i32, is_borrowed: bool, balance: i32, remaining: i32) -> i32 {
     if is_borrowed || mins < 0 || balance >= 0 {
-        // Borrow: always adds to remaining
-        // Penalty (negative mins): always reduces remaining directly
-        // Positive balance: full amount goes to remaining
+        // Borrow: always adds to remaining.
+        // Penalty (negative mins): always reduces remaining directly.
+        // Positive balance: invariant remaining == balance holds; add full amount.
         mins
-    } else if balance + mins <= 0 {
-        // All earnings go to debt repayment
+    } else if balance + mins < 0 {
+        // All earnings go to debt repayment; remaining unchanged.
         0
     } else {
-        // Surplus after debt repayment
-        balance + mins
+        // Balance crosses from negative to zero or positive: converge remaining to
+        // new_balance to restore the invariant. The delta can be negative when remaining
+        // exceeds new_balance (e.g. borrowed while in deficit, then earned to repay).
+        let new_balance = balance + mins;
+        new_balance - remaining
     }
 }
 
@@ -969,56 +999,88 @@ mod tests {
 
     #[test]
     fn earned_reward_positive_balance() {
-        // Balance 5, earn 10 -> full amount goes to remaining
-        assert_eq!(compute_remaining_delta(10, false, 5), 10);
+        // Balance 5, remaining 5 (normal, no borrow), earn 10 -> full amount goes to remaining
+        assert_eq!(compute_remaining_delta(10, false, 5, 5), 10);
     }
 
     #[test]
     fn earned_reward_negative_balance_partial_repay() {
-        // Balance -10, earn 5 -> all goes to debt repayment, delta = 0
-        assert_eq!(compute_remaining_delta(5, false, -10), 0);
+        // Balance -10, remaining 0 (no borrow), earn 5 -> all goes to debt repayment, delta = 0
+        assert_eq!(compute_remaining_delta(5, false, -10, 0), 0);
     }
 
     #[test]
     fn earned_reward_negative_balance_full_repay_with_surplus() {
-        // Balance -5, earn 8 -> 5 repays debt, 3 surplus goes to remaining
-        assert_eq!(compute_remaining_delta(8, false, -5), 3); // balance + mins = -5 + 8 = 3
+        // Balance -5, remaining 0 (no borrow), earn 8 -> 5 repays debt, 3 surplus goes to remaining
+        assert_eq!(compute_remaining_delta(8, false, -5, 0), 3);
     }
 
     #[test]
     fn borrowed_time_positive_balance() {
         // Borrowing always adds directly to remaining
-        assert_eq!(compute_remaining_delta(10, true, 5), 10);
+        assert_eq!(compute_remaining_delta(10, true, 5, 5), 10);
     }
 
     #[test]
     fn borrowed_time_negative_balance() {
         // Borrowing always adds directly to remaining, even when in debt
-        assert_eq!(compute_remaining_delta(10, true, -5), 10);
+        assert_eq!(compute_remaining_delta(10, true, -5, 0), 10);
     }
 
     #[test]
     fn penalty_positive_balance() {
         // Penalty (negative mins) always reduces remaining directly
-        assert_eq!(compute_remaining_delta(-5, false, 10), -5);
+        assert_eq!(compute_remaining_delta(-5, false, 10, 10), -5);
     }
 
     #[test]
     fn penalty_negative_balance() {
         // Penalty always reduces remaining directly, even when already in debt
-        assert_eq!(compute_remaining_delta(-5, false, -10), -5);
+        assert_eq!(compute_remaining_delta(-5, false, -10, 0), -5);
     }
 
     #[test]
     fn earned_reward_zero_balance() {
-        // Balance exactly 0 -> full amount goes to remaining
-        assert_eq!(compute_remaining_delta(10, false, 0), 10);
+        // Balance exactly 0, remaining 0 -> full amount goes to remaining
+        assert_eq!(compute_remaining_delta(10, false, 0, 0), 10);
     }
 
     #[test]
     fn earned_reward_exact_debt_repayment() {
-        // Balance -5, earn 5 -> exactly repays debt, balance+mins = 0
-        assert_eq!(compute_remaining_delta(5, false, -5), 0);
+        // Balance -5, remaining 0 (no borrow), earn 5 -> exactly repays debt, remaining stays 0
+        assert_eq!(compute_remaining_delta(5, false, -5, 0), 0);
+    }
+
+    // --- Bug regression: penalty + borrow + earn convergence ---
+
+    #[test]
+    fn bug_penalty_borrow_earn_remaining_converges_to_balance() {
+        // Reproduces the reported bug:
+        // Starting from balance=137, remaining=137:
+        //   -100 penalty -> balance=37,  remaining=37
+        //   -40  penalty -> balance=-3,  remaining=-3
+        //   +10  borrow  -> balance=-13, remaining=7
+        //   +20  earn    -> balance=7,   remaining should be 7 (NOT 14)
+        //
+        // State entering the last (+20 earn) step: balance=-13, remaining=7
+        // Expected delta: 0 (remaining already at the new-balance level of 7)
+        assert_eq!(compute_remaining_delta(20, false, -13, 7), 0);
+    }
+
+    #[test]
+    fn earned_reward_converges_remaining_when_remaining_exceeds_new_balance() {
+        // When remaining > new_balance after crossing the debt boundary, remaining is
+        // reduced to match the new balance (invariant: remaining == balance when balance >= 0).
+        // balance=-3, remaining=7 (from prior borrow while in deficit), earn 8 -> new_balance=5
+        // delta should be -2 so that remaining goes from 7 to 5 = new_balance
+        assert_eq!(compute_remaining_delta(8, false, -3, 7), -2);
+    }
+
+    #[test]
+    fn earned_reward_exact_repay_with_elevated_remaining() {
+        // balance=-8, remaining=10 (from prior borrow), earn 8 -> new_balance=0
+        // remaining should converge to 0 = balance
+        assert_eq!(compute_remaining_delta(8, false, -8, 10), -10);
     }
 }
 
