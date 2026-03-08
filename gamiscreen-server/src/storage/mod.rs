@@ -509,12 +509,19 @@ impl Store {
                 let Some((child_id, task_id, mins, task_name)) = rec else {
                     return Ok(());
                 };
-                // Balance and remaining BEFORE this reward — used to determine how much goes to remaining vs debt repayment
+                // Balance and remaining BEFORE this reward — used to determine how much
+                // goes to remaining vs debt repayment.
                 let balance = compute_balance_inner(conn, &child_id)?;
-                let remaining: i32 = balances::table
-                    .filter(balances::child_id.eq(&child_id))
-                    .select(balances::minutes_remaining)
-                    .first(conn)?;
+                // `remaining` is only consulted when balance crosses the debt boundary
+                // (balance < 0 and balance + mins >= 0). Skip the DB read otherwise.
+                let remaining: i32 = if balance < 0 {
+                    balances::table
+                        .filter(balances::child_id.eq(&child_id))
+                        .select(balances::minutes_remaining)
+                        .first(conn)?
+                } else {
+                    balance
+                };
                 let new_reward = NewReward {
                     child_id: &child_id,
                     task_id: Some(&task_id),
@@ -632,12 +639,19 @@ impl Store {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
             conn.immediate_transaction(|conn| -> Result<i32, StorageError> {
-                // Balance and remaining BEFORE this reward — used to determine how much goes to remaining vs debt repayment
+                // Balance and remaining BEFORE this reward — used to determine how much
+                // goes to remaining vs debt repayment.
                 let balance = compute_balance_inner(conn, &child)?;
-                let remaining: i32 = balances::table
-                    .filter(balances::child_id.eq(&child))
-                    .select(balances::minutes_remaining)
-                    .first(conn)?;
+                // `remaining` is only consulted when balance crosses the debt boundary
+                // (balance < 0 and balance + mins >= 0). Skip the DB read otherwise.
+                let remaining: i32 = if balance < 0 {
+                    balances::table
+                        .filter(balances::child_id.eq(&child))
+                        .select(balances::minutes_remaining)
+                        .first(conn)?
+                } else {
+                    balance
+                };
                 let new_reward = NewReward {
                     child_id: &child,
                     task_id: task_opt.as_deref(),
@@ -957,21 +971,23 @@ fn all_required_tasks_done_today_inner(
 /// Penalties (negative mins) always reduce remaining directly, even when balance is
 /// negative. This is intentional -- penalties are punitive and should have immediate effect.
 ///
-/// When earnings bring balance to zero or positive (surplus), `remaining` is converged
-/// toward the new balance level. This ensures the invariant: remaining == balance whenever
-/// there is no outstanding debt (balance >= 0).
+/// When `balance >= 0`, the invariant `remaining == balance` holds and the full `mins`
+/// is added to remaining. When earnings bring a negative balance to zero or positive
+/// (crossing the debt boundary), `remaining` is converged to the new balance level,
+/// which maintains the invariant. `remaining` is only consulted in this crossing case.
 fn compute_remaining_delta(mins: i32, is_borrowed: bool, balance: i32, remaining: i32) -> i32 {
-    if is_borrowed || mins < 0 {
-        // Borrow: always adds to remaining
-        // Penalty (negative mins): always reduces remaining directly
+    if is_borrowed || mins < 0 || balance >= 0 {
+        // Borrow: always adds to remaining.
+        // Penalty (negative mins): always reduces remaining directly.
+        // Positive balance: invariant remaining == balance holds; add full amount.
         mins
     } else if balance + mins < 0 {
-        // All earnings go to debt repayment, remaining unchanged
+        // All earnings go to debt repayment; remaining unchanged.
         0
     } else {
-        // Balance reaches zero or surplus: set remaining equal to new balance.
-        // Delta may be negative when remaining exceeds new_balance (e.g. after
-        // borrowing while in deficit and then repaying the debt via earnings).
+        // Balance crosses from negative to zero or positive: converge remaining to
+        // new_balance to restore the invariant. The delta can be negative when remaining
+        // exceeds new_balance (e.g. borrowed while in deficit, then earned to repay).
         let new_balance = balance + mins;
         new_balance - remaining
     }
@@ -1053,11 +1069,11 @@ mod tests {
 
     #[test]
     fn earned_reward_converges_remaining_when_remaining_exceeds_new_balance() {
-        // When remaining > new_balance after the surplus step, remaining is reduced
-        // to match balance (invariant: remaining == balance when balance >= 0).
-        // balance=0, remaining=10 (from prior borrow), earn 5 -> new_balance=5
-        // delta should be -5 so that remaining goes from 10 to 5 = balance
-        assert_eq!(compute_remaining_delta(5, false, 0, 10), -5);
+        // When remaining > new_balance after crossing the debt boundary, remaining is
+        // reduced to match the new balance (invariant: remaining == balance when balance >= 0).
+        // balance=-3, remaining=7 (from prior borrow while in deficit), earn 8 -> new_balance=5
+        // delta should be -2 so that remaining goes from 7 to 5 = new_balance
+        assert_eq!(compute_remaining_delta(8, false, -3, 7), -2);
     }
 
     #[test]
