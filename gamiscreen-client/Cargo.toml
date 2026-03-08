@@ -26,6 +26,7 @@ directories = "6.0.0"
 clap = { version = "4.5.57", features = ["derive"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["fmt", "env-filter"] }
+tracing-appender = "0.2"
 futures-util = { version = "0.3.31", default-features = false, features = [
     "sink",
     "std",
@@ -67,6 +68,7 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
     "Win32_System_Services",
     "Win32_System_Environment",
+    "Win32_UI_Shell",
 ] }
 keyring = { version = "3.6.3", features = ["windows-native"] }
 winrt-notification = "0.5"

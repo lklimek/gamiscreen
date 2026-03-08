@@ -9,7 +9,9 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
 use windows_sys::Win32::Foundation::NO_ERROR;
-use windows_sys::Win32::System::RemoteDesktop::WTSSESSION_NOTIFICATION;
+use windows_sys::Win32::System::RemoteDesktop::{
+    WTS_SESSION_INFOW, WTSActive, WTSEnumerateSessionsW, WTSFreeMemory, WTSSESSION_NOTIFICATION,
+};
 use windows_sys::Win32::System::Services::{
     RegisterServiceCtrlHandlerExW, SERVICE_ACCEPT_SESSIONCHANGE, SERVICE_ACCEPT_SHUTDOWN,
     SERVICE_ACCEPT_STOP, SERVICE_CONTROL_INTERROGATE, SERVICE_CONTROL_SESSIONCHANGE,
@@ -303,8 +305,50 @@ impl SessionSupervisor {
         }
     }
 
+    fn enumerate_existing_sessions(&mut self) {
+        unsafe {
+            let mut session_info: *mut WTS_SESSION_INFOW = std::ptr::null_mut();
+            let mut count: u32 = 0;
+            let result = WTSEnumerateSessionsW(
+                std::ptr::null_mut(), // WTS_CURRENT_SERVER_HANDLE
+                0,
+                1,
+                &mut session_info,
+                &mut count,
+            );
+            if result == 0 {
+                warn!("WTSEnumerateSessionsW failed; skipping existing session enumeration");
+                return;
+            }
+            // RAII guard for WTSFreeMemory
+            struct WtsGuard(*mut WTS_SESSION_INFOW);
+            impl Drop for WtsGuard {
+                fn drop(&mut self) {
+                    unsafe {
+                        WTSFreeMemory(self.0 as *mut c_void);
+                    }
+                }
+            }
+            let _guard = WtsGuard(session_info);
+            let sessions = std::slice::from_raw_parts(session_info, count as usize);
+            for session in sessions {
+                if session.SessionId == 0 {
+                    continue;
+                } // skip services session
+                if session.State == WTSActive {
+                    info!(
+                        session_id = session.SessionId,
+                        "found existing active session at startup"
+                    );
+                    self.activate_session(session.SessionId);
+                }
+            }
+        }
+    }
+
     async fn run(mut self, mut rx: mpsc::Receiver<ServiceEvent>) {
         info!("session supervisor event loop started");
+        self.enumerate_existing_sessions();
         loop {
             if self.stopping && self.joinset.is_empty() && self.workers.is_empty() {
                 break;
@@ -654,7 +698,7 @@ fn spawn_session_agent(session_id: u32) -> Result<ChildProcess, std::io::Error> 
     use windows_sys::Win32::System::Environment::CreateEnvironmentBlock;
     use windows_sys::Win32::System::RemoteDesktop::WTSQueryUserToken;
     use windows_sys::Win32::System::Threading::{
-        CREATE_NEW_CONSOLE, CREATE_UNICODE_ENVIRONMENT, CreateProcessAsUserW, PROCESS_INFORMATION,
+        CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT, CreateProcessAsUserW, PROCESS_INFORMATION,
         STARTUPINFOW,
     };
 
@@ -699,7 +743,7 @@ fn spawn_session_agent(session_id: u32) -> Result<ChildProcess, std::io::Error> 
             std::ptr::null(),   // process security attributes
             std::ptr::null(),   // thread security attributes
             0,                  // don't inherit handles
-            CREATE_NEW_CONSOLE | CREATE_UNICODE_ENVIRONMENT,
+            CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
             resources.env_block, // environment
             std::ptr::null(),    // current directory (inherit)
             &si,
