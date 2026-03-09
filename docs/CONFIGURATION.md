@@ -69,12 +69,14 @@ Notes
 - On first start, the server seeds the database with `children` and `tasks` from the config.
 - Use bcrypt for `password_hash`. The example config shows commands to generate hashes with `htpasswd` or `mkpasswd`.
 
-## Client (`~/.config/gamiscreen/client.yaml`)
+## Client
 
-Path resolution
+Config file path resolution
 1) `--config PATH`
 2) Env `GAMISCREEN_CONFIG`
-3) Default: `~/.config/gamiscreen/client.yaml`
+3) Default:
+   - Linux: `~/.config/gamiscreen/client.yaml`
+   - Windows: `%APPDATA%\gamiscreen\client.yaml`
 
 Fields
 - `server_url` (string): base URL of the server, e.g., `http://127.0.0.1:5151`.
@@ -85,6 +87,11 @@ Derived at runtime
 
 Tokens
 - `gamiscreen-client login` stores a device-bound token in the OS keyring. The agent reads it automatically based on `server_url`.
+- Linux: token stored via the system keyring (Secret Service / libsecret).
+- Windows: token stored in Windows Credential Manager under the service name `gamiscreen-client`.
 
-Systemd (client)
+Systemd (Linux)
 - A user service unit is provided at `gamiscreen-client/systemd/gamiscreen-client.service`. See docs/INSTALL.md for setup.
+
+Windows Service
+- The `GamiScreenAgent` service runs under LocalSystem and spawns per-session agents automatically. See docs/INSTALL.md and docs/WINDOWS.md for setup.

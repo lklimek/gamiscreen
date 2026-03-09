@@ -1,6 +1,6 @@
 gamiscreen-client
 
-Linux session agent that heartbeats to the GamiScreen server and locks the screen when time runs out or the server is unreachable for >5 minutes.
+Cross-platform session agent (Linux and Windows) that heartbeats to the GamiScreen server and locks the screen when time runs out or the server is unreachable for >5 minutes.
 
 Build
 
@@ -17,7 +17,7 @@ Config
   - `server_url`: Base URL to GamiScreen server (e.g., https://your-server.example or http://127.0.0.1:5151)
   - Derived: `child_id`, `device_id`, heartbeat interval (60s), and the 45-second countdown warning are hardcoded or pulled from the provisioned JWT; they no longer appear in the config file.
 
-Run as systemd user service
+Run as systemd user service (Linux)
 
 1) Copy `gamiscreen-client/systemd/gamiscreen-client.service` to `~/.config/systemd/user/gamiscreen-client.service`.
 2) Ensure binary is in PATH (e.g., `~/.cargo/bin/gamiscreen-client`).
@@ -27,9 +27,29 @@ Run as systemd user service
 
 Logs: `journalctl --user -u gamiscreen-client -f`
 
+Run as Windows Service
+
+From an elevated PowerShell:
+
+```powershell
+gamiscreen-client service install
+gamiscreen-client service start
+```
+
+Provision each child account first (no admin needed):
+
+```powershell
+gamiscreen-client login --server http://your-server:5151 --username parent
+```
+
+The service (`GamiScreenAgent`) runs under LocalSystem and spawns a session agent per logged-in user. Verify with `Get-Service GamiScreenAgent`.
+
+See `docs/WINDOWS.md` for architecture details and `docs/INSTALL.md` for full setup.
+
 Notes
 
-- The client always locks via DBus using `org.freedesktop.login1` Manager (`LockSessions`). Ensure the bundled polkit rule is installed.
+- Linux: the client locks via DBus using `org.freedesktop.login1` Manager (`LockSessions`). Ensure the bundled polkit rule is installed.
+- Windows: the session agent locks via `LockWorkStation` and shows toast notifications. Tokens are stored in Windows Credential Manager.
 - Auto-update: on startup, the client queries the server's public update manifest (`/api/update/manifest`). If a newer version is available for the current platform and the SHA‑256 matches after download, it atomically replaces its own binary and restarts.
 - Token handling: Use `gamiscreen-client login` to authenticate; the token is stored in your system keyring keyed by the server URL. The agent reads the token from the keyring automatically.
 - Heartbeats: every 60 seconds the client posts `/api/v1/family/{tenant}/children/{child_id}/device/{device_id}/heartbeat` with a list of UTC minute timestamps covering all minutes since the last successful heartbeat. The server deduplicates across devices, so simultaneous usage is counted once. The tenant identifier is derived from the stored JWT.

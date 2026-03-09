@@ -33,6 +33,72 @@ See also: docs/INSTALL.md for full installation and systemd setup.
 
 ## Windows Service Workflow (CLI)
 
-- Use `gamiscreen-client service install` to register the Windows Service for all users.
-- Use `gamiscreen-client session-agent` only when the service needs to spawn a child session worker manually (normally the service handles this).
-- Keep using `gamiscreen-client login` from each Windows account to provision tokens before the service launches the session agent.
+Full lifecycle: install the service, provision tokens, start, verify, troubleshoot.
+
+### Setup
+
+1) Install the service (elevated PowerShell):
+
+```powershell
+gamiscreen-client service install
+```
+
+2) Log into each child's Windows account and provision a token:
+
+```powershell
+gamiscreen-client login --server http://your-server:5151 --username parent
+```
+
+3) Start the service:
+
+```powershell
+gamiscreen-client service start
+```
+
+The service spawns a session agent per logged-in user automatically.
+
+### Checking service status
+
+```powershell
+Get-Service GamiScreenAgent
+
+# Detailed status via SCM
+sc query GamiScreenAgent
+```
+
+### Viewing logs
+
+Session agent logs are written to `%ProgramData%\GamiScreen\Logs`. Service-level events go to the Windows Event Log.
+
+```powershell
+# View recent log files
+Get-ChildItem "$env:ProgramData\GamiScreen\Logs"
+
+# View Event Log entries
+Get-EventLog -LogName Application -Source GamiScreen -Newest 20
+```
+
+### Debugging
+
+Run the agent directly in the foreground (bypasses the service):
+
+```powershell
+gamiscreen-client agent
+```
+
+### Common issues
+
+- **Service won't start**: ensure `gamiscreen-client service install` was run from an elevated prompt. Check Event Log for errors.
+- **No token for a child account**: the session agent exits immediately if no token is found. Log into that Windows account and run `gamiscreen-client login`.
+- **Session agent crashes repeatedly**: the service uses exponential backoff (1s to 60s) before restarting a failed session agent. Check logs under `%ProgramData%\GamiScreen\Logs`.
+
+### Stopping and uninstalling
+
+```powershell
+gamiscreen-client service stop
+gamiscreen-client service uninstall
+```
+
+Notes
+- `gamiscreen-client session-agent --session-id N` is spawned by the service internally. Do not run it manually unless debugging.
+- The service runs under LocalSystem with auto-start. It detects session logon/logoff/unlock events and manages session agents accordingly.
