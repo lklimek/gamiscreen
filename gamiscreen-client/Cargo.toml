@@ -71,7 +71,7 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_UI_Shell",
 ] }
 keyring = { version = "3.6.3", features = ["windows-native"] }
-winrt-notification = "0.5"
+tauri-winrt-notification = "0.7"
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 zbus = { version = "5.13.2", default-features = false, features = ["tokio"] }

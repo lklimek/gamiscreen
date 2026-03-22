@@ -133,9 +133,10 @@ fn service_main_impl() -> Result<(), AppError> {
         "service state transitioned to STOPPED"
     );
 
-    unsafe {
-        Arc::from_raw(ctx_ptr as *const ServiceContext);
-    }
+    // Intentionally leak the Arc<ServiceContext>: the SCM may dispatch a final
+    // control event on another thread after block_on returns. Reclaiming the pointer
+    // here would be a use-after-free. The leaked Arc is acceptable for a
+    // process-lifetime service context — the OS reclaims memory at process exit.
     Ok(())
 }
 
@@ -785,6 +786,11 @@ fn spawn_session_agent(session_id: u32) -> Result<ChildProcess, std::io::Error> 
         };
         let mut pi: PROCESS_INFORMATION = std::mem::zeroed();
 
+        // SECURITY: The agent runs as the child user. A technically inclined child
+        // could terminate it via Task Manager. The supervisor restarts it with
+        // exponential backoff (max 60s). Future hardening:
+        // TODO: Set a restrictive DACL on the process handle to deny PROCESS_TERMINATE
+        // TODO: Alert the parent when repeated agent failures are detected
         let create_result = CreateProcessAsUserW(
             resources.primary_token,
             std::ptr::null(),   // application name (use command line)
@@ -862,5 +868,56 @@ impl SessionDeactivateReason {
             SessionDeactivateReason::ConsoleDisconnect => "console-disconnect",
             SessionDeactivateReason::RemoteDisconnect => "remote-disconnect",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backoff_delay_sequence() {
+        let mut b = Backoff::default();
+        assert_eq!(b.next_delay(), Duration::from_secs(1));
+        assert_eq!(b.next_delay(), Duration::from_secs(5));
+        assert_eq!(b.next_delay(), Duration::from_secs(15));
+        assert_eq!(b.next_delay(), Duration::from_secs(30));
+        assert_eq!(b.next_delay(), Duration::from_secs(60));
+        // caps at 60
+        assert_eq!(b.next_delay(), Duration::from_secs(60));
+    }
+
+    #[test]
+    fn backoff_reset() {
+        let mut b = Backoff::default();
+        b.next_delay();
+        b.next_delay();
+        b.reset();
+        assert_eq!(b.next_delay(), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn map_session_event_known_events() {
+        assert!(matches!(
+            map_session_event(WTS_SESSION_LOGON),
+            Some(SessionEventKind::Activate(SessionActivateReason::Logon))
+        ));
+        assert!(matches!(
+            map_session_event(WTS_CONSOLE_CONNECT),
+            Some(SessionEventKind::Activate(
+                SessionActivateReason::ConsoleConnect
+            ))
+        ));
+        assert!(matches!(
+            map_session_event(WTS_SESSION_LOGOFF),
+            Some(SessionEventKind::Deactivate(
+                SessionDeactivateReason::Logoff
+            ))
+        ));
+    }
+
+    #[test]
+    fn map_session_event_unknown_returns_none() {
+        assert!(map_session_event(0xFFFF).is_none());
     }
 }

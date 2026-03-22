@@ -81,15 +81,20 @@ impl Platform for WindowsPlatform {
         // Create a small .bat script to swap files after this process exits and
         // relaunch the app directly (Scheduled Task friendly; no SCM involved).
         let bat_path = parent.join(format!("update-runner-{}.bat", std::process::id()));
-        // Quote exe and args for cmd.exe; escape embedded quotes by doubling them
-        let exe_quoted = format!("\"{}\"", current_exe.display());
+        // Escape paths and args for cmd.exe to prevent command injection via
+        // metacharacters like &, |, %, ^, <, > in file paths (CWE-78).
+        let exe_escaped = escape_cmd_meta(&current_exe.display().to_string());
+        let exe_quoted = format!("\"{}\"", exe_escaped);
+        let new_escaped = escape_cmd_meta(&new_path.display().to_string());
+        let cur_escaped = escape_cmd_meta(&current_exe.display().to_string());
         let mut args_quoted = String::new();
         for a in args {
-            let mut s = a.replace('"', "\"\"");
-            s.insert(0, '"');
-            s.push('"');
+            let escaped = escape_cmd_meta(a);
+            let s = escaped.replace('"', "\"\"");
             args_quoted.push(' ');
+            args_quoted.push('"');
             args_quoted.push_str(&s);
+            args_quoted.push('"');
         }
         let script = format!(
             concat!(
@@ -105,8 +110,8 @@ impl Platform for WindowsPlatform {
                 "del \"%~f0\"\r\n",
             ),
             std::process::id(),
-            new_path.display(),
-            current_exe.display(),
+            new_escaped,
+            cur_escaped,
             exe_quoted,
             args_quoted,
         );
@@ -134,6 +139,19 @@ impl Platform for WindowsPlatform {
     async fn uninstall(&self, _user: Option<String>) -> Result<(), AppError> {
         service_cli::handle_service_command(crate::cli::ServiceCommand::Uninstall).await
     }
+}
+
+/// Escape cmd.exe metacharacters by prefixing each with `^`.
+/// Prevents command injection when interpolating paths into batch scripts (CWE-78).
+fn escape_cmd_meta(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        if matches!(ch, '&' | '|' | '%' | '^' | '<' | '>' | '(' | ')') {
+            out.push('^');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 // On Windows we relaunch directly, so we handle basic arg quoting above.
@@ -197,5 +215,34 @@ fn current_user_sid_string() -> Option<String> {
         let sid = String::from_utf16_lossy(slice);
         let _ = LocalFree(sid_str_ptr as HLOCAL);
         Some(sid)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::escape_cmd_meta;
+
+    #[test]
+    fn escape_cmd_meta_no_special_chars() {
+        assert_eq!(escape_cmd_meta("hello world"), "hello world");
+        assert_eq!(
+            escape_cmd_meta(r"C:\Program Files\app.exe"),
+            r"C:\Program Files\app.exe"
+        );
+    }
+
+    #[test]
+    fn escape_cmd_meta_special_chars() {
+        assert_eq!(escape_cmd_meta("foo&bar"), "foo^&bar");
+        assert_eq!(escape_cmd_meta("a|b"), "a^|b");
+        assert_eq!(escape_cmd_meta("100%done"), "100^%done");
+        assert_eq!(escape_cmd_meta("a^b"), "a^^b");
+        assert_eq!(escape_cmd_meta("a<b>c"), "a^<b^>c");
+        assert_eq!(escape_cmd_meta("(test)"), "^(test^)");
+    }
+
+    #[test]
+    fn escape_cmd_meta_multiple_special_chars() {
+        assert_eq!(escape_cmd_meta("a&b|c%d"), "a^&b^|c^%d");
     }
 }

@@ -72,7 +72,7 @@ The service handles everything else: it detects user sessions and spawns per-ses
 
 - Service logs critical events to the Windows Event Log (e.g., failed worker spawn, missing token, repeated crashes).
 - Session agents continue to stream logs via `tracing` to rotating files under `%ProgramData%\GamiScreen\Logs` and to stderr when run interactively.
-- Admins can inspect the service using `Get-Service GamiScreen` or `sc query "GamiScreen Agent Service"`.
+- Admins can inspect the service using `Get-Service GamiScreenAgent` or `sc query "GamiScreen Agent Service"`.
 
 ## Uninstall
 

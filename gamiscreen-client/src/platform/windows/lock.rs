@@ -25,7 +25,7 @@ pub async fn lock_now() -> Result<(), AppError> {
 pub async fn is_session_locked() -> Result<bool, AppError> {
     ensure_session_watcher();
     let state = SESSION_LOCKED.get().expect("watcher init");
-    let locked = state.load(Ordering::Relaxed);
+    let locked = state.load(Ordering::Acquire);
     trace!(locked, "Windows: queried session lock state");
     Ok(locked)
 }
@@ -34,20 +34,18 @@ static SESSION_LOCKED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 static WATCHER_THREAD: OnceLock<std::thread::JoinHandle<()>> = OnceLock::new();
 
 fn ensure_session_watcher() {
-    if SESSION_LOCKED.get().is_some() {
-        trace!("Windows: session watcher already initialised");
-        return;
-    }
-    let state = Arc::new(AtomicBool::new(false));
-    let state_clone = Arc::clone(&state);
-    info!("Windows: starting session watcher thread");
-    let handle = std::thread::spawn(move || run_session_watcher(state_clone));
-    if SESSION_LOCKED.set(state).is_err() {
-        warn!("Windows: session watcher state already set unexpectedly");
-    }
-    if WATCHER_THREAD.set(handle).is_err() {
-        warn!("Windows: session watcher thread handle already set unexpectedly");
-    }
+    // Use get_or_init to avoid TOCTOU race where two threads could both spawn
+    // a watcher and leak an Arc (review finding: HIGH race condition).
+    SESSION_LOCKED.get_or_init(|| {
+        let state = Arc::new(AtomicBool::new(false));
+        let state_clone = Arc::clone(&state);
+        info!("Windows: starting session watcher thread");
+        let handle = std::thread::spawn(move || run_session_watcher(state_clone));
+        if WATCHER_THREAD.set(handle).is_err() {
+            warn!("Windows: session watcher thread handle already set unexpectedly");
+        }
+        state
+    });
 }
 
 extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -85,7 +83,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                 WTS_SESSION_UNLOCK => false,
                 _ => return 0,
             };
-            unsafe { (*ptr).store(locked, Ordering::Relaxed) };
+            unsafe { (*ptr).store(locked, Ordering::Release) };
             debug!(
                 locked,
                 session_id = active_id,

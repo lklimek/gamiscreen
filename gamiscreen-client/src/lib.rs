@@ -148,11 +148,14 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
                         "ProcessIdToSessionId failed; skipping session ID check"
                     );
                 } else if actual_session != session_id {
-                    tracing::warn!(
+                    tracing::error!(
                         expected = session_id,
                         actual = actual_session,
-                        "session ID mismatch"
+                        "session ID mismatch — refusing to run in wrong session"
                     );
+                    return Err(AppError::Config(format!(
+                        "session ID mismatch: expected {session_id}, got {actual_session}"
+                    )));
                 }
             }
             app::agent::run(config.clone()).await

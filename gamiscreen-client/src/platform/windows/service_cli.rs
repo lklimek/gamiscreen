@@ -63,6 +63,8 @@ fn is_elevated() -> bool {
 }
 
 /// Check if elevated; if not, relaunch with UAC and forward exit code.
+/// If elevation is needed, this function never returns — it exits the process
+/// with the elevated child's exit code.
 fn ensure_elevated(args: &[&str]) -> Result<(), AppError> {
     if is_elevated() {
         return Ok(());
@@ -74,6 +76,9 @@ fn ensure_elevated(args: &[&str]) -> Result<(), AppError> {
 /// Re-launch with `ShellExecuteExW` + "runas" verb.
 /// Uses `SEE_MASK_NOCLOSEPROCESS` to get `hProcess`, waits, forwards exit code.
 /// Handles `ERROR_CANCELLED` (1223) gracefully.
+///
+/// On the success path this function calls `std::process::exit()` and never returns.
+/// The `Result` return type exists only for the error paths (UAC cancelled, API failure).
 fn relaunch_elevated(args: &[&str]) -> Result<(), AppError> {
     let exe_path = std::env::current_exe().map_err(AppError::Io)?;
     let exe_w = to_wide_null(&exe_path.to_string_lossy());
@@ -189,6 +194,12 @@ fn install_service() -> Result<(), AppError> {
             std::ptr::null_mut(), // no load order group
             std::ptr::null_mut(), // no tag
             std::ptr::null_mut(), // no dependencies
+            // SECURITY: Runs as LocalSystem (null = LocalSystem). This grants the
+            // highest privilege level, which is required for WTSQueryUserToken
+            // (SE_TCB_NAME). A dedicated service account with only SE_TCB_NAME and
+            // SE_ASSIGNPRIMARYTOKEN_NAME would be more restrictive but requires
+            // additional setup. See docs/WINDOWS.md "Future Enhancements" for the
+            // planned migration to a managed service account.
             std::ptr::null_mut(), // LocalSystem account
             std::ptr::null_mut(), // no password
         );
