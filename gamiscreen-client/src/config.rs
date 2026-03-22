@@ -30,7 +30,7 @@ pub fn default_config_path() -> Option<PathBuf> {
 
 pub fn load_config(path: &PathBuf) -> Result<ClientConfig, AppError> {
     let data = std::fs::read_to_string(path).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
+        if e.kind() == std::io::ErrorKind::NotFound && !path.is_dir() {
             let p = path.display();
             AppError::Config(format!(
                 "config file not found: {p}\n\n\
