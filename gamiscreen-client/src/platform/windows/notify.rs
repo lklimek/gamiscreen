@@ -32,10 +32,11 @@ impl Notifier {
     pub async fn close(&mut self) {
         if self.active {
             debug!("closing countdown toast");
-            // TODO: Dismiss the visible toast via WinRT API. The winrt-notification crate
-            // does not expose a dismiss/close method. Switching to tauri-winrt-notification
-            // (which returns a ToastNotification handle) would allow calling .dismiss().
-            // For now the toast remains on screen until its duration expires.
+            // TODO: Dismiss the visible toast via WinRT API. The tauri-winrt-notification
+            // crate's show() returns Result<(), _> without a notification handle, so there
+            // is no API to programmatically dismiss the toast. A future approach could use
+            // the windows crate directly to get a ToastNotification handle with a dismiss
+            // method. For now the toast remains on screen until its duration expires.
             self.active = false;
         }
     }

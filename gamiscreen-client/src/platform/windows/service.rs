@@ -643,7 +643,10 @@ async fn session_worker_task(
             info!(session_id, generation, "cancel requested; terminating session agent");
             unsafe {
                 let h = proc_h as windows_sys::Win32::Foundation::HANDLE;
-                windows_sys::Win32::System::Threading::TerminateProcess(h, 1);
+                if windows_sys::Win32::System::Threading::TerminateProcess(h, 1) == 0 {
+                    let err = last_error();
+                    warn!(session_id, error=%err, "TerminateProcess failed");
+                }
                 let wait_ret = windows_sys::Win32::System::Threading::WaitForSingleObject(h, 5000);
                 const WAIT_TIMEOUT: u32 = 0x00000102;
                 const WAIT_FAILED_VAL: u32 = 0xFFFFFFFF;
@@ -656,8 +659,14 @@ async fn session_worker_task(
                     _ => {}
                 }
             }
-            // Await the blocking thread to ensure it has exited before we close handles.
-            let _ = wait_handle.await;
+            // Await the blocking thread with a timeout to avoid hanging shutdown
+            // indefinitely if TerminateProcess failed and the process won't exit.
+            match tokio::time::timeout(Duration::from_secs(10), wait_handle).await {
+                Ok(_) => {}
+                Err(_) => {
+                    warn!(session_id, "timed out waiting for blocking wait thread after termination; handles may leak");
+                }
+            }
             WorkerExitKind::Requested
         }
         join_result = wait_handle => {

@@ -68,14 +68,14 @@ sc query GamiScreenAgent
 
 ### Viewing logs
 
-Session agent logs are written to `%ProgramData%\GamiScreen\Logs`. Service-level events go to the Windows Event Log.
+Service logs are written to `%ProgramData%\gamiscreen\logs` via `tracing-appender` (rotating daily, 7-day retention). Session agent logs are written to per-user `%LOCALAPPDATA%\gamiscreen\gamiscreen\logs`.
 
 ```powershell
-# View recent log files
-Get-ChildItem "$env:ProgramData\GamiScreen\Logs"
+# View service log files
+Get-ChildItem "$env:ProgramData\gamiscreen\logs"
 
-# View Event Log entries
-Get-EventLog -LogName Application -Source GamiScreen -Newest 20
+# View session agent logs (from the child's account)
+Get-ChildItem "$env:LOCALAPPDATA\gamiscreen\gamiscreen\logs"
 ```
 
 ### Debugging
@@ -88,9 +88,9 @@ gamiscreen-client agent
 
 ### Common issues
 
-- **Service won't start**: ensure `gamiscreen-client service install` was run from an elevated prompt. Check Event Log for errors.
+- **Service won't start**: ensure `gamiscreen-client service install` was run from an elevated prompt. Check service logs under `%ProgramData%\gamiscreen\logs`.
 - **No token for a child account**: the session agent exits immediately if no token is found. Log into that Windows account and run `gamiscreen-client login`.
-- **Session agent crashes repeatedly**: the service uses exponential backoff (1s to 60s) before restarting a failed session agent. Check logs under `%ProgramData%\GamiScreen\Logs`.
+- **Session agent crashes repeatedly**: the service uses exponential backoff (1s to 60s) before restarting a failed session agent. Check session agent logs under `%LOCALAPPDATA%\gamiscreen\gamiscreen\logs`.
 
 ### Stopping and uninstalling
 
@@ -101,4 +101,4 @@ gamiscreen-client service uninstall
 
 Notes
 - `gamiscreen-client session-agent --session-id N` is spawned by the service internally. Do not run it manually unless debugging.
-- The service runs under LocalSystem with auto-start. It detects session logon/logoff/unlock events and manages session agents accordingly.
+- The service runs under LocalSystem with auto-start. It listens for session logon/logoff events and starts/stops per-user session agents. Screen lock/unlock is detected internally by each session agent (not the service).

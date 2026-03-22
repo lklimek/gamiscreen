@@ -152,8 +152,22 @@ fn run_session_watcher(state: Arc<AtomicBool>) {
             return;
         }
         info!(?hwnd, "Windows: session watcher window created");
-        // Stash pointer to AtomicBool in window user data for use in wnd_proc
-        SetWindowLongPtrW(hwnd, GWLP_USERDATA, Arc::into_raw(state) as isize);
+        // Stash pointer to AtomicBool in window user data for use in wnd_proc.
+        // Check SetWindowLongPtrW return: 0 with non-zero GetLastError means failure.
+        let raw_ptr = Arc::into_raw(state);
+        let prev = SetWindowLongPtrW(hwnd, GWLP_USERDATA, raw_ptr as isize);
+        if prev == 0 {
+            let err_code = windows_sys::Win32::Foundation::GetLastError();
+            if err_code != 0 {
+                warn!(
+                    os_error = err_code,
+                    "SetWindowLongPtrW failed; reclaiming Arc"
+                );
+                // Reclaim the Arc to avoid a leak
+                let _ = Arc::from_raw(raw_ptr);
+                return;
+            }
+        }
         // Register for session change notifications for all sessions
         let ok = WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_ALL_SESSIONS);
         if ok == 0 {
