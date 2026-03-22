@@ -509,9 +509,9 @@ impl Store {
                 let Some((child_id, task_id, mins, task_name)) = rec else {
                     return Ok(());
                 };
-                // Balance and remaining BEFORE this reward — used to determine how much
-                // goes to remaining vs debt repayment.
-                let balance = compute_balance_inner(conn, &child_id)?;
+                // Accounting balance (earned - borrowed - used) BEFORE this reward —
+                // used to determine how much goes to remaining vs debt repayment.
+                let balance = accounting_balance_inner(conn, &child_id)?;
                 // `remaining` is only consulted when balance crosses the debt boundary
                 // (balance < 0 and balance + mins >= 0). Skip the DB read otherwise.
                 let remaining: i32 = if balance < 0 {
@@ -639,9 +639,9 @@ impl Store {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
             conn.immediate_transaction(|conn| -> Result<i32, StorageError> {
-                // Balance and remaining BEFORE this reward — used to determine how much
-                // goes to remaining vs debt repayment.
-                let balance = compute_balance_inner(conn, &child)?;
+                // Accounting balance (earned - borrowed - used) BEFORE this reward —
+                // used to determine how much goes to remaining vs debt repayment.
+                let balance = accounting_balance_inner(conn, &child)?;
                 // `remaining` is only consulted when balance crosses the debt boundary
                 // (balance < 0 and balance + mins >= 0). Skip the DB read otherwise.
                 let remaining: i32 = if balance < 0 {
@@ -908,7 +908,37 @@ fn record_task_done_inner(
     Ok(())
 }
 
+/// User-facing balance: `earned - used`.
+///
+/// Borrowed minutes are NOT subtracted because they are already reflected in
+/// usage: the child spends borrowed time as screen time, so `used` already
+/// accounts for it. Subtracting `borrowed` again would double-count the debt.
 fn compute_balance_inner(conn: &mut SqliteConnection, child_id: &str) -> Result<i32, StorageError> {
+    use diesel::dsl::sum;
+    let earned: Option<i64> = schema::rewards::table
+        .filter(schema::rewards::child_id.eq(child_id))
+        .filter(schema::rewards::is_borrowed.eq(false))
+        .select(sum(schema::rewards::minutes))
+        .first::<Option<i64>>(conn)?;
+    let used: i64 = schema::usage_minutes::table
+        .filter(schema::usage_minutes::child_id.eq(child_id))
+        .select(schema::usage_minutes::minute_ts)
+        .distinct()
+        .count()
+        .get_result::<i64>(conn)?;
+    let result = earned.unwrap_or(0) - used;
+    Ok(result.clamp(i32::MIN as i64, i32::MAX as i64) as i32)
+}
+
+/// Internal accounting balance used by [`compute_remaining_delta`] for debt
+/// tracking: `earned - borrowed - used`.
+///
+/// This tells us how much "debt" exists from borrowing, so that earned rewards
+/// can be directed to debt repayment instead of increasing remaining minutes.
+fn accounting_balance_inner(
+    conn: &mut SqliteConnection,
+    child_id: &str,
+) -> Result<i32, StorageError> {
     use diesel::dsl::sum;
     let earned: Option<i64> = schema::rewards::table
         .filter(schema::rewards::child_id.eq(child_id))
@@ -1081,6 +1111,59 @@ mod tests {
         // balance=-8, remaining=10 (from prior borrow), earn 8 -> new_balance=0
         // remaining should converge to 0 = balance
         assert_eq!(compute_remaining_delta(8, false, -8, 10), -10);
+    }
+
+    /// Regression test: balance after earning 1 min, borrowing 5, and using 6.
+    ///
+    /// Expected balance = -5 (child used 5 more than earned, all from the loan).
+    /// The bug was: `balance = earned - borrowed - used = 1 - 5 - 6 = -10`
+    /// (double-counting borrowed minutes that were already consumed as usage).
+    #[tokio::test]
+    async fn balance_after_loan_and_full_usage() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("test.db");
+        let store = crate::storage::Store::connect_sqlite(db_path.to_str().unwrap())
+            .await
+            .expect("connect");
+
+        let child = gamiscreen_shared::domain::Child {
+            id: "kid1".into(),
+            display_name: "Kid".into(),
+        };
+        store.seed_from_config(&[child], &[]).await.expect("seed");
+
+        // 1. Earn 1 minute
+        store
+            .add_reward_minutes("kid1", 1, None, Some("earned"), false, None)
+            .await
+            .expect("earn 1 min");
+
+        let balance = store.compute_balance("kid1").await.expect("balance");
+        assert_eq!(balance, 1, "balance after earning 1 min");
+
+        // 2. Borrow 5 minutes
+        store
+            .add_reward_minutes("kid1", 5, None, Some("loan"), true, None)
+            .await
+            .expect("borrow 5 min");
+
+        let remaining = store.get_remaining("kid1").await.expect("remaining");
+        assert_eq!(remaining, 6, "remaining after earn 1 + borrow 5");
+
+        // 3. Use 6 minutes
+        let now_epoch_min = chrono::Utc::now().timestamp() / 60;
+        let usage: Vec<i64> = (0..6).map(|i| now_epoch_min - i).collect();
+        store
+            .process_usage_minutes("kid1", "dev1", &usage)
+            .await
+            .expect("use 6 min");
+
+        let remaining = store.get_remaining("kid1").await.expect("remaining");
+        assert_eq!(remaining, 0, "remaining after using all 6 minutes");
+
+        // 4. Balance should be -5 (used 5 more than earned — the loan amount)
+        let balance = store.compute_balance("kid1").await.expect("balance");
+        assert_eq!(balance, -5, "balance should reflect loan debt of -5");
     }
 }
 

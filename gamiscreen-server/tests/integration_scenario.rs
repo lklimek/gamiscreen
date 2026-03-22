@@ -1236,7 +1236,7 @@ async fn test_borrowing_flow() {
         )
         .await;
     assert_eq!(borrow_resp.remaining_minutes, 10);
-    assert_eq!(borrow_resp.balance, -10);
+    assert_eq!(borrow_resp.balance, 0); // display balance = earned(0) - used(0) = 0
 
     let remaining: api::RemainingDto = server
         .request_expect_json(
@@ -1248,7 +1248,7 @@ async fn test_borrowing_flow() {
         )
         .await;
     assert_eq!(remaining.remaining_minutes, 10);
-    assert_eq!(remaining.balance, -10);
+    assert_eq!(remaining.balance, 0);
 
     // Step 2: Earn 5 min via homework task (partial debt repay)
     let earn_resp: api::RewardResp = server
@@ -1266,9 +1266,10 @@ async fn test_borrowing_flow() {
             StatusCode::OK,
         )
         .await;
-    // homework = 2 min in test config. Balance was -10, now -10+2 = -8. Remaining unchanged (all goes to debt).
+    // homework = 2 min in test config. Accounting balance was -10, earned goes to debt repayment.
+    // Display balance = earned(2) - used(0) = 2. Remaining unchanged.
     assert_eq!(earn_resp.remaining_minutes, 10);
-    assert_eq!(earn_resp.balance, -8);
+    assert_eq!(earn_resp.balance, 2);
 
     // Step 3: Earn 8 min custom (full debt repay)
     let earn_resp2: api::RewardResp = server
@@ -1286,9 +1287,10 @@ async fn test_borrowing_flow() {
             StatusCode::OK,
         )
         .await;
-    // Balance was -8, earn 8 -> new_balance = 0. remaining converges to 0 (= new_balance).
+    // Accounting balance was -8, earn 8 -> acct_balance = 0. remaining converges to 0.
+    // Display balance = earned(10) - used(0) = 10.
     assert_eq!(earn_resp2.remaining_minutes, 0);
-    assert_eq!(earn_resp2.balance, 0);
+    assert_eq!(earn_resp2.balance, 10);
 
     // Step 4: Earn 5 more to verify positive balance works
     let earn_resp3: api::RewardResp = server
@@ -1306,21 +1308,21 @@ async fn test_borrowing_flow() {
             StatusCode::OK,
         )
         .await;
-    // balance=0, remaining=0, earn 5 -> new_balance=5, remaining=5 (invariant: remaining==balance)
+    // acct_balance=0, remaining=0, earn 5 -> remaining=5. Display balance = earned(15) - used(0) = 15.
     assert_eq!(earn_resp3.remaining_minutes, 5);
-    assert_eq!(earn_resp3.balance, 5);
+    assert_eq!(earn_resp3.balance, 15);
 }
 
 #[tokio::test]
 async fn test_penalty_borrow_earn_remaining_converges_to_balance() {
-    // Regression test for: penalty → borrow → earn leaves remaining > balance.
+    // Regression test for: penalty → borrow → earn leaves remaining > accounting balance.
     //
     // Reported sequence (reproduced below, starting from balance=remaining=137):
-    //   +137 earn   -> balance=137, remaining=137
-    //   -100 penalty -> balance=37,  remaining=37
-    //   -40  penalty -> balance=-3,  remaining=-3
-    //   +10  borrow  -> balance=-13, remaining=7
-    //   +20  earn    -> balance=7,   remaining must equal 7 (NOT 14)
+    //   +137 earn   -> acct_balance=137, remaining=137, display_balance=137
+    //   -100 penalty -> acct_balance=37,  remaining=37,  display_balance=37
+    //   -40  penalty -> acct_balance=-3,  remaining=-3,  display_balance=-3
+    //   +10  borrow  -> acct_balance=-13, remaining=7,   display_balance=-3
+    //   +20  earn    -> acct_balance=7,   remaining=7,   display_balance=17
     let Some(server) = TestServer::spawn().await else {
         return;
     };
@@ -1373,7 +1375,7 @@ async fn test_penalty_borrow_earn_remaining_converges_to_balance() {
     assert_eq!(resp.remaining_minutes, -3);
     assert_eq!(resp.balance, -3);
 
-    // +10 lend (borrow) -> remaining recovers, balance deepens
+    // +10 lend (borrow) -> remaining recovers. Display balance = earned(-3) - used(0) = -3.
     let resp: api::RewardResp = server
         .request_expect_json(
             "POST",
@@ -1384,9 +1386,9 @@ async fn test_penalty_borrow_earn_remaining_converges_to_balance() {
         )
         .await;
     assert_eq!(resp.remaining_minutes, 7);
-    assert_eq!(resp.balance, -13);
+    assert_eq!(resp.balance, -3);
 
-    // +20 earn -> balance=7, remaining must converge to 7 (the bug produced 14)
+    // +20 earn -> acct_balance=7, remaining converges to 7. Display balance = earned(17) - used(0) = 17.
     let resp: api::RewardResp = server
         .request_expect_json(
             "POST",
@@ -1396,10 +1398,10 @@ async fn test_penalty_borrow_earn_remaining_converges_to_balance() {
             StatusCode::OK,
         )
         .await;
-    assert_eq!(resp.balance, 7);
+    assert_eq!(resp.balance, 17);
     assert_eq!(
         resp.remaining_minutes, 7,
-        "remaining must equal balance when there is no outstanding debt"
+        "remaining must equal accounting balance when debt is fully repaid"
     );
 }
 
@@ -1682,7 +1684,7 @@ async fn test_scenario_borrowing_time() {
     )
     .await;
     assert_eq!(resp.remaining_minutes, 20);
-    assert_eq!(resp.balance, -20);
+    assert_eq!(resp.balance, 0); // display balance = earned(0) - used(0) = 0
 
     // Use 10 minutes via heartbeat
     let dev = register_device(&server, &child, "alice", "dev1").await;
@@ -1690,7 +1692,7 @@ async fn test_scenario_borrowing_time() {
     let timestamps: Vec<i64> = (1..=10).map(|i| m - i).collect();
     let hb = send_heartbeat(&server, &dev.token, "alice", "dev1", &timestamps).await;
     assert_eq!(hb.remaining_minutes, 10);
-    assert_eq!(hb.balance, -30);
+    assert_eq!(hb.balance, -10); // display balance = earned(0) - used(10) = -10
 }
 
 #[tokio::test]
@@ -1709,9 +1711,9 @@ async fn test_scenario_paying_off_debt() {
     )
     .await;
     assert_eq!(r1.remaining_minutes, 20);
-    assert_eq!(r1.balance, -20);
+    assert_eq!(r1.balance, 0); // display balance = earned(0) - used(0) = 0
 
-    // Step 2: Earn homework (2 min) — goes to debt repayment
+    // Step 2: Earn homework (2 min) — goes to debt repayment (accounting balance: -20+2=-18)
     let r2 = parent_reward(
         &server,
         &parent,
@@ -1720,9 +1722,9 @@ async fn test_scenario_paying_off_debt() {
     )
     .await;
     assert_eq!(r2.remaining_minutes, 20);
-    assert_eq!(r2.balance, -18);
+    assert_eq!(r2.balance, 2); // display balance = earned(2) - used(0) = 2
 
-    // Step 3: Earn 25 custom — pays off -18 debt, remaining converges to new balance
+    // Step 3: Earn 25 custom — pays off -18 acct debt, remaining converges to acct_balance=7
     let r3 = parent_reward(
         &server,
         &parent,
@@ -1730,8 +1732,8 @@ async fn test_scenario_paying_off_debt() {
         &reward_req("alice", None, Some(25), Some("Big task"), None),
     )
     .await;
-    assert_eq!(r3.balance, 7);
-    // remaining must equal balance now that all debt is repaid (invariant: remaining == balance)
+    assert_eq!(r3.balance, 27); // display balance = earned(27) - used(0) = 27
+    // remaining converges to accounting balance (7) once debt is repaid
     assert_eq!(r3.remaining_minutes, 7);
 }
 
@@ -1751,9 +1753,9 @@ async fn test_scenario_borrow_while_in_debt() {
     )
     .await;
     assert_eq!(r1.remaining_minutes, 10);
-    assert_eq!(r1.balance, -10);
+    assert_eq!(r1.balance, 0); // display balance = earned(0) - used(0) = 0
 
-    // Step 2: Earn 5 custom — partial debt repay
+    // Step 2: Earn 5 custom — partial debt repay (acct_balance: -10+5=-5)
     let r2 = parent_reward(
         &server,
         &parent,
@@ -1762,9 +1764,9 @@ async fn test_scenario_borrow_while_in_debt() {
     )
     .await;
     assert_eq!(r2.remaining_minutes, 10);
-    assert_eq!(r2.balance, -5);
+    assert_eq!(r2.balance, 5); // display balance = earned(5) - used(0) = 5
 
-    // Step 3: Borrow 15 more while still in debt
+    // Step 3: Borrow 15 more while still in acct debt
     let r3 = parent_reward(
         &server,
         &parent,
@@ -1773,7 +1775,7 @@ async fn test_scenario_borrow_while_in_debt() {
     )
     .await;
     assert_eq!(r3.remaining_minutes, 25);
-    assert_eq!(r3.balance, -20);
+    assert_eq!(r3.balance, 5); // display balance unchanged by borrow: earned(5) - used(0) = 5
 }
 
 #[tokio::test]
@@ -1913,10 +1915,10 @@ async fn test_scenario_children_independent() {
     )
     .await;
 
-    // Verify alice: 10 remaining, -10 balance
+    // Verify alice: 10 remaining, 0 display balance (earned=0, used=0)
     let alice = get_remaining(&server, &parent, "alice").await;
     assert_eq!(alice.remaining_minutes, 10);
-    assert_eq!(alice.balance, -10);
+    assert_eq!(alice.balance, 0);
 
     // Verify bob: 20 remaining, 20 balance
     let bob = get_remaining(&server, &parent, "bob").await;
@@ -1986,12 +1988,12 @@ async fn test_scenario_required_task_plus_borrowing() {
         &reward_req("alice", None, Some(30), None, Some(true)),
     )
     .await;
-    assert_eq!(r1.balance, -30);
+    assert_eq!(r1.balance, 0); // display balance = earned(0) - used(0) = 0
 
     let rem = get_remaining(&server, &parent, "alice").await;
     assert_eq!(rem.remaining_minutes, 0);
     assert!(rem.blocked_by_tasks);
-    assert_eq!(rem.balance, -30);
+    assert_eq!(rem.balance, 0);
 
     // Complete required task — unblocks, adds 2 min to balance
     let r2 = parent_reward(
@@ -2007,7 +2009,7 @@ async fn test_scenario_required_task_plus_borrowing() {
             .await
             .blocked_by_tasks
     );
-    assert_eq!(r2.balance, -28);
+    assert_eq!(r2.balance, 2); // display balance = earned(2) - used(0) = 2
 }
 
 #[tokio::test]
