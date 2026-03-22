@@ -176,8 +176,8 @@ mod tests {
 
     #[test]
     fn load_config_other_io_errors_unchanged() {
-        // A directory path triggers a non-NotFound IO error
-        let path = PathBuf::from("/tmp");
+        // A directory path triggers a non-NotFound IO error (IsADirectory / PermissionDenied)
+        let path = std::env::temp_dir(); // cross-platform: /tmp on Linux, %TEMP% on Windows
         let err = load_config(&path).unwrap_err();
         let msg = err.to_string();
 
