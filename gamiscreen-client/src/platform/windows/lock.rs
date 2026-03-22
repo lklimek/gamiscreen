@@ -161,10 +161,11 @@ fn run_session_watcher(state: Arc<AtomicBool>) {
             if err_code != 0 {
                 warn!(
                     os_error = err_code,
-                    "SetWindowLongPtrW failed; reclaiming Arc"
+                    "SetWindowLongPtrW failed; reclaiming Arc and destroying window"
                 );
                 // Reclaim the Arc to avoid a leak
                 let _ = Arc::from_raw(raw_ptr);
+                windows_sys::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd);
                 return;
             }
         }

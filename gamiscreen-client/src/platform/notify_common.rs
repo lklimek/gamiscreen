@@ -66,3 +66,77 @@ pub fn format_duration(total_secs: u64) -> String {
         (m, s) => format!("{m} min {s} s"),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_duration_seconds_only() {
+        assert_eq!(format_duration(0), "0 s");
+        assert_eq!(format_duration(30), "30 s");
+        assert_eq!(format_duration(59), "59 s");
+    }
+
+    #[test]
+    fn format_duration_minutes_only() {
+        assert_eq!(format_duration(60), "1 min");
+        assert_eq!(format_duration(120), "2 min");
+    }
+
+    #[test]
+    fn format_duration_mixed() {
+        assert_eq!(format_duration(90), "1 min 30 s");
+        assert_eq!(format_duration(61), "1 min 1 s");
+    }
+
+    #[test]
+    fn countdown_above_final_warning() {
+        let msg = countdown_message(60);
+        assert!(msg.summary.contains("1 min"));
+        assert!(msg.body.contains("Pozostało"));
+    }
+
+    #[test]
+    fn countdown_at_final_warning_boundary() {
+        let msg = countdown_message(FINAL_WARNING_SECS);
+        assert!(msg.body.contains("Zapisz"));
+    }
+
+    #[test]
+    fn countdown_below_final_warning() {
+        let msg = countdown_message(10);
+        assert!(msg.body.contains("Zapisz"));
+    }
+
+    #[test]
+    fn message_text_positive_is_countdown() {
+        let msg = message_text(30);
+        assert!(msg.log.contains("COUNTDOWN") || msg.log.contains("CAUTION"));
+    }
+
+    #[test]
+    fn message_text_negative_is_overtime() {
+        let msg = message_text(-60);
+        assert!(msg.log.contains("TIME-NEGATIVE"));
+    }
+
+    #[test]
+    fn overtime_zero_seconds() {
+        let summary = overtime_summary(0);
+        assert_eq!(summary, "Czas skończył się");
+    }
+
+    #[test]
+    fn overtime_with_seconds() {
+        let summary = overtime_summary(30);
+        assert!(summary.contains("30 s"));
+    }
+
+    #[test]
+    fn overtime_with_minutes_and_seconds() {
+        let summary = overtime_summary(90);
+        assert!(summary.contains("1 min"));
+        assert!(summary.contains("30 s"));
+    }
+}

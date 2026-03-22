@@ -142,10 +142,15 @@ impl Platform for WindowsPlatform {
 }
 
 /// Escape cmd.exe metacharacters by prefixing each with `^`.
+/// Also strips newlines and carriage returns to prevent line injection.
 /// Prevents command injection when interpolating paths into batch scripts (CWE-78).
 fn escape_cmd_meta(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
+        // Strip newlines/carriage returns to prevent line injection in batch scripts
+        if ch == '\n' || ch == '\r' {
+            continue;
+        }
         if matches!(ch, '&' | '|' | '%' | '^' | '<' | '>' | '(' | ')') {
             out.push('^');
         }
@@ -244,5 +249,12 @@ mod tests {
     #[test]
     fn escape_cmd_meta_multiple_special_chars() {
         assert_eq!(escape_cmd_meta("a&b|c%d"), "a^&b^|c^%d");
+    }
+
+    #[test]
+    fn escape_cmd_meta_strips_newlines() {
+        assert_eq!(escape_cmd_meta("foo\nbar"), "foobar");
+        assert_eq!(escape_cmd_meta("foo\r\nbar"), "foobar");
+        assert_eq!(escape_cmd_meta("a\nb&c"), "ab^&c");
     }
 }

@@ -638,6 +638,10 @@ async fn session_worker_task(
         Ok(exit_code)
     });
 
+    // Track whether the blocking wait thread has been joined, so we know
+    // it's safe to close the handles (the thread also uses proc_h).
+    let mut handles_safe_to_close = true;
+
     let result = tokio::select! {
         _ = cancel.cancelled() => {
             info!(session_id, generation, "cancel requested; terminating session agent");
@@ -661,10 +665,13 @@ async fn session_worker_task(
             }
             // Await the blocking thread with a timeout to avoid hanging shutdown
             // indefinitely if TerminateProcess failed and the process won't exit.
+            // SAFETY: If the timeout fires, the blocking thread may still be using
+            // proc_h, so we must NOT close handles — they will leak instead.
             match tokio::time::timeout(Duration::from_secs(10), wait_handle).await {
                 Ok(_) => {}
                 Err(_) => {
-                    warn!(session_id, "timed out waiting for blocking wait thread after termination; handles may leak");
+                    warn!(session_id, "timed out waiting for blocking wait thread after termination; handles will leak");
+                    handles_safe_to_close = false;
                 }
             }
             WorkerExitKind::Requested
@@ -691,13 +698,15 @@ async fn session_worker_task(
         }
     };
 
-    unsafe {
-        windows_sys::Win32::Foundation::CloseHandle(
-            proc_h as windows_sys::Win32::Foundation::HANDLE,
-        );
-        windows_sys::Win32::Foundation::CloseHandle(
-            thread_h as windows_sys::Win32::Foundation::HANDLE,
-        );
+    if handles_safe_to_close {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(
+                proc_h as windows_sys::Win32::Foundation::HANDLE,
+            );
+            windows_sys::Win32::Foundation::CloseHandle(
+                thread_h as windows_sys::Win32::Foundation::HANDLE,
+            );
+        }
     }
 
     result

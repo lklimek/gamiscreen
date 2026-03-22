@@ -232,7 +232,7 @@ Notes
 - The service runs as LocalSystem and spawns `gamiscreen-client.exe session-agent --session-id N` in each interactive user session.
 - Each session agent reads the token from that user's Windows Credential Manager automatically.
 - If a child account has no token, the session agent logs the error and exits. Run `gamiscreen-client login` from that account to fix it.
-- Logs are written to `%ProgramData%\GamiScreen\Logs` and to the Windows Event Log.
+- Service logs are written to `%ProgramData%\gamiscreen\logs`. Session agent logs go to per-user `%LOCALAPPDATA%\gamiscreen\gamiscreen\logs`.
 
 Uninstall
 

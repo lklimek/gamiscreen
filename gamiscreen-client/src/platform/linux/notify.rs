@@ -31,12 +31,13 @@ impl Notifier {
             replace_id = self.replace_id,
             "show_countdown: building notification"
         );
+        let text: NotificationMessage = notify_common::countdown_message(total_secs);
         let replace_id = self.replace_id;
         let mut n = notify_rust::Notification::new();
         let res = n
             .appname("GamiScreen")
-            .summary(&format!("Wylogowanie za {} s", total_secs))
-            .body("Zapisz swoją pracę. Czas dobiega końca.")
+            .summary(&text.summary)
+            .body(&text.body)
             .id(replace_id)
             .urgency(notify_rust::Urgency::Critical)
             .hint(Hint::SuppressSound(false))
@@ -53,7 +54,7 @@ impl Notifier {
             Err(e) => {
                 warn!(error=%e, "notify-rust failed while showing countdown");
                 self.handle = None;
-                info!("[COUNTDOWN] {} s do wylogowania", total_secs);
+                info!("{}", text.log);
             }
         }
     }
