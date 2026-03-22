@@ -639,7 +639,8 @@ async fn session_worker_task(
     std::mem::forget(child.thread_handle);
 
     // Spawn the blocking wait as a JoinHandle so we can await it on both paths.
-    let wait_handle = tokio::task::spawn_blocking(move || unsafe {
+    // Pin so we can `&mut` reference it in both tokio::select! branches.
+    let mut wait_handle = tokio::task::spawn_blocking(move || unsafe {
         let h = proc_h as windows_sys::Win32::Foundation::HANDLE;
         const INFINITE: u32 = 0xFFFFFFFF;
         const WAIT_FAILED_VAL: u32 = 0xFFFFFFFF;
@@ -655,6 +656,7 @@ async fn session_worker_task(
         }
         Ok(exit_code)
     });
+    tokio::pin!(wait_handle);
 
     // Track whether the blocking wait thread has been joined, so we know
     // it's safe to close the handles (the thread also uses proc_h).
@@ -685,7 +687,7 @@ async fn session_worker_task(
             // indefinitely if TerminateProcess failed and the process won't exit.
             // SAFETY: If the timeout fires, the blocking thread may still be using
             // proc_h, so we must NOT close handles — they will leak instead.
-            match tokio::time::timeout(Duration::from_secs(10), wait_handle).await {
+            match tokio::time::timeout(Duration::from_secs(10), &mut wait_handle).await {
                 Ok(_) => {}
                 Err(_) => {
                     warn!(session_id, "timed out waiting for blocking wait thread after termination; handles will leak");
@@ -694,7 +696,7 @@ async fn session_worker_task(
             }
             WorkerExitKind::Requested
         }
-        join_result = wait_handle => {
+        join_result = &mut wait_handle => {
             match join_result {
                 Ok(Ok(0)) => {
                     info!(session_id, generation, "session agent exited cleanly");
