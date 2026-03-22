@@ -26,7 +26,7 @@ directories = "6.0.0"
 clap = { version = "4.5.57", features = ["derive"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["fmt", "env-filter"] }
-tracing-appender = "0.2"
+tracing-appender = "0.2.4"
 futures-util = { version = "0.3.31", default-features = false, features = [
     "sink",
     "std",
@@ -71,7 +71,7 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_UI_Shell",
 ] }
 keyring = { version = "3.6.3", features = ["windows-native"] }
-tauri-winrt-notification = "0.7"
+tauri-winrt-notification = "0.7.2"
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 zbus = { version = "5.13.2", default-features = false, features = ["tokio"] }

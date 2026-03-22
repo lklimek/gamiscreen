@@ -68,6 +68,8 @@ fn service_main_impl() -> Result<(), AppError> {
     info!(service = SERVICE_NAME, "service main entry");
     let (tx, rx) = mpsc::channel(32);
     let ctx = Arc::new(ServiceContext::new(tx.clone()));
+    // Arc refcount is now 2: `ctx` (for local use) + `ctx_ptr` (passed to SCM handler).
+    // The `ctx_ptr` copy is intentionally leaked at end of function — see comment there.
     let ctx_ptr = Arc::into_raw(ctx.clone()) as *mut c_void;
     let service_name_w = to_wide_null(SERVICE_NAME);
 
@@ -625,13 +627,16 @@ async fn session_worker_task(
         "session agent process spawned"
     );
 
-    // SAFETY: Cast handles to usize for use across await points. Win32 HANDLEs are
-    // pointer-sized opaque values that remain valid until explicitly closed. The handles
-    // originate from SendHandle (which is Send+Sync) and are closed exactly once at the
-    // end of this function — either in the `handles_safe_to_close` branch, or intentionally
-    // leaked if the blocking wait thread is still using proc_h when shutdown times out.
+    // SAFETY: Cast HANDLE → usize for use across the await point (spawn_blocking
+    // requires 'static). The const assertion on SendHandle guarantees this cast is
+    // lossless. Handles remain valid until explicitly closed. We take ownership out
+    // of SendHandle and forget the wrapper to prevent its Drop from closing them
+    // prematurely — closing happens explicitly below based on `handles_safe_to_close`.
     let proc_h = child.process_handle.0 as usize;
     let thread_h = child.thread_handle.0 as usize;
+    // Prevent SendHandle::drop from closing handles we now manage manually.
+    std::mem::forget(child.process_handle);
+    std::mem::forget(child.thread_handle);
 
     // Spawn the blocking wait as a JoinHandle so we can await it on both paths.
     let wait_handle = tokio::task::spawn_blocking(move || unsafe {
@@ -730,11 +735,26 @@ async fn session_worker_task(
 /// SAFETY: Win32 handles are safe to send between threads and share across threads;
 /// the OS manages synchronization internally. The kernel object referenced by a handle
 /// is thread-safe — concurrent calls using the same handle are serialized by the kernel.
-// TODO: Add Drop impl to auto-close the handle and prevent leaks on refactoring.
-// Currently handles are manually closed in session_worker_task.
 struct SendHandle(windows_sys::Win32::Foundation::HANDLE);
 unsafe impl Send for SendHandle {}
 unsafe impl Sync for SendHandle {}
+
+// Compile-time guarantee that HANDLE↔usize casts in session_worker_task are lossless.
+const _: () = assert!(
+    std::mem::size_of::<windows_sys::Win32::Foundation::HANDLE>() == std::mem::size_of::<usize>()
+);
+
+impl Drop for SendHandle {
+    fn drop(&mut self) {
+        // SAFETY: Each SendHandle owns its Win32 HANDLE exclusively.
+        // CloseHandle is safe to call once per handle value.
+        if !self.0.is_null() {
+            unsafe {
+                windows_sys::Win32::Foundation::CloseHandle(self.0);
+            }
+        }
+    }
+}
 
 struct ChildProcess {
     process_handle: SendHandle,

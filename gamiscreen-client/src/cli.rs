@@ -5,6 +5,14 @@ use clap::{Parser, Subcommand};
 #[cfg(not(target_os = "windows"))]
 use crate::platform::linux::lock::LockMethod;
 
+#[cfg(target_os = "windows")]
+const HELP_EPILOG: &str = r#"Config resolution order:
+  1) --config/-c PATH
+  2) %GAMISCREEN_CONFIG%
+  3) Default: %APPDATA%\gamiscreen\client.yaml
+"#;
+
+#[cfg(not(target_os = "windows"))]
 const HELP_EPILOG: &str = r#"Config resolution order:
   1) --config/-c PATH
   2) $GAMISCREEN_CONFIG

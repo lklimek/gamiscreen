@@ -5,6 +5,7 @@ use tracing::{debug, error, info, trace, warn};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::WindowsAndMessaging::HMENU;
 
+use super::util::to_wide_null;
 use crate::AppError;
 
 /// Locks the current workstation immediately.
@@ -57,7 +58,11 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
     const WTS_SESSION_LOCK: usize = 0x7;
     const WTS_SESSION_UNLOCK: usize = 0x8;
     if msg == WM_WTSSESSION_CHANGE {
-        // Retrieve Arc<AtomicBool> pointer from user data
+        // SAFETY: The GWLP_USERDATA pointer was set to Arc::into_raw(state) in
+        // run_session_watcher (line ~157). The Arc is intentionally leaked at the end
+        // of run_session_watcher (line ~204) to guarantee this pointer remains valid
+        // for the lifetime of the message loop. The null check below guards against
+        // the window receiving messages before SetWindowLongPtrW completes.
         let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const AtomicBool;
         if !ptr.is_null() {
             // Only react to events coming from the active console session
@@ -83,6 +88,8 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                 WTS_SESSION_UNLOCK => false,
                 _ => return 0,
             };
+            // SAFETY: `ptr` is a valid Arc::into_raw pointer (see SAFETY comment above).
+            // AtomicBool::store is lock-free and safe for concurrent access.
             unsafe { (*ptr).store(locked, Ordering::Release) };
             debug!(
                 locked,
@@ -115,7 +122,7 @@ fn run_session_watcher(state: Arc<AtomicBool>) {
             warn!("Windows: GetModuleHandleW returned NULL; session watcher not started");
             return;
         }
-        let class_name: [u16; 24] = to_wide("GamiScreenSessWnd");
+        let class_name = to_wide_null("GamiScreenSessWnd");
         let wc = WNDCLASSW {
             style: CS_HREDRAW | CS_VREDRAW,
             lpfnWndProc: Some(wnd_proc),
@@ -209,19 +216,4 @@ fn run_session_watcher(state: Arc<AtomicBool>) {
 
         info!("Windows: session watcher thread exiting");
     }
-}
-
-fn to_wide(s: &str) -> [u16; 24] {
-    // Simple helper for our fixed class name. Pad/truncate to 24.
-    let mut buf = [0u16; 24];
-    let mut i = 0;
-    for u in s.encode_utf16() {
-        if i >= 23 {
-            break;
-        }
-        buf[i] = u;
-        i += 1;
-    }
-    buf[i] = 0;
-    buf
 }
