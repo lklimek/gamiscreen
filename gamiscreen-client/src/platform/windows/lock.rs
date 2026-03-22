@@ -194,11 +194,15 @@ fn run_session_watcher(state: Arc<AtomicBool>) {
             }
         }
 
-        // F8 fix: reclaim the Arc<AtomicBool> stored in window user data
-        let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const AtomicBool;
-        if !ptr.is_null() {
-            let _ = Arc::from_raw(ptr);
-        }
+        // Destroy the window to stop further message delivery to wnd_proc
+        // before cleaning up the user data pointer.
+        windows_sys::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd);
+
+        // Intentionally leak the Arc<AtomicBool>. The session watcher is
+        // process-lifetime and runs until the service exits, at which point
+        // the OS reclaims all memory. Reclaiming here would risk a
+        // use-after-free if a stale message arrives between DestroyWindow
+        // returning and Arc::from_raw completing.
 
         info!("Windows: session watcher thread exiting");
     }

@@ -714,6 +714,8 @@ async fn session_worker_task(
 
 /// Wrapper to make a Win32 HANDLE sendable across threads.
 /// SAFETY: Win32 handles are safe to send between threads; the OS manages synchronization.
+// TODO: Add Drop impl to auto-close the handle and prevent leaks on refactoring.
+// Currently handles are manually closed in session_worker_task.
 struct SendHandle(windows_sys::Win32::Foundation::HANDLE);
 unsafe impl Send for SendHandle {}
 
