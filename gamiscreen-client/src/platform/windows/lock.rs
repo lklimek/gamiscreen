@@ -101,7 +101,7 @@ fn run_session_watcher(state: Arc<AtomicBool>) {
     use windows_sys::Win32::Foundation::HINSTANCE;
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::System::RemoteDesktop::{
-        NOTIFY_FOR_ALL_SESSIONS, WTSRegisterSessionNotification,
+        NOTIFY_FOR_ALL_SESSIONS, WTSRegisterSessionNotification, WTSUnRegisterSessionNotification,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DispatchMessageW, GWLP_USERDATA,
@@ -193,6 +193,9 @@ fn run_session_watcher(state: Arc<AtomicBool>) {
                 break;
             }
         }
+
+        // Unregister session notifications before destroying the window
+        WTSUnRegisterSessionNotification(hwnd);
 
         // Destroy the window to stop further message delivery to wnd_proc
         // before cleaning up the user data pointer.

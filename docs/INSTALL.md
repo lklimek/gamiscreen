@@ -210,15 +210,9 @@ Open an **Administrator** PowerShell or Command Prompt:
 gamiscreen-client service install
 ```
 
-This registers the `GamiScreenAgent` Windows Service with auto-start under LocalSystem.
+This registers the `GamiScreenAgent` Windows Service with auto-start under LocalSystem and starts it immediately. Use `gamiscreen-client service start` if the service was stopped manually.
 
-4) Start the service
-
-```powershell
-gamiscreen-client service start
-```
-
-5) Verify
+4) Verify
 
 ```powershell
 sc query GamiScreenAgent

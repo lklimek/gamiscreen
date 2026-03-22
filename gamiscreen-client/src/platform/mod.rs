@@ -1,6 +1,6 @@
 #[cfg(not(target_os = "windows"))]
 pub mod linux;
-pub mod notify_common;
+pub(crate) mod notify_common;
 #[cfg(target_os = "windows")]
 pub mod windows;
 

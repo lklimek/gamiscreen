@@ -66,8 +66,20 @@ impl Platform for WindowsPlatform {
     }
 
     fn replace_and_restart(&self, staged_src: &Path, current_exe: &Path, args: &[String]) -> ! {
-        // Prepare a .new file next to the current exe
-        let parent = current_exe.parent().unwrap_or_else(|| Path::new("."));
+        // Prepare a .new file next to the current exe.
+        // If current_exe has no parent (e.g., a bare filename), use the system temp directory
+        // to avoid accidentally writing to the service's working directory (often System32).
+        let temp_fallback;
+        let parent = match current_exe.parent() {
+            Some(p) => p,
+            None => {
+                temp_fallback = std::env::temp_dir();
+                tracing::warn!(
+                    "current_exe has no parent directory; using temp dir for update script"
+                );
+                &temp_fallback
+            }
+        };
         let fname = current_exe
             .file_name()
             .and_then(|s| s.to_str())

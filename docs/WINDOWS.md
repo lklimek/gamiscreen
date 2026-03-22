@@ -7,20 +7,17 @@ This document explains the Windows deployment strategy for `gamiscreen-client`. 
 All commands require an elevated (Administrator) PowerShell unless noted.
 
 ```powershell
-# 1. Install the Windows service
+# 1. Install and start the Windows service (auto-starts after install)
 gamiscreen-client service install
 
 # 2. Provision each child account (run from the child's Windows session, no admin needed)
 gamiscreen-client login --server http://your-server:5151 --username parent
 
-# 3. Start the service
-gamiscreen-client service start
-
-# 4. Verify
+# 3. Verify
 Get-Service GamiScreenAgent
 ```
 
-The service handles everything else: it detects user sessions and spawns per-session agents automatically. For full setup details, see docs/INSTALL.md.
+The service handles everything else: it detects user sessions and spawns per-session agents automatically. Use `gamiscreen-client service start` if the service was stopped manually. For full setup details, see docs/INSTALL.md.
 
 ## Components
 
@@ -34,32 +31,31 @@ The service handles everything else: it detects user sessions and spawns per-ses
   - Terminates when the user signs out, the session goes away, or the service issues a stop.
 - **Interactive CLI utilities**
   - `gamiscreen-client login`: unchanged; prompts for credentials and stores per-user tokens and config.
-  - `gamiscreen-client install`: admin command that stages binaries, installs/starts the service, and logs progress (Event Log + console).
-  - `gamiscreen-client uninstall`: admin command that stops/deletes the service and removes staged artifacts.
+  - `gamiscreen-client service install`: admin command that registers and starts the service (logs progress to console).
+  - `gamiscreen-client service uninstall`: admin command that stops and deletes the service.
 
 ## Lifecycle
 
 1. **Installation (admin)**
-   - Copy release payload to `%ProgramFiles%\GamiScreen\Client` (or another writable program directory).
-   - Register `GamiScreen Agent Service` with startup type `Automatic (Delayed Start)` and description metadata.
-   - Configure the service to run `gamiscreen-client.exe service run` under `LocalSystem`.
-   - Add an Event Log source for service diagnostics.
+   - Place the release binary in a directory on the system `PATH` (e.g., `%ProgramFiles%\GamiScreen\Client`).
+   - Run `gamiscreen-client service install` to register and start the `GamiScreen Agent` service with startup type `Automatic` under `LocalSystem`.
 2. **First-run provisioning (per child)**
    - Each child (or parent impersonating them) signs into Windows and runs `gamiscreen-client login`.
    - The command stores the device token in the user's Windows Credential Manager entry under `gamiscreen-client`.
    - No privileged action is required.
 3. **Session activation**
-   - The service receives `SESSION_LOGON`, `SESSION_UNLOCK`, or `CONSOLE_CONNECT` notifications.
-   - For each interactive session with an accessible user token, the service spawns `session-agent`.
+   - The service receives `SESSION_LOGON`, `CONSOLE_CONNECT`, or `REMOTE_CONNECT` notifications.
+   - For each interactive session with an accessible user token, the service spawns `session-agent --session-id N`.
    - The session agent loads the per-user config/token and starts heartbeats.
+   - Screen lock/unlock detection is handled internally by each session agent (not the service).
 4. **Shutdown**
-   - On `SESSION_LOGOFF`, `SESSION_LOCK`, or service stop, the supervisor terminates the session agent.
-   - Each agent also exits gracefully when its parent service dies (inheritance detection) or when it loses access to the user's desktop.
+   - On `SESSION_LOGOFF`, `CONSOLE_DISCONNECT`, `REMOTE_DISCONNECT`, or service stop, the supervisor terminates the session agent.
+   - Each agent also exits gracefully when the service issues a stop command.
 
 ## Token Handling
 
 - Tokens remain scoped to `HKCU\Software\Microsoft\Credentials` (via the `keyring` crate) for each user.
-- If a session agent starts without a token/config, it reports the error through the Event Log and exits; the service logs the failure and retries on the next session change.
+- If a session agent starts without a token/config, it logs the error and exits; the service logs the failure and retries on the next session change.
 - Shared PCs supporting multiple child accounts simply rely on each account running `login` once.
 
 ## Updates
@@ -73,12 +69,12 @@ The service handles everything else: it detects user sessions and spawns per-ses
 - Service logs are written via `tracing-appender` to rotating files under `%ProgramData%\gamiscreen\logs` (daily rotation, 7-day retention).
 - Session agent logs go to per-user `%LOCALAPPDATA%\gamiscreen\gamiscreen\logs`.
 - Both emit to stderr when run interactively.
-- Admins can inspect the service using `Get-Service GamiScreenAgent` or `sc query "GamiScreen Agent Service"`.
+- Admins can inspect the service using `Get-Service GamiScreenAgent` or `sc query GamiScreenAgent`.
 
 ## Uninstall
 
 - Stop and delete the Windows Service.
-- Remove `%ProgramFiles%\GamiScreen\Client` (if empty) and the Event Log source.
+- Remove `%ProgramFiles%\GamiScreen\Client` (if empty).
 - Leave per-user tokens/configs untouched unless `--purge-user-data` is requested.
 
 ## Future Enhancements

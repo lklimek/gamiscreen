@@ -331,7 +331,16 @@ impl SessionSupervisor {
                 }
             }
             let _guard = WtsGuard(session_info);
-            let sessions = std::slice::from_raw_parts(session_info, count as usize);
+            // Sanity-check: WTS is a trusted local source, but cap the count to prevent
+            // creating an absurdly large slice if the API ever returns garbage.
+            if count > 1024 {
+                warn!(
+                    count,
+                    "WTSEnumerateSessionsW returned suspiciously high count; capping at 1024"
+                );
+            }
+            let safe_count = (count as usize).min(1024);
+            let sessions = std::slice::from_raw_parts(session_info, safe_count);
             for session in sessions {
                 if session.SessionId == 0 {
                     continue;
@@ -616,7 +625,11 @@ async fn session_worker_task(
         "session agent process spawned"
     );
 
-    // Cast handles to usize so they are Send-safe for use across await points.
+    // SAFETY: Cast handles to usize for use across await points. Win32 HANDLEs are
+    // pointer-sized opaque values that remain valid until explicitly closed. The handles
+    // originate from SendHandle (which is Send+Sync) and are closed exactly once at the
+    // end of this function — either in the `handles_safe_to_close` branch, or intentionally
+    // leaked if the blocking wait thread is still using proc_h when shutdown times out.
     let proc_h = child.process_handle.0 as usize;
     let thread_h = child.thread_handle.0 as usize;
 
@@ -712,12 +725,16 @@ async fn session_worker_task(
     result
 }
 
-/// Wrapper to make a Win32 HANDLE sendable across threads.
-/// SAFETY: Win32 handles are safe to send between threads; the OS manages synchronization.
+/// Wrapper to make a Win32 HANDLE sendable and shareable across threads.
+///
+/// SAFETY: Win32 handles are safe to send between threads and share across threads;
+/// the OS manages synchronization internally. The kernel object referenced by a handle
+/// is thread-safe — concurrent calls using the same handle are serialized by the kernel.
 // TODO: Add Drop impl to auto-close the handle and prevent leaks on refactoring.
 // Currently handles are manually closed in session_worker_task.
 struct SendHandle(windows_sys::Win32::Foundation::HANDLE);
 unsafe impl Send for SendHandle {}
+unsafe impl Sync for SendHandle {}
 
 struct ChildProcess {
     process_handle: SendHandle,
