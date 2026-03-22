@@ -44,7 +44,7 @@ pub enum Command {
     /// Install background agent/service for this platform
     ///
     /// Linux: polkit rule + user systemd unit. When run as root, provide --user (or you will be prompted).
-    /// Windows: this legacy path is removed; use `gamiscreen-client service install` instead.
+    /// Windows: delegates to `gamiscreen-client service install`. Prefer using the `service` subcommand directly.
     Install {
         /// Target username (Linux root only). Ignored on Windows.
         #[arg(long)]
@@ -53,7 +53,7 @@ pub enum Command {
     /// Uninstall background agent/service for this platform
     ///
     /// Linux: removes polkit rule + user systemd unit.
-    /// Windows: this legacy path is removed; use `gamiscreen-client service uninstall`.
+    /// Windows: delegates to `gamiscreen-client service uninstall`. Prefer using the `service` subcommand directly.
     Uninstall {
         /// Target username (Linux root only). Ignored on Windows.
         #[arg(long)]
@@ -65,7 +65,11 @@ pub enum Command {
     Service(ServiceCommand),
     #[cfg(target_os = "windows")]
     /// Run the Windows session agent worker (spawned by the service)
-    SessionAgent,
+    SessionAgent {
+        /// Windows session ID this agent is running in
+        #[arg(long)]
+        session_id: u32,
+    },
     #[cfg(not(target_os = "windows"))]
     /// Try lock methods and report status
     Lock {

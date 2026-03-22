@@ -13,3 +13,4 @@ android/keystore
 gamiscreen-web/vite.config.d.ts
 /docs/todos/
 .fastembed_cache/
+settings.local.json

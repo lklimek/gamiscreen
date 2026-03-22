@@ -1,17 +1,17 @@
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::os::windows::ffi::OsStrExt;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
-use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, trace, warn};
-use windows_sys::Win32::Foundation::{GetLastError, NO_ERROR};
-use windows_sys::Win32::System::RemoteDesktop::WTSSESSION_NOTIFICATION;
+use windows_sys::Win32::Foundation::NO_ERROR;
+use windows_sys::Win32::System::RemoteDesktop::{
+    WTS_SESSION_INFOW, WTSActive, WTSEnumerateSessionsW, WTSFreeMemory, WTSSESSION_NOTIFICATION,
+};
 use windows_sys::Win32::System::Services::{
     RegisterServiceCtrlHandlerExW, SERVICE_ACCEPT_SESSIONCHANGE, SERVICE_ACCEPT_SHUTDOWN,
     SERVICE_ACCEPT_STOP, SERVICE_CONTROL_INTERROGATE, SERVICE_CONTROL_SESSIONCHANGE,
@@ -21,12 +21,12 @@ use windows_sys::Win32::System::Services::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     WTS_CONSOLE_CONNECT, WTS_CONSOLE_DISCONNECT, WTS_REMOTE_CONNECT, WTS_REMOTE_DISCONNECT,
-    WTS_SESSION_LOCK, WTS_SESSION_LOGOFF, WTS_SESSION_LOGON, WTS_SESSION_UNLOCK,
+    WTS_SESSION_LOGOFF, WTS_SESSION_LOGON,
 };
 
+use super::util::{SERVICE_NAME, last_error, to_wide_null};
 use crate::AppError;
 
-const SERVICE_NAME: &str = "GamiScreenAgent";
 const SERVICE_DISPLAY_WAIT_HINT_MS: u32 = 5_000;
 
 pub fn run_service_host() -> Result<(), AppError> {
@@ -133,9 +133,10 @@ fn service_main_impl() -> Result<(), AppError> {
         "service state transitioned to STOPPED"
     );
 
-    unsafe {
-        Arc::from_raw(ctx_ptr as *const ServiceContext);
-    }
+    // Intentionally leak the Arc<ServiceContext>: the SCM may dispatch a final
+    // control event on another thread after block_on returns. Reclaiming the pointer
+    // here would be a use-after-free. The leaked Arc is acceptable for a
+    // process-lifetime service context — the OS reclaims memory at process exit.
     Ok(())
 }
 
@@ -148,7 +149,9 @@ unsafe extern "system" fn service_control_handler(
     if context.is_null() {
         return NO_ERROR;
     }
-    let ctx = &*(context as *const ServiceContext);
+    // SAFETY: `context` was set to an `Arc::into_raw(ctx)` pointer in `service_main_impl`
+    // and is guaranteed non-null (checked above) and valid for the service lifetime.
+    let ctx = unsafe { &*(context as *const ServiceContext) };
 
     trace!(control, event_type, "service control handler invoked");
 
@@ -168,7 +171,9 @@ unsafe extern "system" fn service_control_handler(
             if event_data.is_null() {
                 return NO_ERROR;
             }
-            let notification = *(event_data as *const WTSSESSION_NOTIFICATION);
+            // SAFETY: SCM guarantees `event_data` points to a valid WTSSESSION_NOTIFICATION
+            // for SERVICE_CONTROL_SESSIONCHANGE events. Null check is above.
+            let notification = unsafe { *(event_data as *const WTSSESSION_NOTIFICATION) };
             let session_id = notification.dwSessionId;
             trace!(event_type, session_id, "received session change event");
             if let Some(kind) = map_session_event(event_type) {
@@ -192,7 +197,6 @@ unsafe extern "system" fn service_control_handler(
 fn map_session_event(event_type: u32) -> Option<SessionEventKind> {
     match event_type {
         WTS_SESSION_LOGON => Some(SessionEventKind::Activate(SessionActivateReason::Logon)),
-        WTS_SESSION_UNLOCK => Some(SessionEventKind::Activate(SessionActivateReason::Unlock)),
         WTS_CONSOLE_CONNECT => Some(SessionEventKind::Activate(
             SessionActivateReason::ConsoleConnect,
         )),
@@ -202,13 +206,14 @@ fn map_session_event(event_type: u32) -> Option<SessionEventKind> {
         WTS_SESSION_LOGOFF => Some(SessionEventKind::Deactivate(
             SessionDeactivateReason::Logoff,
         )),
-        WTS_SESSION_LOCK => Some(SessionEventKind::Deactivate(SessionDeactivateReason::Lock)),
         WTS_CONSOLE_DISCONNECT => Some(SessionEventKind::Deactivate(
             SessionDeactivateReason::ConsoleDisconnect,
         )),
         WTS_REMOTE_DISCONNECT => Some(SessionEventKind::Deactivate(
             SessionDeactivateReason::RemoteDisconnect,
         )),
+        // Lock/Unlock: the session agent detects lock state internally via
+        // is_session_locked() and skips heartbeats accordingly.
         _ => None,
     }
 }
@@ -238,7 +243,7 @@ impl ServiceContext {
     }
 
     fn set_handle(&self, handle: SERVICE_STATUS_HANDLE) {
-        self.handle.store(handle as *mut c_void, Ordering::Release);
+        self.handle.store(handle, Ordering::Release);
     }
 
     fn update_status<F>(&self, update: F)
@@ -255,25 +260,25 @@ impl ServiceContext {
             }
             unsafe {
                 let handle = self.handle.load(Ordering::Acquire);
-                if !handle.is_null() {
-                    if SetServiceStatus(handle as SERVICE_STATUS_HANDLE, &mut *status) == 0 {
-                        let err = last_error();
-                        warn!(error=%err, "SetServiceStatus failed");
-                    }
+                if !handle.is_null()
+                    && SetServiceStatus(handle as SERVICE_STATUS_HANDLE, &*status) == 0
+                {
+                    let err = last_error();
+                    warn!(error=%err, "SetServiceStatus failed");
                 }
             }
         }
     }
 
     fn resend_status(&self) {
-        if let Ok(mut status) = self.status.lock() {
+        if let Ok(status) = self.status.lock() {
             unsafe {
                 let handle = self.handle.load(Ordering::Acquire);
-                if !handle.is_null() {
-                    if SetServiceStatus(handle as SERVICE_STATUS_HANDLE, &mut *status) == 0 {
-                        let err = last_error();
-                        warn!(error=%err, "SetServiceStatus failed while interrogating");
-                    }
+                if !handle.is_null()
+                    && SetServiceStatus(handle as SERVICE_STATUS_HANDLE, &*status) == 0
+                {
+                    let err = last_error();
+                    warn!(error=%err, "SetServiceStatus failed while interrogating");
                 }
             }
         }
@@ -301,8 +306,59 @@ impl SessionSupervisor {
         }
     }
 
+    fn enumerate_existing_sessions(&mut self) {
+        unsafe {
+            let mut session_info: *mut WTS_SESSION_INFOW = std::ptr::null_mut();
+            let mut count: u32 = 0;
+            let result = WTSEnumerateSessionsW(
+                std::ptr::null_mut(), // WTS_CURRENT_SERVER_HANDLE
+                0,
+                1,
+                &mut session_info,
+                &mut count,
+            );
+            if result == 0 {
+                warn!("WTSEnumerateSessionsW failed; skipping existing session enumeration");
+                return;
+            }
+            // RAII guard for WTSFreeMemory
+            struct WtsGuard(*mut WTS_SESSION_INFOW);
+            impl Drop for WtsGuard {
+                fn drop(&mut self) {
+                    unsafe {
+                        WTSFreeMemory(self.0 as *mut c_void);
+                    }
+                }
+            }
+            let _guard = WtsGuard(session_info);
+            // Sanity-check: WTS is a trusted local source, but cap the count to prevent
+            // creating an absurdly large slice if the API ever returns garbage.
+            if count > 1024 {
+                warn!(
+                    count,
+                    "WTSEnumerateSessionsW returned suspiciously high count; capping at 1024"
+                );
+            }
+            let safe_count = (count as usize).min(1024);
+            let sessions = std::slice::from_raw_parts(session_info, safe_count);
+            for session in sessions {
+                if session.SessionId == 0 {
+                    continue;
+                } // skip services session
+                if session.State == WTSActive {
+                    info!(
+                        session_id = session.SessionId,
+                        "found existing active session at startup"
+                    );
+                    self.activate_session(session.SessionId);
+                }
+            }
+        }
+    }
+
     async fn run(mut self, mut rx: mpsc::Receiver<ServiceEvent>) {
         info!("session supervisor event loop started");
+        self.enumerate_existing_sessions();
         loop {
             if self.stopping && self.joinset.is_empty() && self.workers.is_empty() {
                 break;
@@ -549,19 +605,254 @@ async fn session_worker_task(
     generation: u64,
     cancel: CancellationToken,
 ) -> WorkerExitKind {
-    info!(session_id, generation, "session worker started");
-    let mut ticker = tokio::time::interval(Duration::from_secs(60));
-    ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
-    loop {
-        tokio::select! {
-            _ = cancel.cancelled() => {
-                info!(session_id, generation, "session worker stopped (requested)");
-                return WorkerExitKind::Requested;
+    info!(
+        session_id,
+        generation, "session worker starting child process"
+    );
+
+    let child = match spawn_session_agent(session_id) {
+        Ok(child) => child,
+        Err(e) => {
+            error!(session_id, generation, error=%e, "failed to spawn session agent");
+            return WorkerExitKind::Failed(e.to_string());
+        }
+    };
+
+    info!(
+        session_id,
+        generation,
+        pid = child.pid,
+        "session agent process spawned"
+    );
+
+    // SAFETY: Cast handles to usize for use across await points. Win32 HANDLEs are
+    // pointer-sized opaque values that remain valid until explicitly closed. The handles
+    // originate from SendHandle (which is Send+Sync) and are closed exactly once at the
+    // end of this function — either in the `handles_safe_to_close` branch, or intentionally
+    // leaked if the blocking wait thread is still using proc_h when shutdown times out.
+    let proc_h = child.process_handle.0 as usize;
+    let thread_h = child.thread_handle.0 as usize;
+
+    // Spawn the blocking wait as a JoinHandle so we can await it on both paths.
+    let wait_handle = tokio::task::spawn_blocking(move || unsafe {
+        let h = proc_h as windows_sys::Win32::Foundation::HANDLE;
+        const INFINITE: u32 = 0xFFFFFFFF;
+        const WAIT_FAILED_VAL: u32 = 0xFFFFFFFF;
+
+        let wait_result = windows_sys::Win32::System::Threading::WaitForSingleObject(h, INFINITE);
+        if wait_result == WAIT_FAILED_VAL {
+            return Err(last_error());
+        }
+
+        let mut exit_code: u32 = 0;
+        if windows_sys::Win32::System::Threading::GetExitCodeProcess(h, &mut exit_code) == 0 {
+            return Err(last_error());
+        }
+        Ok(exit_code)
+    });
+
+    // Track whether the blocking wait thread has been joined, so we know
+    // it's safe to close the handles (the thread also uses proc_h).
+    let mut handles_safe_to_close = true;
+
+    let result = tokio::select! {
+        _ = cancel.cancelled() => {
+            info!(session_id, generation, "cancel requested; terminating session agent");
+            unsafe {
+                let h = proc_h as windows_sys::Win32::Foundation::HANDLE;
+                if windows_sys::Win32::System::Threading::TerminateProcess(h, 1) == 0 {
+                    let err = last_error();
+                    warn!(session_id, error=%err, "TerminateProcess failed");
+                }
+                let wait_ret = windows_sys::Win32::System::Threading::WaitForSingleObject(h, 5000);
+                const WAIT_TIMEOUT: u32 = 0x00000102;
+                const WAIT_FAILED_VAL: u32 = 0xFFFFFFFF;
+                match wait_ret {
+                    WAIT_TIMEOUT => warn!(session_id, "timed out waiting for terminated process to exit"),
+                    WAIT_FAILED_VAL => {
+                        let err = last_error();
+                        warn!(session_id, error=%err, "WaitForSingleObject failed after TerminateProcess");
+                    }
+                    _ => {}
+                }
             }
-            _ = ticker.tick() => {
-                debug!(session_id, generation, "session worker heartbeat");
+            // Await the blocking thread with a timeout to avoid hanging shutdown
+            // indefinitely if TerminateProcess failed and the process won't exit.
+            // SAFETY: If the timeout fires, the blocking thread may still be using
+            // proc_h, so we must NOT close handles — they will leak instead.
+            match tokio::time::timeout(Duration::from_secs(10), wait_handle).await {
+                Ok(_) => {}
+                Err(_) => {
+                    warn!(session_id, "timed out waiting for blocking wait thread after termination; handles will leak");
+                    handles_safe_to_close = false;
+                }
+            }
+            WorkerExitKind::Requested
+        }
+        join_result = wait_handle => {
+            match join_result {
+                Ok(Ok(0)) => {
+                    info!(session_id, generation, "session agent exited cleanly");
+                    WorkerExitKind::Completed
+                }
+                Ok(Ok(code)) => {
+                    warn!(session_id, generation, exit_code = code, "session agent exited with error");
+                    WorkerExitKind::Failed(format!("exit code {code}"))
+                }
+                Ok(Err(e)) => {
+                    error!(session_id, generation, error=%e, "failed to wait for session agent");
+                    WorkerExitKind::Failed(e.to_string())
+                }
+                Err(e) => {
+                    error!(session_id, generation, error=%e, "wait task panicked");
+                    WorkerExitKind::Failed(e.to_string())
+                }
             }
         }
+    };
+
+    if handles_safe_to_close {
+        unsafe {
+            windows_sys::Win32::Foundation::CloseHandle(
+                proc_h as windows_sys::Win32::Foundation::HANDLE,
+            );
+            windows_sys::Win32::Foundation::CloseHandle(
+                thread_h as windows_sys::Win32::Foundation::HANDLE,
+            );
+        }
+    }
+
+    result
+}
+
+/// Wrapper to make a Win32 HANDLE sendable and shareable across threads.
+///
+/// SAFETY: Win32 handles are safe to send between threads and share across threads;
+/// the OS manages synchronization internally. The kernel object referenced by a handle
+/// is thread-safe — concurrent calls using the same handle are serialized by the kernel.
+// TODO: Add Drop impl to auto-close the handle and prevent leaks on refactoring.
+// Currently handles are manually closed in session_worker_task.
+struct SendHandle(windows_sys::Win32::Foundation::HANDLE);
+unsafe impl Send for SendHandle {}
+unsafe impl Sync for SendHandle {}
+
+struct ChildProcess {
+    process_handle: SendHandle,
+    thread_handle: SendHandle,
+    pid: u32,
+}
+
+/// RAII guard for tokens and environment block allocated during process spawning.
+struct SpawnResources {
+    /// Primary token (duplicated from the impersonation token via DuplicateTokenEx)
+    primary_token: windows_sys::Win32::Foundation::HANDLE,
+    env_block: *mut std::ffi::c_void,
+}
+
+impl Drop for SpawnResources {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.env_block.is_null() {
+                windows_sys::Win32::System::Environment::DestroyEnvironmentBlock(self.env_block);
+            }
+            if !self.primary_token.is_null() {
+                windows_sys::Win32::Foundation::CloseHandle(self.primary_token);
+            }
+        }
+    }
+}
+
+fn spawn_session_agent(session_id: u32) -> Result<ChildProcess, std::io::Error> {
+    use windows_sys::Win32::Security::{
+        DuplicateTokenEx, SecurityImpersonation, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE,
+        TOKEN_QUERY, TokenPrimary,
+    };
+    use windows_sys::Win32::System::Environment::CreateEnvironmentBlock;
+    use windows_sys::Win32::System::RemoteDesktop::WTSQueryUserToken;
+    use windows_sys::Win32::System::Threading::{
+        CREATE_NO_WINDOW, CREATE_UNICODE_ENVIRONMENT, CreateProcessAsUserW, PROCESS_INFORMATION,
+        STARTUPINFOW,
+    };
+
+    unsafe {
+        // WTSQueryUserToken returns an impersonation token; we must convert it
+        // to a primary token via DuplicateTokenEx for CreateProcessAsUserW.
+        let mut impersonation_token: windows_sys::Win32::Foundation::HANDLE = std::ptr::null_mut();
+        if WTSQueryUserToken(session_id, &mut impersonation_token) == 0 {
+            return Err(last_error());
+        }
+
+        let mut primary_token: windows_sys::Win32::Foundation::HANDLE = std::ptr::null_mut();
+        let dup_result = DuplicateTokenEx(
+            impersonation_token,
+            TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY,
+            std::ptr::null(),
+            SecurityImpersonation,
+            TokenPrimary,
+            &mut primary_token,
+        );
+        windows_sys::Win32::Foundation::CloseHandle(impersonation_token);
+        if dup_result == 0 {
+            return Err(last_error());
+        }
+
+        let mut env_block: *mut std::ffi::c_void = std::ptr::null_mut();
+        if CreateEnvironmentBlock(&mut env_block, primary_token, 0) == 0 {
+            let err = last_error();
+            windows_sys::Win32::Foundation::CloseHandle(primary_token);
+            return Err(err);
+        }
+
+        let resources = SpawnResources {
+            primary_token,
+            env_block,
+        };
+
+        let exe_path = std::env::current_exe()?;
+        let cmd = format!(
+            "\"{}\" session-agent --session-id {}",
+            exe_path.display(),
+            session_id
+        );
+        let mut cmd_w = to_wide_null(&cmd);
+
+        let si: STARTUPINFOW = {
+            let mut si: STARTUPINFOW = std::mem::zeroed();
+            si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+            si
+        };
+        let mut pi: PROCESS_INFORMATION = std::mem::zeroed();
+
+        // SECURITY: The agent runs as the child user. A technically inclined child
+        // could terminate it via Task Manager. The supervisor restarts it with
+        // exponential backoff (max 60s). Future hardening:
+        // TODO: Set a restrictive DACL on the process handle to deny PROCESS_TERMINATE
+        // TODO: Alert the parent when repeated agent failures are detected
+        let create_result = CreateProcessAsUserW(
+            resources.primary_token,
+            std::ptr::null(),   // application name (use command line)
+            cmd_w.as_mut_ptr(), // command line
+            std::ptr::null(),   // process security attributes
+            std::ptr::null(),   // thread security attributes
+            0,                  // don't inherit handles
+            CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT,
+            resources.env_block, // environment
+            std::ptr::null(),    // current directory (inherit)
+            &si,
+            &mut pi,
+        );
+
+        drop(resources);
+
+        if create_result == 0 {
+            return Err(last_error());
+        }
+
+        Ok(ChildProcess {
+            process_handle: SendHandle(pi.hProcess),
+            thread_handle: SendHandle(pi.hThread),
+            pid: pi.dwProcessId,
+        })
     }
 }
 
@@ -586,7 +877,6 @@ enum SessionEventKind {
 #[derive(Clone, Copy)]
 enum SessionActivateReason {
     Logon,
-    Unlock,
     ConsoleConnect,
     RemoteConnect,
 }
@@ -594,7 +884,6 @@ enum SessionActivateReason {
 #[derive(Clone, Copy)]
 enum SessionDeactivateReason {
     Logoff,
-    Lock,
     ConsoleDisconnect,
     RemoteDisconnect,
 }
@@ -603,7 +892,6 @@ impl SessionActivateReason {
     fn as_str(&self) -> &'static str {
         match self {
             SessionActivateReason::Logon => "logon",
-            SessionActivateReason::Unlock => "unlock",
             SessionActivateReason::ConsoleConnect => "console-connect",
             SessionActivateReason::RemoteConnect => "remote-connect",
         }
@@ -614,20 +902,59 @@ impl SessionDeactivateReason {
     fn as_str(&self) -> &'static str {
         match self {
             SessionDeactivateReason::Logoff => "logoff",
-            SessionDeactivateReason::Lock => "lock",
             SessionDeactivateReason::ConsoleDisconnect => "console-disconnect",
             SessionDeactivateReason::RemoteDisconnect => "remote-disconnect",
         }
     }
 }
 
-fn to_wide_null(value: &str) -> Vec<u16> {
-    std::ffi::OsStr::new(value)
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect()
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn last_error() -> std::io::Error {
-    std::io::Error::from_raw_os_error(unsafe { GetLastError() } as i32)
+    #[test]
+    fn backoff_delay_sequence() {
+        let mut b = Backoff::default();
+        assert_eq!(b.next_delay(), Duration::from_secs(1));
+        assert_eq!(b.next_delay(), Duration::from_secs(5));
+        assert_eq!(b.next_delay(), Duration::from_secs(15));
+        assert_eq!(b.next_delay(), Duration::from_secs(30));
+        assert_eq!(b.next_delay(), Duration::from_secs(60));
+        // caps at 60
+        assert_eq!(b.next_delay(), Duration::from_secs(60));
+    }
+
+    #[test]
+    fn backoff_reset() {
+        let mut b = Backoff::default();
+        b.next_delay();
+        b.next_delay();
+        b.reset();
+        assert_eq!(b.next_delay(), Duration::from_secs(1));
+    }
+
+    #[test]
+    fn map_session_event_known_events() {
+        assert!(matches!(
+            map_session_event(WTS_SESSION_LOGON),
+            Some(SessionEventKind::Activate(SessionActivateReason::Logon))
+        ));
+        assert!(matches!(
+            map_session_event(WTS_CONSOLE_CONNECT),
+            Some(SessionEventKind::Activate(
+                SessionActivateReason::ConsoleConnect
+            ))
+        ));
+        assert!(matches!(
+            map_session_event(WTS_SESSION_LOGOFF),
+            Some(SessionEventKind::Deactivate(
+                SessionDeactivateReason::Logoff
+            ))
+        ));
+    }
+
+    #[test]
+    fn map_session_event_unknown_returns_none() {
+        assert!(map_session_event(0xFFFF).is_none());
+    }
 }

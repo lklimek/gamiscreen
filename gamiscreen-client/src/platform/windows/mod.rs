@@ -2,7 +2,6 @@ use std::path::Path;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
-use tracing::warn;
 
 use super::Platform;
 use crate::AppError;
@@ -11,10 +10,11 @@ pub mod lock;
 pub mod notify;
 pub mod service;
 pub mod service_cli;
+pub mod util;
 
 /// Windows implementation of the cross-platform interface.
 pub struct WindowsPlatform {
-    notifier: Arc<Mutex<notify::Notifier>>, // simple logging-based notifier for now
+    notifier: Arc<Mutex<notify::Notifier>>,
 }
 
 impl WindowsPlatform {
@@ -66,8 +66,20 @@ impl Platform for WindowsPlatform {
     }
 
     fn replace_and_restart(&self, staged_src: &Path, current_exe: &Path, args: &[String]) -> ! {
-        // Prepare a .new file next to the current exe
-        let parent = current_exe.parent().unwrap_or_else(|| Path::new("."));
+        // Prepare a .new file next to the current exe.
+        // If current_exe has no parent (e.g., a bare filename), use the system temp directory
+        // to avoid accidentally writing to the service's working directory (often System32).
+        let temp_fallback;
+        let parent = match current_exe.parent() {
+            Some(p) => p,
+            None => {
+                temp_fallback = std::env::temp_dir();
+                tracing::warn!(
+                    "current_exe has no parent directory; using temp dir for update script"
+                );
+                &temp_fallback
+            }
+        };
         let fname = current_exe
             .file_name()
             .and_then(|s| s.to_str())
@@ -81,15 +93,20 @@ impl Platform for WindowsPlatform {
         // Create a small .bat script to swap files after this process exits and
         // relaunch the app directly (Scheduled Task friendly; no SCM involved).
         let bat_path = parent.join(format!("update-runner-{}.bat", std::process::id()));
-        // Quote exe and args for cmd.exe; escape embedded quotes by doubling them
-        let exe_quoted = format!("\"{}\"", current_exe.display());
+        // Escape paths and args for cmd.exe to prevent command injection via
+        // metacharacters like &, |, %, ^, <, > in file paths (CWE-78).
+        let exe_escaped = escape_cmd_meta(&current_exe.display().to_string());
+        let exe_quoted = format!("\"{}\"", exe_escaped);
+        let new_escaped = escape_cmd_meta(&new_path.display().to_string());
+        let cur_escaped = escape_cmd_meta(&current_exe.display().to_string());
         let mut args_quoted = String::new();
         for a in args {
-            let mut s = a.replace('"', "\"\"");
-            s.insert(0, '"');
-            s.push('"');
+            let escaped = escape_cmd_meta(a);
+            let s = escaped.replace('"', "\"\"");
             args_quoted.push(' ');
+            args_quoted.push('"');
             args_quoted.push_str(&s);
+            args_quoted.push('"');
         }
         let script = format!(
             concat!(
@@ -105,8 +122,8 @@ impl Platform for WindowsPlatform {
                 "del \"%~f0\"\r\n",
             ),
             std::process::id(),
-            new_path.display(),
-            current_exe.display(),
+            new_escaped,
+            cur_escaped,
             exe_quoted,
             args_quoted,
         );
@@ -128,18 +145,33 @@ impl Platform for WindowsPlatform {
     }
 
     async fn install(&self, _user: Option<String>) -> Result<(), AppError> {
-        warn!("Windows per-user install path invoked; directing to service commands");
-        Err(AppError::Config(
-            "Windows per-user install has been removed; use `gamiscreen-client service install` instead.".into(),
-        ))
+        service_cli::handle_service_command(crate::cli::ServiceCommand::Install).await
     }
 
     async fn uninstall(&self, _user: Option<String>) -> Result<(), AppError> {
-        warn!("Windows per-user uninstall path invoked; directing to service commands");
-        Err(AppError::Config(
-            "Windows per-user uninstall has been removed; use the Windows service commands instead.".into(),
-        ))
+        service_cli::handle_service_command(crate::cli::ServiceCommand::Uninstall).await
     }
+}
+
+/// Escape cmd.exe metacharacters by prefixing each with `^`.
+/// Also strips newlines and carriage returns to prevent line injection.
+/// Prevents command injection when interpolating paths into batch scripts (CWE-78).
+///
+/// Note: `!` is escaped for safety in case DelayedExpansion is enabled
+/// system-wide via registry.
+fn escape_cmd_meta(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        // Strip newlines/carriage returns to prevent line injection in batch scripts
+        if ch == '\n' || ch == '\r' {
+            continue;
+        }
+        if matches!(ch, '&' | '|' | '%' | '^' | '<' | '>' | '(' | ')' | '!') {
+            out.push('^');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 // On Windows we relaunch directly, so we handle basic arg quoting above.
@@ -203,5 +235,42 @@ fn current_user_sid_string() -> Option<String> {
         let sid = String::from_utf16_lossy(slice);
         let _ = LocalFree(sid_str_ptr as HLOCAL);
         Some(sid)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::escape_cmd_meta;
+
+    #[test]
+    fn escape_cmd_meta_no_special_chars() {
+        assert_eq!(escape_cmd_meta("hello world"), "hello world");
+        assert_eq!(
+            escape_cmd_meta(r"C:\Program Files\app.exe"),
+            r"C:\Program Files\app.exe"
+        );
+    }
+
+    #[test]
+    fn escape_cmd_meta_special_chars() {
+        assert_eq!(escape_cmd_meta("foo&bar"), "foo^&bar");
+        assert_eq!(escape_cmd_meta("a|b"), "a^|b");
+        assert_eq!(escape_cmd_meta("100%done"), "100^%done");
+        assert_eq!(escape_cmd_meta("a^b"), "a^^b");
+        assert_eq!(escape_cmd_meta("a<b>c"), "a^<b^>c");
+        assert_eq!(escape_cmd_meta("(test)"), "^(test^)");
+        assert_eq!(escape_cmd_meta("hello!world"), "hello^!world");
+    }
+
+    #[test]
+    fn escape_cmd_meta_multiple_special_chars() {
+        assert_eq!(escape_cmd_meta("a&b|c%d"), "a^&b^|c^%d");
+    }
+
+    #[test]
+    fn escape_cmd_meta_strips_newlines() {
+        assert_eq!(escape_cmd_meta("foo\nbar"), "foobar");
+        assert_eq!(escape_cmd_meta("foo\r\nbar"), "foobar");
+        assert_eq!(escape_cmd_meta("a\nb&c"), "ab^&c");
     }
 }

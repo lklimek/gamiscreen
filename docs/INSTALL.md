@@ -1,6 +1,6 @@
 # Installation
 
-The project consists of a Rust server, a React web UI (built and embedded into the server), and a Linux client. SQLite is used for storage, with migrations applied automatically on startup.
+The project consists of a Rust server, a React web UI (built and embedded into the server), and Linux/Windows clients. SQLite is used for storage, with migrations applied automatically on startup.
 
 See also: docs/CONFIGURATION.md for all server/client settings and docs/DOCKER.md for containerized deployment.
 
@@ -9,6 +9,7 @@ See also: docs/CONFIGURATION.md for all server/client settings and docs/DOCKER.m
 - Rust toolchain (stable) and Cargo
 - Node.js (>=18) and npm (only required to build the web UI; can be skipped with `SKIP_WEB_BUILD=1`)
 - Linux for the client (systemd optional for service management)
+- Windows 10/11 for the Windows client (admin access required for service install)
 
 ## Server
 
@@ -174,3 +175,65 @@ sudo usermod -aG gamiscreen $USER
 ```
 
 Relogin (or reboot) to apply group changes.
+
+## Windows Client
+
+Prerequisites: Windows 10 or 11, administrator access for service installation.
+
+See also: docs/WINDOWS.md for full architecture details.
+
+1) Get the binary
+
+Build from source (requires Rust toolchain on Windows):
+
+```powershell
+cargo install --path gamiscreen-client
+```
+
+Or download `gamiscreen-client.exe` from the GitHub release and place it in your `PATH`.
+
+2) Provision each child account
+
+Log into each child's Windows user account and run:
+
+```powershell
+gamiscreen-client login --server http://your-server:5151 --username parent
+```
+
+This stores a device token in Windows Credential Manager and writes `%APPDATA%\gamiscreen\client.yaml`.
+
+3) Install the service (elevated prompt)
+
+Open an **Administrator** PowerShell or Command Prompt:
+
+```powershell
+gamiscreen-client service install
+```
+
+This registers the `GamiScreenAgent` Windows Service with auto-start under LocalSystem and starts it immediately. Use `gamiscreen-client service start` if the service was stopped manually.
+
+4) Verify
+
+```powershell
+sc query GamiScreenAgent
+# or
+Get-Service GamiScreenAgent
+```
+
+The service automatically spawns a session agent for each logged-in user. No per-user service setup is needed.
+
+Notes
+- The service runs as LocalSystem and spawns `gamiscreen-client.exe session-agent --session-id N` in each interactive user session.
+- Each session agent reads the token from that user's Windows Credential Manager automatically.
+- If a child account has no token, the session agent logs the error and exits. Run `gamiscreen-client login` from that account to fix it.
+- Service logs are written to `%ProgramData%\gamiscreen\logs`. Session agent logs go to per-user `%LOCALAPPDATA%\gamiscreen\gamiscreen\logs`.
+
+Uninstall
+
+```powershell
+# Stop the service
+gamiscreen-client service stop
+
+# Remove the service registration
+gamiscreen-client service uninstall
+```

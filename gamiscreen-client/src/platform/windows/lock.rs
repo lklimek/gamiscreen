@@ -25,7 +25,7 @@ pub async fn lock_now() -> Result<(), AppError> {
 pub async fn is_session_locked() -> Result<bool, AppError> {
     ensure_session_watcher();
     let state = SESSION_LOCKED.get().expect("watcher init");
-    let locked = state.load(Ordering::Relaxed);
+    let locked = state.load(Ordering::Acquire);
     trace!(locked, "Windows: queried session lock state");
     Ok(locked)
 }
@@ -34,20 +34,18 @@ static SESSION_LOCKED: OnceLock<Arc<AtomicBool>> = OnceLock::new();
 static WATCHER_THREAD: OnceLock<std::thread::JoinHandle<()>> = OnceLock::new();
 
 fn ensure_session_watcher() {
-    if SESSION_LOCKED.get().is_some() {
-        trace!("Windows: session watcher already initialised");
-        return;
-    }
-    let state = Arc::new(AtomicBool::new(false));
-    let state_clone = Arc::clone(&state);
-    info!("Windows: starting session watcher thread");
-    let handle = std::thread::spawn(move || run_session_watcher(state_clone));
-    if SESSION_LOCKED.set(state).is_err() {
-        warn!("Windows: session watcher state already set unexpectedly");
-    }
-    if WATCHER_THREAD.set(handle).is_err() {
-        warn!("Windows: session watcher thread handle already set unexpectedly");
-    }
+    // Use get_or_init to avoid TOCTOU race where two threads could both spawn
+    // a watcher and leak an Arc (review finding: HIGH race condition).
+    SESSION_LOCKED.get_or_init(|| {
+        let state = Arc::new(AtomicBool::new(false));
+        let state_clone = Arc::clone(&state);
+        info!("Windows: starting session watcher thread");
+        let handle = std::thread::spawn(move || run_session_watcher(state_clone));
+        if WATCHER_THREAD.set(handle).is_err() {
+            warn!("Windows: session watcher thread handle already set unexpectedly");
+        }
+        state
+    });
 }
 
 extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -85,7 +83,7 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
                 WTS_SESSION_UNLOCK => false,
                 _ => return 0,
             };
-            unsafe { (*ptr).store(locked, Ordering::Relaxed) };
+            unsafe { (*ptr).store(locked, Ordering::Release) };
             debug!(
                 locked,
                 session_id = active_id,
@@ -103,12 +101,12 @@ fn run_session_watcher(state: Arc<AtomicBool>) {
     use windows_sys::Win32::Foundation::HINSTANCE;
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::System::RemoteDesktop::{
-        NOTIFY_FOR_ALL_SESSIONS, WTSRegisterSessionNotification,
+        NOTIFY_FOR_ALL_SESSIONS, WTSRegisterSessionNotification, WTSUnRegisterSessionNotification,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CS_HREDRAW, CS_VREDRAW, CW_USEDEFAULT, CreateWindowExW, DispatchMessageW, GWLP_USERDATA,
-        GetMessageW, MSG, RegisterClassW, SetWindowLongPtrW, TranslateMessage, WNDCLASSW,
-        WS_OVERLAPPEDWINDOW,
+        GetMessageW, GetWindowLongPtrW, MSG, RegisterClassW, SetWindowLongPtrW, TranslateMessage,
+        WNDCLASSW, WS_OVERLAPPEDWINDOW,
     };
 
     unsafe {
@@ -154,8 +152,23 @@ fn run_session_watcher(state: Arc<AtomicBool>) {
             return;
         }
         info!(?hwnd, "Windows: session watcher window created");
-        // Stash pointer to AtomicBool in window user data for use in wnd_proc
-        SetWindowLongPtrW(hwnd, GWLP_USERDATA, Arc::into_raw(state) as isize);
+        // Stash pointer to AtomicBool in window user data for use in wnd_proc.
+        // Check SetWindowLongPtrW return: 0 with non-zero GetLastError means failure.
+        let raw_ptr = Arc::into_raw(state);
+        let prev = SetWindowLongPtrW(hwnd, GWLP_USERDATA, raw_ptr as isize);
+        if prev == 0 {
+            let err_code = windows_sys::Win32::Foundation::GetLastError();
+            if err_code != 0 {
+                warn!(
+                    os_error = err_code,
+                    "SetWindowLongPtrW failed; reclaiming Arc and destroying window"
+                );
+                // Reclaim the Arc to avoid a leak
+                let _ = Arc::from_raw(raw_ptr);
+                windows_sys::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd);
+                return;
+            }
+        }
         // Register for session change notifications for all sessions
         let ok = WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_ALL_SESSIONS);
         if ok == 0 {
@@ -180,6 +193,20 @@ fn run_session_watcher(state: Arc<AtomicBool>) {
                 break;
             }
         }
+
+        // Unregister session notifications before destroying the window
+        WTSUnRegisterSessionNotification(hwnd);
+
+        // Destroy the window to stop further message delivery to wnd_proc
+        // before cleaning up the user data pointer.
+        windows_sys::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd);
+
+        // Intentionally leak the Arc<AtomicBool>. The session watcher is
+        // process-lifetime and runs until the service exits, at which point
+        // the OS reclaims all memory. Reclaiming here would risk a
+        // use-after-free if a stale message arrives between DestroyWindow
+        // returning and Arc::from_raw completing.
+
         info!("Windows: session watcher thread exiting");
     }
 }
