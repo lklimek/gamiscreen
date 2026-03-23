@@ -29,12 +29,14 @@ pub fn verify_session_id(expected: u32) -> Result<(), crate::AppError> {
     };
     if ok == 0 {
         let os_error = unsafe { GetLastError() };
-        tracing::warn!(
+        tracing::error!(
             pid,
             os_error,
-            "ProcessIdToSessionId failed; skipping session ID check"
+            "ProcessIdToSessionId failed; refusing to run without verified session"
         );
-        return Ok(());
+        return Err(crate::AppError::Io(std::io::Error::from_raw_os_error(
+            os_error as i32,
+        )));
     }
     if actual_session != expected {
         tracing::error!(

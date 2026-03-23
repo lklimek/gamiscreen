@@ -69,6 +69,7 @@ windows-sys = { version = "0.61.2", features = [
     "Win32_System_Services",
     "Win32_System_Environment",
     "Win32_UI_Shell",
+    # SHELLEXECUTEINFOW contains an HKEY field gated behind this feature
     "Win32_System_Registry",
 ] }
 keyring = { version = "3.6.3", features = ["windows-native"] }

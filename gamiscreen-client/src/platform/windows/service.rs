@@ -635,11 +635,9 @@ async fn session_worker_task(
     let proc_h = child.process_handle.0 as usize;
     let thread_h = child.thread_handle.0 as usize;
     // Prevent SendHandle::drop from closing handles we now manage manually.
-    std::mem::forget(child.process_handle);
-    std::mem::forget(child.thread_handle);
+    let _ = std::mem::ManuallyDrop::new(child.process_handle);
+    let _ = std::mem::ManuallyDrop::new(child.thread_handle);
 
-    // Spawn the blocking wait as a JoinHandle so we can await it on both paths.
-    // Pin so we can `&mut` reference it in both tokio::select! branches.
     let mut wait_handle = tokio::task::spawn_blocking(move || unsafe {
         let h = proc_h as windows_sys::Win32::Foundation::HANDLE;
         const INFINITE: u32 = 0xFFFFFFFF;
@@ -656,7 +654,6 @@ async fn session_worker_task(
         }
         Ok(exit_code)
     });
-    tokio::pin!(wait_handle);
 
     // Track whether the blocking wait thread has been joined, so we know
     // it's safe to close the handles (the thread also uses proc_h).
@@ -751,9 +748,8 @@ impl Drop for SendHandle {
         // SAFETY: Each SendHandle owns its Win32 HANDLE exclusively.
         // CloseHandle is safe to call once per handle value.
         if !self.0.is_null() {
-            unsafe {
-                windows_sys::Win32::Foundation::CloseHandle(self.0);
-            }
+            let ret = unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
+            debug_assert!(ret != 0, "CloseHandle failed in SendHandle::Drop");
         }
     }
 }
