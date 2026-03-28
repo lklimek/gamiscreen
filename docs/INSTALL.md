@@ -192,17 +192,7 @@ cargo install --path gamiscreen-client
 
 Or download `gamiscreen-client.exe` from the GitHub release and place it in your `PATH`.
 
-2) Provision each child account
-
-Log into each child's Windows user account and run:
-
-```powershell
-gamiscreen-client login --server http://your-server:5151 --username parent
-```
-
-This stores a device token in Windows Credential Manager and writes `%APPDATA%\gamiscreen\client.yaml`.
-
-3) Install the service (elevated prompt)
+2) Install the service (elevated prompt)
 
 Open an **Administrator** PowerShell or Command Prompt:
 
@@ -211,6 +201,16 @@ gamiscreen-client service install
 ```
 
 This registers the `GamiScreenAgent` Windows Service with auto-start under LocalSystem and starts it immediately. Use `gamiscreen-client service start` if the service was stopped manually.
+
+3) Provision each child account
+
+Log into each child's Windows user account and run:
+
+```powershell
+gamiscreen-client login --server http://your-server:5151 --username parent
+```
+
+This stores a device token in Windows Credential Manager and writes `%APPDATA%\gamiscreen\client.yaml`. The service will automatically detect the new token on the next session event.
 
 4) Verify
 

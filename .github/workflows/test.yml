@@ -40,3 +40,22 @@ jobs:
       # This includes building the gamiscreen-web, so we don't need separate steps for that.
       - name: Run tests
         run: cargo test --workspace
+
+  windows-client-tests:
+    name: Windows Client Tests
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build client
+        run: cargo build -p gamiscreen-client
+
+      - name: Run client tests
+        run: cargo test -p gamiscreen-client

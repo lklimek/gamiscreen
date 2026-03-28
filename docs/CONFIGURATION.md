@@ -1,6 +1,6 @@
 # Configuration
 
-This page covers configuration for both the server and the Linux client, plus relevant environment variables.
+This page covers configuration for the server and the client (Linux and Windows), plus relevant environment variables.
 
 ## Server (`config.yaml`)
 

@@ -5,6 +5,18 @@ use clap::{Parser, Subcommand};
 #[cfg(not(target_os = "windows"))]
 use crate::platform::linux::lock::LockMethod;
 
+// Note: ProjectDirs::from("dev", "gamiscreen", "gamiscreen") on Windows
+// resolves to %APPDATA%\gamiscreen\gamiscreen\config\. The help text below
+// shows a simplified path for readability. The actual path is determined
+// at runtime by the `directories` crate.
+#[cfg(target_os = "windows")]
+const HELP_EPILOG: &str = r#"Config resolution order:
+  1) --config/-c PATH
+  2) %GAMISCREEN_CONFIG%
+  3) Default: %APPDATA%\gamiscreen\client.yaml
+"#;
+
+#[cfg(not(target_os = "windows"))]
 const HELP_EPILOG: &str = r#"Config resolution order:
   1) --config/-c PATH
   2) $GAMISCREEN_CONFIG

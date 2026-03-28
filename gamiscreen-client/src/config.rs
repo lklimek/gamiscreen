@@ -30,7 +30,7 @@ pub fn default_config_path() -> Option<PathBuf> {
 
 pub fn load_config(path: &PathBuf) -> Result<ClientConfig, AppError> {
     let data = std::fs::read_to_string(path).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::NotFound {
+        if e.kind() == std::io::ErrorKind::NotFound && !path.is_dir() {
             let p = path.display();
             AppError::Config(format!(
                 "config file not found: {p}\n\n\
@@ -176,8 +176,8 @@ mod tests {
 
     #[test]
     fn load_config_other_io_errors_unchanged() {
-        // A directory path triggers a non-NotFound IO error
-        let path = PathBuf::from("/tmp");
+        // A directory path triggers a non-NotFound IO error (IsADirectory / PermissionDenied)
+        let path = std::env::temp_dir(); // cross-platform: /tmp on Linux, %TEMP% on Windows
         let err = load_config(&path).unwrap_err();
         let msg = err.to_string();
 
