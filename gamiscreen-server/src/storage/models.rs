@@ -2,8 +2,8 @@ use chrono::NaiveDateTime;
 use diesel::prelude::*;
 
 use crate::storage::schema::{
-    balances, children, push_subscriptions, rewards, task_completions, task_submissions, tasks,
-    usage_minutes,
+    balance_transactions, balances, children, push_subscriptions, rewards, task_completions,
+    task_submissions, tasks, usage_minutes,
 };
 
 #[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
@@ -161,4 +161,25 @@ pub struct NewPushSubscription<'a> {
 pub struct Balance {
     pub child_id: String,
     pub minutes_remaining: i32,
+    pub account_balance: i32,
+}
+
+#[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
+#[diesel(table_name = balance_transactions)]
+pub struct BalanceTransaction {
+    pub id: i32,
+    pub child_id: String,
+    pub amount: i32,
+    pub description: Option<String>,
+    pub related_reward_id: Option<i32>,
+    pub created_at: NaiveDateTime,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = balance_transactions)]
+pub struct NewBalanceTransaction<'a> {
+    pub child_id: &'a str,
+    pub amount: i32,
+    pub description: Option<&'a str>,
+    pub related_reward_id: Option<i32>,
 }

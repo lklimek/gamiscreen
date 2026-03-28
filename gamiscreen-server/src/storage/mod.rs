@@ -509,19 +509,13 @@ impl Store {
                 let Some((child_id, task_id, mins, task_name)) = rec else {
                     return Ok(());
                 };
-                // Accounting balance (earned - borrowed - used) BEFORE this reward —
-                // used to determine how much goes to remaining vs debt repayment.
-                let balance = accounting_balance_inner(conn, &child_id)?;
-                // `remaining` is only consulted when balance crosses the debt boundary
-                // (balance < 0 and balance + mins >= 0). Skip the DB read otherwise.
-                let remaining: i32 = if balance < 0 {
-                    balances::table
-                        .filter(balances::child_id.eq(&child_id))
-                        .select(balances::minutes_remaining)
-                        .first(conn)?
-                } else {
-                    balance
-                };
+
+                // Read current account_balance for debt tracking
+                let account_balance: i32 = balances::table
+                    .filter(balances::child_id.eq(&child_id))
+                    .select(balances::account_balance)
+                    .first(conn)?;
+
                 let new_reward = NewReward {
                     child_id: &child_id,
                     task_id: Some(&task_id),
@@ -532,10 +526,29 @@ impl Store {
                 diesel::insert_into(rewards::table)
                     .values(&new_reward)
                     .execute(conn)?;
-                let delta = compute_remaining_delta(mins, false, balance, remaining);
+
+                // Get the inserted reward id for balance_transactions FK
+                let reward_id: i32 = diesel::select(
+                    diesel::dsl::sql::<diesel::sql_types::Integer>("last_insert_rowid()"),
+                )
+                .get_result(conn)?;
+
+                let (rem_delta, bal_delta) = apply_reward_to_balance(
+                    conn,
+                    &child_id,
+                    mins,
+                    false, // task approvals are never borrowed
+                    account_balance,
+                    reward_id,
+                )?;
+
                 diesel::update(balances::table.filter(balances::child_id.eq(&child_id)))
-                    .set(balances::minutes_remaining.eq(balances::minutes_remaining + delta))
+                    .set((
+                        balances::minutes_remaining.eq(balances::minutes_remaining + rem_delta),
+                        balances::account_balance.eq(balances::account_balance + bal_delta),
+                    ))
                     .execute(conn)?;
+
                 let new_remaining: i32 = balances::table
                     .filter(balances::child_id.eq(&child_id))
                     .select(balances::minutes_remaining)
@@ -639,36 +652,50 @@ impl Store {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
             conn.immediate_transaction(|conn| -> Result<i32, StorageError> {
-                // Accounting balance (earned - borrowed - used) BEFORE this reward —
-                // used to determine how much goes to remaining vs debt repayment.
-                let balance = accounting_balance_inner(conn, &child)?;
-                // `remaining` is only consulted when balance crosses the debt boundary
-                // (balance < 0 and balance + mins >= 0). Skip the DB read otherwise.
-                let remaining: i32 = if balance < 0 {
-                    balances::table
-                        .filter(balances::child_id.eq(&child))
-                        .select(balances::minutes_remaining)
-                        .first(conn)?
-                } else {
-                    balance
-                };
+                // Read current account_balance for debt tracking
+                let account_balance: i32 = balances::table
+                    .filter(balances::child_id.eq(&child))
+                    .select(balances::account_balance)
+                    .first(conn)?;
+
+                // Insert reward row (is_borrowed kept false for audit — debt tracked via balance_transactions)
                 let new_reward = NewReward {
                     child_id: &child,
                     task_id: task_opt.as_deref(),
                     minutes: mins,
                     description: description_opt.as_deref(),
-                    is_borrowed,
+                    is_borrowed: false,
                 };
                 diesel::insert_into(rewards::table)
                     .values(&new_reward)
                     .execute(conn)?;
-                let delta = compute_remaining_delta(mins, is_borrowed, balance, remaining);
+
+                // Get the inserted reward id for balance_transactions FK
+                let reward_id: i32 = diesel::select(
+                    diesel::dsl::sql::<diesel::sql_types::Integer>("last_insert_rowid()"),
+                )
+                .get_result(conn)?;
+
+                let (rem_delta, bal_delta) = apply_reward_to_balance(
+                    conn,
+                    &child,
+                    mins,
+                    is_borrowed,
+                    account_balance,
+                    reward_id,
+                )?;
+
                 diesel::update(balances::table.filter(balances::child_id.eq(&child)))
-                    .set(balances::minutes_remaining.eq(balances::minutes_remaining + delta))
+                    .set((
+                        balances::minutes_remaining.eq(balances::minutes_remaining + rem_delta),
+                        balances::account_balance.eq(balances::account_balance + bal_delta),
+                    ))
                     .execute(conn)?;
+
                 if let Some((ref tid, ref user)) = completion_opt {
                     record_task_done_inner(conn, &child, tid, user)?;
                 }
+
                 let new_remaining: i32 = balances::table
                     .filter(balances::child_id.eq(&child))
                     .select(balances::minutes_remaining)
@@ -908,56 +935,17 @@ fn record_task_done_inner(
     Ok(())
 }
 
-/// User-facing balance: `earned - used`.
+/// Read the stored account balance (virtual bank) for a child.
 ///
-/// Borrowed minutes are NOT subtracted because they are already reflected in
-/// usage: the child spends borrowed time as screen time, so `used` already
-/// accounts for it. Subtracting `borrowed` again would double-count the debt.
+/// This is a simple column read — no computation. The account_balance is
+/// maintained transactionally by `add_reward_minutes` and `approve_submission`.
+/// Negative values indicate debt from borrowed time.
 fn compute_balance_inner(conn: &mut SqliteConnection, child_id: &str) -> Result<i32, StorageError> {
-    use diesel::dsl::sum;
-    let earned: Option<i64> = schema::rewards::table
-        .filter(schema::rewards::child_id.eq(child_id))
-        .filter(schema::rewards::is_borrowed.eq(false))
-        .select(sum(schema::rewards::minutes))
-        .first::<Option<i64>>(conn)?;
-    let used: i64 = schema::usage_minutes::table
-        .filter(schema::usage_minutes::child_id.eq(child_id))
-        .select(schema::usage_minutes::minute_ts)
-        .distinct()
-        .count()
-        .get_result::<i64>(conn)?;
-    let result = earned.unwrap_or(0) - used;
-    Ok(result.clamp(i32::MIN as i64, i32::MAX as i64) as i32)
-}
-
-/// Internal accounting balance used by [`compute_remaining_delta`] for debt
-/// tracking: `earned - borrowed - used`.
-///
-/// This tells us how much "debt" exists from borrowing, so that earned rewards
-/// can be directed to debt repayment instead of increasing remaining minutes.
-fn accounting_balance_inner(
-    conn: &mut SqliteConnection,
-    child_id: &str,
-) -> Result<i32, StorageError> {
-    use diesel::dsl::sum;
-    let earned: Option<i64> = schema::rewards::table
-        .filter(schema::rewards::child_id.eq(child_id))
-        .filter(schema::rewards::is_borrowed.eq(false))
-        .select(sum(schema::rewards::minutes))
-        .first::<Option<i64>>(conn)?;
-    let borrowed: Option<i64> = schema::rewards::table
-        .filter(schema::rewards::child_id.eq(child_id))
-        .filter(schema::rewards::is_borrowed.eq(true))
-        .select(sum(schema::rewards::minutes))
-        .first::<Option<i64>>(conn)?;
-    let used: i64 = schema::usage_minutes::table
-        .filter(schema::usage_minutes::child_id.eq(child_id))
-        .select(schema::usage_minutes::minute_ts)
-        .distinct()
-        .count()
-        .get_result::<i64>(conn)?;
-    let result = earned.unwrap_or(0) - borrowed.unwrap_or(0) - used;
-    Ok(result.clamp(i32::MIN as i64, i32::MAX as i64) as i32)
+    use schema::balances;
+    Ok(balances::table
+        .filter(balances::child_id.eq(child_id))
+        .select(balances::account_balance)
+        .first(conn)?)
 }
 
 // Note: required tasks are global, not per-child. All children must complete all required tasks.
@@ -996,128 +984,347 @@ fn all_required_tasks_done_today_inner(
         .all(|tid| completed_task_ids.contains(tid)))
 }
 
-/// Compute how much `minutes_remaining` should change for a reward/penalty.
+/// Apply reward/penalty logic to balances and record balance transactions.
 ///
-/// Penalties (negative mins) always reduce remaining directly, even when balance is
-/// negative. This is intentional -- penalties are punitive and should have immediate effect.
+/// Returns `(remaining_delta, balance_delta)` — the changes to apply to the
+/// stored `minutes_remaining` and `account_balance` columns respectively.
 ///
-/// When `balance >= 0`, the invariant `remaining == balance` holds and the full `mins`
-/// is added to remaining. When earnings bring a negative balance to zero or positive
-/// (crossing the debt boundary), `remaining` is converged to the new balance level,
-/// which maintains the invariant. `remaining` is only consulted in this crossing case.
-fn compute_remaining_delta(mins: i32, is_borrowed: bool, balance: i32, remaining: i32) -> i32 {
-    if is_borrowed || mins < 0 || balance >= 0 {
-        // Borrow: always adds to remaining.
-        // Penalty (negative mins): always reduces remaining directly.
-        // Positive balance: invariant remaining == balance holds; add full amount.
-        mins
-    } else if balance + mins < 0 {
-        // All earnings go to debt repayment; remaining unchanged.
-        0
+/// This also inserts the appropriate `balance_transactions` row(s) for audit.
+fn apply_reward_to_balance(
+    conn: &mut SqliteConnection,
+    child_id: &str,
+    mins: i32,
+    is_borrowed: bool,
+    account_balance: i32,
+    reward_id: i32,
+) -> Result<(i32, i32), StorageError> {
+    use models::NewBalanceTransaction;
+    use schema::balance_transactions;
+
+    if is_borrowed {
+        // LEND: remaining goes up, account_balance goes down (debt)
+        diesel::insert_into(balance_transactions::table)
+            .values(&NewBalanceTransaction {
+                child_id,
+                amount: -mins,
+                description: Some("Lent time"),
+                related_reward_id: Some(reward_id),
+            })
+            .execute(conn)?;
+        Ok((mins, -mins))
+    } else if mins < 0 {
+        // PENALTY: remaining goes down directly, balance untouched
+        Ok((mins, 0))
     } else {
-        // Balance crosses from negative to zero or positive: converge remaining to
-        // new_balance to restore the invariant. The delta can be negative when remaining
-        // exceeds new_balance (e.g. borrowed while in deficit, then earned to repay).
-        let new_balance = balance + mins;
-        new_balance - remaining
+        // EARN: repay debt first, then add surplus to remaining
+        if account_balance < 0 {
+            let repay = mins.min(account_balance.abs());
+            let surplus = mins - repay;
+            diesel::insert_into(balance_transactions::table)
+                .values(&NewBalanceTransaction {
+                    child_id,
+                    amount: repay,
+                    description: Some("Auto-repayment"),
+                    related_reward_id: Some(reward_id),
+                })
+                .execute(conn)?;
+            Ok((surplus, repay))
+        } else {
+            // No debt — full amount goes to remaining
+            Ok((mins, 0))
+        }
     }
+}
+
+fn configure_sqlite_conn(conn: &mut SqliteConnection) -> Result<(), diesel::result::Error> {
+    // Enable WAL for better read/write concurrency and set a busy timeout
+    // Ignore the result rows; Diesel's execute is fine for PRAGMAs
+    diesel::sql_query("PRAGMA journal_mode=WAL;").execute(conn)?;
+    diesel::sql_query("PRAGMA synchronous=NORMAL;").execute(conn)?;
+    diesel::sql_query("PRAGMA busy_timeout=5000;").execute(conn)?;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::compute_remaining_delta;
+    use diesel::sqlite::SqliteConnection;
 
-    #[test]
-    fn earned_reward_positive_balance() {
-        // Balance 5, remaining 5 (normal, no borrow), earn 10 -> full amount goes to remaining
-        assert_eq!(compute_remaining_delta(10, false, 5, 5), 10);
+    use super::*;
+
+    /// Create an in-memory SQLite database with the schema for testing.
+    fn setup_test_db() -> SqliteConnection {
+        let mut conn =
+            SqliteConnection::establish(":memory:").expect("Failed to create test database");
+        // Create tables needed for balance tests
+        diesel::sql_query(
+            "CREATE TABLE children (
+                id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL
+            )",
+        )
+        .execute(&mut conn)
+        .unwrap();
+        diesel::sql_query(
+            "CREATE TABLE balances (
+                child_id TEXT PRIMARY KEY REFERENCES children(id),
+                minutes_remaining INTEGER NOT NULL DEFAULT 0,
+                account_balance INTEGER NOT NULL DEFAULT 0
+            )",
+        )
+        .execute(&mut conn)
+        .unwrap();
+        diesel::sql_query(
+            "CREATE TABLE tasks (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                minutes INTEGER NOT NULL,
+                required INTEGER NOT NULL DEFAULT 0
+            )",
+        )
+        .execute(&mut conn)
+        .unwrap();
+        diesel::sql_query(
+            "CREATE TABLE rewards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                child_id TEXT NOT NULL REFERENCES children(id),
+                task_id TEXT REFERENCES tasks(id),
+                minutes INTEGER NOT NULL,
+                description TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                is_borrowed INTEGER NOT NULL DEFAULT 0
+            )",
+        )
+        .execute(&mut conn)
+        .unwrap();
+        diesel::sql_query(
+            "CREATE TABLE balance_transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                child_id TEXT NOT NULL REFERENCES children(id),
+                amount INTEGER NOT NULL,
+                description TEXT,
+                related_reward_id INTEGER REFERENCES rewards(id),
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )",
+        )
+        .execute(&mut conn)
+        .unwrap();
+        diesel::sql_query(
+            "CREATE TABLE usage_minutes (
+                child_id TEXT NOT NULL,
+                minute_ts BIGINT NOT NULL,
+                device_id TEXT NOT NULL,
+                PRIMARY KEY (child_id, minute_ts, device_id)
+            )",
+        )
+        .execute(&mut conn)
+        .unwrap();
+        diesel::sql_query(
+            "CREATE TABLE task_completions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                child_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                by_username TEXT NOT NULL,
+                done_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )",
+        )
+        .execute(&mut conn)
+        .unwrap();
+
+        // Insert a test child and balance row
+        diesel::sql_query(
+            "INSERT INTO children (id, display_name) VALUES ('child1', 'Test Child')",
+        )
+        .execute(&mut conn)
+        .unwrap();
+        diesel::sql_query(
+            "INSERT INTO balances (child_id, minutes_remaining, account_balance) VALUES ('child1', 0, 0)",
+        )
+        .execute(&mut conn)
+        .unwrap();
+        conn
+    }
+
+    /// Helper: insert a reward and apply balance logic, returning (remaining, account_balance).
+    fn do_reward(
+        conn: &mut SqliteConnection,
+        child_id: &str,
+        mins: i32,
+        is_borrowed: bool,
+    ) -> (i32, i32) {
+        use schema::{balances, rewards};
+
+        // Read current account_balance
+        let acct: i32 = balances::table
+            .filter(balances::child_id.eq(child_id))
+            .select(balances::account_balance)
+            .first(conn)
+            .unwrap();
+
+        // Insert reward row
+        let new_reward = models::NewReward {
+            child_id,
+            task_id: None,
+            minutes: mins,
+            description: Some("test"),
+            is_borrowed: false, // historical column, always false for new rewards
+        };
+        diesel::insert_into(rewards::table)
+            .values(&new_reward)
+            .execute(conn)
+            .unwrap();
+
+        // Get the inserted reward id
+        let reward_id: i32 = diesel::sql_query("SELECT last_insert_rowid() as id")
+            .load::<LastInsertRowId>(conn)
+            .unwrap()
+            .first()
+            .unwrap()
+            .id;
+
+        let (rem_delta, bal_delta) =
+            apply_reward_to_balance(conn, child_id, mins, is_borrowed, acct, reward_id).unwrap();
+
+        diesel::update(balances::table.filter(balances::child_id.eq(child_id)))
+            .set((
+                balances::minutes_remaining.eq(balances::minutes_remaining + rem_delta),
+                balances::account_balance.eq(balances::account_balance + bal_delta),
+            ))
+            .execute(conn)
+            .unwrap();
+
+        let (r, b): (i32, i32) = balances::table
+            .filter(balances::child_id.eq(child_id))
+            .select((balances::minutes_remaining, balances::account_balance))
+            .first(conn)
+            .unwrap();
+        (r, b)
+    }
+
+    // Helper struct for last_insert_rowid query
+    #[derive(QueryableByName)]
+    struct LastInsertRowId {
+        #[diesel(sql_type = diesel::sql_types::Integer)]
+        id: i32,
     }
 
     #[test]
-    fn earned_reward_negative_balance_partial_repay() {
-        // Balance -10, remaining 0 (no borrow), earn 5 -> all goes to debt repayment, delta = 0
-        assert_eq!(compute_remaining_delta(5, false, -10, 0), 0);
+    fn earn_with_no_debt_full_to_remaining() {
+        let mut conn = setup_test_db();
+        let (rem, bal) = do_reward(&mut conn, "child1", 10, false);
+        assert_eq!(rem, 10, "all earned minutes go to remaining");
+        assert_eq!(bal, 0, "no debt, balance stays 0");
     }
 
     #[test]
-    fn earned_reward_negative_balance_full_repay_with_surplus() {
-        // Balance -5, remaining 0 (no borrow), earn 8 -> 5 repays debt, 3 surplus goes to remaining
-        assert_eq!(compute_remaining_delta(8, false, -5, 0), 3);
+    fn earn_with_partial_debt_split() {
+        let mut conn = setup_test_db();
+        // Create debt by lending 15 minutes
+        let (rem, bal) = do_reward(&mut conn, "child1", 15, true);
+        assert_eq!(rem, 15, "lent time added to remaining");
+        assert_eq!(bal, -15, "debt created");
+
+        // Earn 20 minutes — 15 repays debt, 5 goes to remaining
+        let (rem, bal) = do_reward(&mut conn, "child1", 20, false);
+        assert_eq!(rem, 20, "remaining = 15 + 5 surplus");
+        assert_eq!(bal, 0, "debt fully repaid");
     }
 
     #[test]
-    fn borrowed_time_positive_balance() {
-        // Borrowing always adds directly to remaining
-        assert_eq!(compute_remaining_delta(10, true, 5, 5), 10);
+    fn earn_with_debt_exceeding_earnings() {
+        let mut conn = setup_test_db();
+        // Create debt by lending 20 minutes
+        let (rem, bal) = do_reward(&mut conn, "child1", 20, true);
+        assert_eq!(rem, 20);
+        assert_eq!(bal, -20);
+
+        // Earn 5 minutes — all goes to repayment, no remaining change
+        let (rem, bal) = do_reward(&mut conn, "child1", 5, false);
+        assert_eq!(rem, 20, "remaining unchanged, all earnings to repayment");
+        assert_eq!(bal, -15, "debt partially repaid");
     }
 
     #[test]
-    fn borrowed_time_negative_balance() {
-        // Borrowing always adds directly to remaining, even when in debt
-        assert_eq!(compute_remaining_delta(10, true, -5, 0), 10);
+    fn lend_increases_remaining_decreases_balance() {
+        let mut conn = setup_test_db();
+        let (rem, bal) = do_reward(&mut conn, "child1", 10, true);
+        assert_eq!(rem, 10, "lent time goes to remaining");
+        assert_eq!(bal, -10, "debt created");
     }
 
     #[test]
-    fn penalty_positive_balance() {
-        // Penalty (negative mins) always reduces remaining directly
-        assert_eq!(compute_remaining_delta(-5, false, 10, 10), -5);
+    fn penalty_reduces_remaining_balance_unchanged() {
+        let mut conn = setup_test_db();
+        // First earn some time
+        let (rem, bal) = do_reward(&mut conn, "child1", 20, false);
+        assert_eq!(rem, 20);
+        assert_eq!(bal, 0);
+
+        // Apply penalty
+        let (rem, bal) = do_reward(&mut conn, "child1", -5, false);
+        assert_eq!(rem, 15, "penalty reduces remaining");
+        assert_eq!(bal, 0, "penalty does not affect balance");
     }
 
     #[test]
-    fn penalty_negative_balance() {
-        // Penalty always reduces remaining directly, even when already in debt
-        assert_eq!(compute_remaining_delta(-5, false, -10, 0), -5);
+    fn penalty_during_debt_remaining_down_balance_unchanged() {
+        let mut conn = setup_test_db();
+        // Lend 10 (remaining=10, balance=-10)
+        let (rem, bal) = do_reward(&mut conn, "child1", 10, true);
+        assert_eq!(rem, 10);
+        assert_eq!(bal, -10);
+
+        // Penalty of 3 (remaining=7, balance still -10)
+        let (rem, bal) = do_reward(&mut conn, "child1", -3, false);
+        assert_eq!(rem, 7, "penalty reduces remaining even during debt");
+        assert_eq!(bal, -10, "penalty never touches balance");
     }
 
     #[test]
-    fn earned_reward_zero_balance() {
-        // Balance exactly 0, remaining 0 -> full amount goes to remaining
-        assert_eq!(compute_remaining_delta(10, false, 0, 0), 10);
+    fn full_scenario_lend_earn_penalty_sequence() {
+        let mut conn = setup_test_db();
+
+        // Earn 20 (remaining=20, balance=0)
+        let (rem, bal) = do_reward(&mut conn, "child1", 20, false);
+        assert_eq!((rem, bal), (20, 0));
+
+        // Penalty -15 (remaining=5, balance=0)
+        let (rem, bal) = do_reward(&mut conn, "child1", -15, false);
+        assert_eq!((rem, bal), (5, 0));
+
+        // Lend 10 (remaining=15, balance=-10)
+        let (rem, bal) = do_reward(&mut conn, "child1", 10, true);
+        assert_eq!((rem, bal), (15, -10));
+
+        // Earn 5 (all to repayment, remaining=15, balance=-5)
+        let (rem, bal) = do_reward(&mut conn, "child1", 5, false);
+        assert_eq!((rem, bal), (15, -5));
+
+        // Earn 8 (5 to repayment, 3 to remaining, remaining=18, balance=0)
+        let (rem, bal) = do_reward(&mut conn, "child1", 8, false);
+        assert_eq!((rem, bal), (18, 0));
+
+        // Penalty -3 during zero balance (remaining=15, balance=0)
+        let (rem, bal) = do_reward(&mut conn, "child1", -3, false);
+        assert_eq!((rem, bal), (15, 0));
     }
 
     #[test]
-    fn earned_reward_exact_debt_repayment() {
-        // Balance -5, remaining 0 (no borrow), earn 5 -> exactly repays debt, remaining stays 0
-        assert_eq!(compute_remaining_delta(5, false, -5, 0), 0);
+    fn earn_clears_debt_surplus_goes_to_remaining() {
+        let mut conn = setup_test_db();
+        // Lend 3 (remaining=3, balance=-3)
+        let (rem, bal) = do_reward(&mut conn, "child1", 3, true);
+        assert_eq!((rem, bal), (3, -3));
+
+        // Earn 8 (3 repays debt, 5 to remaining -> remaining=8, balance=0)
+        let (rem, bal) = do_reward(&mut conn, "child1", 8, false);
+        assert_eq!(rem, 8, "3 from lend + 5 surplus from earn");
+        assert_eq!(bal, 0, "debt fully repaid");
     }
 
-    // --- Bug regression: penalty + borrow + earn convergence ---
-
-    #[test]
-    fn bug_penalty_borrow_earn_remaining_converges_to_balance() {
-        // Reproduces the reported bug:
-        // Starting from balance=137, remaining=137:
-        //   -100 penalty -> balance=37,  remaining=37
-        //   -40  penalty -> balance=-3,  remaining=-3
-        //   +10  borrow  -> balance=-13, remaining=7
-        //   +20  earn    -> balance=7,   remaining should be 7 (NOT 14)
-        //
-        // State entering the last (+20 earn) step: balance=-13, remaining=7
-        // Expected delta: 0 (remaining already at the new-balance level of 7)
-        assert_eq!(compute_remaining_delta(20, false, -13, 7), 0);
-    }
-
-    #[test]
-    fn earned_reward_converges_remaining_when_remaining_exceeds_new_balance() {
-        // When remaining > new_balance after crossing the debt boundary, remaining is
-        // reduced to match the new balance (invariant: remaining == balance when balance >= 0).
-        // balance=-3, remaining=7 (from prior borrow while in deficit), earn 8 -> new_balance=5
-        // delta should be -2 so that remaining goes from 7 to 5 = new_balance
-        assert_eq!(compute_remaining_delta(8, false, -3, 7), -2);
-    }
-
-    #[test]
-    fn earned_reward_exact_repay_with_elevated_remaining() {
-        // balance=-8, remaining=10 (from prior borrow), earn 8 -> new_balance=0
-        // remaining should converge to 0 = balance
-        assert_eq!(compute_remaining_delta(8, false, -8, 10), -10);
-    }
-
-    /// Regression test: balance after earning 1 min, borrowing 5, and using 6.
+    /// Integration test: balance after earning 1 min, borrowing 5, and using 6.
     ///
-    /// Expected balance = -5 (child used 5 more than earned, all from the loan).
-    /// The bug was: `balance = earned - borrowed - used = 1 - 5 - 6 = -10`
-    /// (double-counting borrowed minutes that were already consumed as usage).
+    /// With the new system: account_balance tracks debt from borrowing,
+    /// usage only affects minutes_remaining (not account_balance).
     #[tokio::test]
     async fn balance_after_loan_and_full_usage() {
         let dir = tempfile::tempdir().expect("temp dir");
@@ -1132,16 +1339,16 @@ mod tests {
         };
         store.seed_from_config(&[child], &[]).await.expect("seed");
 
-        // 1. Earn 1 minute
+        // 1. Earn 1 minute (remaining=1, balance=0)
         store
             .add_reward_minutes("kid1", 1, None, Some("earned"), false, None)
             .await
             .expect("earn 1 min");
 
         let balance = store.compute_balance("kid1").await.expect("balance");
-        assert_eq!(balance, 1, "balance after earning 1 min");
+        assert_eq!(balance, 0, "no debt after pure earning");
 
-        // 2. Borrow 5 minutes
+        // 2. Borrow 5 minutes (remaining=6, balance=-5)
         store
             .add_reward_minutes("kid1", 5, None, Some("loan"), true, None)
             .await
@@ -1149,8 +1356,10 @@ mod tests {
 
         let remaining = store.get_remaining("kid1").await.expect("remaining");
         assert_eq!(remaining, 6, "remaining after earn 1 + borrow 5");
+        let balance = store.compute_balance("kid1").await.expect("balance");
+        assert_eq!(balance, -5, "debt from borrowing 5");
 
-        // 3. Use 6 minutes
+        // 3. Use 6 minutes (remaining=0, balance=-5 — usage doesn't touch balance)
         let now_epoch_min = chrono::Utc::now().timestamp() / 60;
         let usage: Vec<i64> = (0..6).map(|i| now_epoch_min - i).collect();
         store
@@ -1161,17 +1370,8 @@ mod tests {
         let remaining = store.get_remaining("kid1").await.expect("remaining");
         assert_eq!(remaining, 0, "remaining after using all 6 minutes");
 
-        // 4. Balance should be -5 (used 5 more than earned — the loan amount)
+        // 4. Balance stays at -5 (debt from borrowing, usage doesn't change it)
         let balance = store.compute_balance("kid1").await.expect("balance");
-        assert_eq!(balance, -5, "balance should reflect loan debt of -5");
+        assert_eq!(balance, -5, "balance reflects loan debt of -5");
     }
-}
-
-fn configure_sqlite_conn(conn: &mut SqliteConnection) -> Result<(), diesel::result::Error> {
-    // Enable WAL for better read/write concurrency and set a busy timeout
-    // Ignore the result rows; Diesel's execute is fine for PRAGMAs
-    diesel::sql_query("PRAGMA journal_mode=WAL;").execute(conn)?;
-    diesel::sql_query("PRAGMA synchronous=NORMAL;").execute(conn)?;
-    diesel::sql_query("PRAGMA busy_timeout=5000;").execute(conn)?;
-    Ok(())
 }

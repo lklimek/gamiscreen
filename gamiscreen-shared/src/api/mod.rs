@@ -81,9 +81,9 @@ pub struct RemainingDto {
     /// Actual usable screen-time minutes (stored in DB, updated transactionally).
     /// May include borrowed time. When `blocked_by_tasks` is true, effective remaining is 0.
     pub remaining_minutes: i32,
-    /// Computed as `earned_rewards - borrowed_rewards - usage_minutes`.
-    /// Can be negative when borrowing creates debt. Earned minutes repay debt before
-    /// adding to remaining.
+    /// Virtual bank account balance. Zero when no debt exists.
+    /// Negative when borrowing creates debt. Earned minutes repay debt before
+    /// adding to remaining. Penalties and usage do not affect this value.
     pub balance: i32,
     /// True when required daily tasks have not been completed.
     /// While blocked, effective remaining is 0 even if `remaining_minutes` > 0.
@@ -117,7 +117,7 @@ pub struct RewardReq {
 pub struct RewardResp {
     /// New remaining minutes after the reward.
     pub remaining_minutes: i32,
-    /// New balance after the reward (may be negative if borrowing).
+    /// New account balance after the reward (negative = debt from borrowing).
     pub balance: i32,
 }
 
@@ -139,7 +139,7 @@ pub struct HeartbeatReq {
 pub struct HeartbeatResp {
     /// Remaining minutes after deducting newly reported usage.
     pub remaining_minutes: i32,
-    /// Current balance after usage deduction.
+    /// Current account balance (negative = debt from borrowing). Unaffected by usage.
     pub balance: i32,
     /// Whether required tasks still block screen time.
     pub blocked_by_tasks: bool,
