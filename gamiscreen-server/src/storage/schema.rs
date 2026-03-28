@@ -3,6 +3,18 @@ diesel::table! {
     balances (child_id) {
         child_id -> Text,
         minutes_remaining -> Integer,
+        account_balance -> Integer,
+    }
+}
+
+diesel::table! {
+    balance_transactions (id) {
+        id -> Integer,
+        child_id -> Text,
+        amount -> Integer,
+        description -> Nullable<Text>,
+        related_reward_id -> Nullable<Integer>,
+        created_at -> Timestamp,
     }
 }
 
@@ -88,9 +100,12 @@ diesel::table! {
 diesel::joinable!(rewards -> children (child_id));
 diesel::joinable!(rewards -> tasks (task_id));
 diesel::joinable!(push_subscriptions -> children (child_id));
+diesel::joinable!(balance_transactions -> children (child_id));
+diesel::joinable!(balance_transactions -> rewards (related_reward_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     balances,
+    balance_transactions,
     children,
     rewards,
     tasks,

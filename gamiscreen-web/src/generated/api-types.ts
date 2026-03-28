@@ -50,9 +50,9 @@ export type RemainingDto = { child_id: string,
  */
 remaining_minutes: number, 
 /**
- * Computed as `earned_rewards - borrowed_rewards - usage_minutes`.
- * Can be negative when borrowing creates debt. Earned minutes repay debt before
- * adding to remaining.
+ * Virtual bank account balance. Zero when no debt exists.
+ * Negative when borrowing creates debt. Earned minutes repay debt before
+ * adding to remaining. Penalties and usage do not affect this value.
  */
 balance: number, 
 /**
@@ -86,7 +86,7 @@ export type RewardResp = {
  */
 remaining_minutes: number, 
 /**
- * New balance after the reward (may be negative if borrowing).
+ * New account balance after the reward (negative = debt from borrowing).
  */
 balance: number, };
 
@@ -102,7 +102,7 @@ export type HeartbeatResp = {
  */
 remaining_minutes: number, 
 /**
- * Current balance after usage deduction.
+ * Current account balance (negative = debt from borrowing). Unaffected by usage.
  */
 balance: number, 
 /**

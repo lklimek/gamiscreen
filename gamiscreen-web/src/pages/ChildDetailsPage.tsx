@@ -38,6 +38,27 @@ const USAGE_BASE_PRESETS = [
   { key: "1w", label: "1 week", bucketMinutes: MINUTES_PER_WEEK },
 ] as const;
 
+/** Compute repayment feedback message when earning while in debt. */
+function computeRepaymentFeedback(
+  balanceBefore: number,
+  balanceAfter: number,
+  earnedMinutes: number,
+): string | null {
+  const repaid = Math.max(
+    0,
+    Math.min(
+      earnedMinutes,
+      Math.abs(balanceBefore) - Math.abs(Math.min(balanceAfter, 0)),
+    ),
+  );
+  const added = earnedMinutes - repaid;
+  if (repaid <= 0) return null;
+  return (
+    `${formatMinutes(earnedMinutes)} earned: ${formatMinutes(repaid)} repaid debt` +
+    (added > 0 ? `, ${formatMinutes(added)} added to screen time` : "")
+  );
+}
+
 type UsageBasePreset = (typeof USAGE_BASE_PRESETS)[number];
 type UsagePresetKey = UsageBasePreset["key"];
 type UsageOption = UsageBasePreset & { windowMinutes: number };
@@ -102,6 +123,7 @@ export function ChildDetailsPage(props: { childId: string }) {
   const [customMinutes, setCustomMinutes] = useState("");
   const [customLabel, setCustomLabel] = useState("");
   const [isBorrowed, setIsBorrowed] = useState(false);
+  const [rewardFeedback, setRewardFeedback] = useState<string | null>(null);
   const [rewards, setRewards] = useState<RewardHistoryItemDto[]>([]);
   const [usage, setUsage] = useState<UsageSeriesDto | null>(null);
   const [usageLoading, setUsageLoading] = useState(false);
@@ -358,8 +380,13 @@ export function ChildDetailsPage(props: { childId: string }) {
     if (!confirm) return;
     setLoading(true);
     setError(null);
+    setRewardFeedback(null);
     try {
+      const balanceBefore = balance ?? 0;
+      let earnedMinutes = 0;
+
       if (confirm.mode === "task") {
+        earnedMinutes = confirm.task.minutes;
         const description = taskNote.trim() || null;
         const resp = await rewardMinutes({
           child_id: childId,
@@ -376,8 +403,19 @@ export function ChildDetailsPage(props: { childId: string }) {
             t.id === confirm.task.id ? { ...t, last_done: nowIso } : t,
           ),
         );
+
+        // Show auto-repayment feedback when debt was partially or fully repaid
+        if (balanceBefore < 0 && earnedMinutes > 0) {
+          const msg = computeRepaymentFeedback(
+            balanceBefore,
+            resp.balance,
+            earnedMinutes,
+          );
+          if (msg) setRewardFeedback(msg);
+        }
       } else {
         const mins = confirm.minutes;
+        earnedMinutes = mins;
         const description = customLabel.trim() || null;
         const resp = await rewardMinutes({
           child_id: childId,
@@ -388,6 +426,16 @@ export function ChildDetailsPage(props: { childId: string }) {
         });
         setRemaining(resp.remaining_minutes);
         setBalance(resp.balance);
+
+        // Show auto-repayment feedback for non-borrowed positive rewards during debt
+        if (balanceBefore < 0 && mins > 0 && !confirm.isBorrowed) {
+          const msg = computeRepaymentFeedback(
+            balanceBefore,
+            resp.balance,
+            mins,
+          );
+          if (msg) setRewardFeedback(msg);
+        }
       }
       setConfirm(null);
       setTaskNote("");
@@ -426,6 +474,21 @@ export function ChildDetailsPage(props: { childId: string }) {
         </div>
       </header>
       {error && <p className="error">{error}</p>}
+      {rewardFeedback && (
+        <div
+          role="status"
+          style={{
+            padding: "8px 12px",
+            borderRadius: 8,
+            fontSize: 14,
+            background: "#ecfdf5",
+            color: "#065f46",
+            border: "1px solid #a7f3d0",
+          }}
+        >
+          {rewardFeedback}
+        </div>
+      )}
       {/* R-1: Hero "Time Left" display */}
       <div
         className="card"
@@ -505,7 +568,7 @@ export function ChildDetailsPage(props: { childId: string }) {
           </summary>
           <div style={{ marginTop: 8, fontSize: 14 }}>
             <div className="row" style={{ justifyContent: "space-between" }}>
-              <span>Balance</span>
+              <span>Account Balance</span>
               <span
                 style={{
                   color:
@@ -515,11 +578,15 @@ export function ChildDetailsPage(props: { childId: string }) {
                 }}
                 aria-label={
                   typeof balance === "number" && balance < 0
-                    ? `Balance: negative ${Math.abs(balance)} minutes`
+                    ? `Account balance: negative ${Math.abs(balance)} minutes`
                     : undefined
                 }
               >
-                {typeof balance === "number" ? formatMinutes(balance) : "—"}
+                {typeof balance === "number"
+                  ? balance === 0
+                    ? "No debt"
+                    : formatMinutes(balance)
+                  : "—"}
               </span>
             </div>
             <div
