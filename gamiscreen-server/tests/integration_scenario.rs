@@ -542,7 +542,7 @@ async fn parent_access_control() {
         .await;
     assert!(children.iter().any(|c| c.id == "alice"));
 
-    let tasks: Vec<api::TaskDto> = server
+    let tasks: Vec<api::TaskManagementDto> = server
         .request_expect_json(
             "GET",
             &tenant_path("tasks"),
@@ -789,7 +789,7 @@ async fn child_access_control() {
     let child_token = server.login("alice", "kidpass").await;
 
     server
-        .request_expect_json::<Vec<api::TaskDto>>(
+        .request_expect_json::<Vec<api::TaskManagementDto>>(
             "GET",
             &tenant_path("tasks"),
             Some(&child_token),

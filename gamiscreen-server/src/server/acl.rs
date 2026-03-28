@@ -57,7 +57,12 @@ pub async fn enforce_acl(
 fn allow_parent(method: &Method, rest: &[&str]) -> Result<(), AppError> {
     match rest {
         ["children"] if *method == Method::GET => Ok(()),
-        ["tasks"] if *method == Method::GET => Ok(()),
+        ["tasks"] if *method == Method::GET || *method == Method::POST => Ok(()),
+        ["tasks", _]
+            if *method == Method::GET || *method == Method::PUT || *method == Method::DELETE =>
+        {
+            Ok(())
+        }
         ["notifications"] if *method == Method::GET => Ok(()),
         ["notifications", "count"] if *method == Method::GET => Ok(()),
         ["notifications", "task-submissions", id, action]

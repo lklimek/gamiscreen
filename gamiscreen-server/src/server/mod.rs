@@ -181,7 +181,13 @@ pub fn router(state: AppState) -> Router {
 
     let tenant_private = Router::new()
         .route("/children", get(api_list_children))
-        .route("/tasks", get(api_list_tasks))
+        .route("/tasks", get(api_list_tasks).post(api_create_task))
+        .route(
+            "/tasks/{task_id}",
+            get(api_get_task)
+                .put(api_update_task)
+                .delete(api_delete_task),
+        )
         .route("/notifications", get(api_list_notifications))
         .route("/notifications/count", get(api_notifications_count))
         .route(
@@ -296,7 +302,13 @@ pub fn router(state: AppState) -> Router {
         }
         let cors = CorsLayer::new()
             .allow_origin(AllowOrigin::list(origins))
-            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+            .allow_methods([
+                Method::GET,
+                Method::POST,
+                Method::PUT,
+                Method::DELETE,
+                Method::OPTIONS,
+            ])
             .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
         app.layer(cors)
     } else {
@@ -434,29 +446,286 @@ async fn api_list_children(
     Ok(Json(items))
 }
 
+fn task_to_management_dto(
+    task: crate::storage::models::Task,
+    assigned_children: Vec<String>,
+) -> api::TaskManagementDto {
+    api::TaskManagementDto {
+        id: task.id,
+        name: task.name,
+        minutes: task.minutes,
+        priority: task.priority,
+        mandatory_days: task.mandatory_days,
+        mandatory_start_time: task.mandatory_start_time,
+        assigned_children: if assigned_children.is_empty() {
+            None
+        } else {
+            Some(assigned_children)
+        },
+        created_at: task.created_at.and_utc().to_rfc3339(),
+        updated_at: task.updated_at.and_utc().to_rfc3339(),
+    }
+}
+
+/// Validate task fields common to create and update requests.
+/// Returns (name, minutes, priority, mandatory_days, mandatory_start_time) or an error.
+fn validate_task_fields(
+    name: &str,
+    minutes: i32,
+    priority: Option<i32>,
+    mandatory_days: Option<i32>,
+    mandatory_start_time: Option<&str>,
+    assigned_children: &Option<Vec<String>>,
+) -> Result<(String, i32, i32, i32, Option<String>), AppError> {
+    // Name: 1-100 chars after trim, non-empty
+    let trimmed_name = name.trim().to_string();
+    if trimmed_name.is_empty() {
+        return Err(AppError::bad_request("name must be non-empty"));
+    }
+    if trimmed_name.len() > 100 {
+        return Err(AppError::bad_request("name must be at most 100 characters"));
+    }
+
+    // Minutes: non-zero
+    if minutes == 0 {
+        return Err(AppError::bad_request("minutes must be non-zero"));
+    }
+
+    // Priority: 1, 2, or 3 (default 2)
+    let priority = priority.unwrap_or(2);
+    if !(1..=3).contains(&priority) {
+        return Err(AppError::bad_request("priority must be 1, 2, or 3"));
+    }
+
+    // mandatory_days: 0-127 (default 0)
+    let mandatory_days = mandatory_days.unwrap_or(0);
+    if !(0..=127).contains(&mandatory_days) {
+        return Err(AppError::bad_request("mandatory_days must be 0-127"));
+    }
+
+    // mandatory_start_time: valid "HH:MM" format when mandatory_days > 0
+    let mandatory_start_time = if mandatory_days > 0 {
+        let time_str = mandatory_start_time.unwrap_or("00:00");
+        validate_time_format(time_str)?;
+        Some(time_str.to_string())
+    } else if let Some(time_str) = mandatory_start_time {
+        validate_time_format(time_str)?;
+        Some(time_str.to_string())
+    } else {
+        None
+    };
+
+    // assigned_children: if provided, must be non-empty
+    if let Some(children) = assigned_children
+        && children.is_empty()
+    {
+        return Err(AppError::bad_request(
+            "assigned_children must be non-empty when provided",
+        ));
+    }
+
+    Ok((
+        trimmed_name,
+        minutes,
+        priority,
+        mandatory_days,
+        mandatory_start_time,
+    ))
+}
+
+/// Validate "HH:MM" time format (00:00-23:59).
+fn validate_time_format(time_str: &str) -> Result<(), AppError> {
+    let parts: Vec<&str> = time_str.split(':').collect();
+    if parts.len() != 2 {
+        return Err(AppError::bad_request(
+            "mandatory_start_time must be in HH:MM format",
+        ));
+    }
+    let hours: u32 = parts[0]
+        .parse()
+        .map_err(|_| AppError::bad_request("mandatory_start_time must be in HH:MM format"))?;
+    let mins: u32 = parts[1]
+        .parse()
+        .map_err(|_| AppError::bad_request("mandatory_start_time must be in HH:MM format"))?;
+    if hours > 23 || mins > 59 {
+        return Err(AppError::bad_request(
+            "mandatory_start_time must be between 00:00 and 23:59",
+        ));
+    }
+    Ok(())
+}
+
+/// Validate that all child IDs in the list exist.
+async fn validate_child_ids_exist(
+    store: &crate::storage::Store,
+    children: &[String],
+) -> Result<(), AppError> {
+    for child_id in children {
+        let exists = store
+            .child_exists(child_id)
+            .await
+            .map_err(AppError::internal)?;
+        if !exists {
+            return Err(AppError::bad_request(format!(
+                "child '{}' not found",
+                child_id
+            )));
+        }
+    }
+    Ok(())
+}
+
 async fn api_list_tasks(
     State(state): State<AppState>,
     Extension(_auth): Extension<AuthCtx>,
-) -> Result<Json<Vec<api::TaskDto>>, AppError> {
+) -> Result<Json<Vec<api::TaskManagementDto>>, AppError> {
     let rows = state.store.list_tasks().await.map_err(AppError::internal)?;
-    let items = rows
-        .into_iter()
-        .map(|t| api::TaskDto {
-            id: t.id,
-            name: t.name,
-            minutes: t.minutes,
-            required: t.required,
-            // TODO(T-06): populate from DB once task model has new columns
-            priority: 2,
-            mandatory_days: if t.required { 127 } else { 0 },
-            mandatory_start_time: if t.required {
-                Some("00:00".to_string())
-            } else {
-                None
-            },
-        })
-        .collect();
+    let mut items = Vec::with_capacity(rows.len());
+    for task in rows {
+        let (task, assigned) = state
+            .store
+            .get_task_with_assignments(&task.id)
+            .await
+            .map_err(AppError::internal)?
+            .unwrap_or((task, Vec::new()));
+        items.push(task_to_management_dto(task, assigned));
+    }
     Ok(Json(items))
+}
+
+async fn api_get_task(
+    State(state): State<AppState>,
+    Extension(_auth): Extension<AuthCtx>,
+    Path(p): Path<TaskPath>,
+) -> Result<Json<api::TaskManagementDto>, AppError> {
+    let result = state
+        .store
+        .get_task_with_assignments(&p.task_id)
+        .await
+        .map_err(AppError::internal)?;
+    match result {
+        Some((task, assigned)) => Ok(Json(task_to_management_dto(task, assigned))),
+        None => Err(AppError::not_found(format!(
+            "task '{}' not found",
+            p.task_id
+        ))),
+    }
+}
+
+async fn api_create_task(
+    State(state): State<AppState>,
+    Extension(_auth): Extension<AuthCtx>,
+    Json(body): Json<api::CreateTaskReq>,
+) -> Result<(StatusCode, Json<api::TaskManagementDto>), AppError> {
+    let (name, minutes, priority, mandatory_days, mandatory_start_time) = validate_task_fields(
+        &body.name,
+        body.minutes,
+        body.priority,
+        body.mandatory_days,
+        body.mandatory_start_time.as_deref(),
+        &body.assigned_children,
+    )?;
+
+    // Validate child IDs exist
+    if let Some(ref children) = body.assigned_children {
+        validate_child_ids_exist(&state.store, children).await?;
+    }
+
+    let task = state
+        .store
+        .create_task(
+            &name,
+            minutes,
+            priority,
+            mandatory_days,
+            mandatory_start_time.as_deref(),
+            body.assigned_children,
+        )
+        .await
+        .map_err(AppError::internal)?;
+
+    let result = state
+        .store
+        .get_task_with_assignments(&task.id)
+        .await
+        .map_err(AppError::internal)?
+        .unwrap_or((task, Vec::new()));
+
+    Ok((
+        StatusCode::CREATED,
+        Json(task_to_management_dto(result.0, result.1)),
+    ))
+}
+
+async fn api_update_task(
+    State(state): State<AppState>,
+    Extension(_auth): Extension<AuthCtx>,
+    Path(p): Path<TaskPath>,
+    Json(body): Json<api::UpdateTaskReq>,
+) -> Result<Json<api::TaskManagementDto>, AppError> {
+    let (name, minutes, priority, mandatory_days, mandatory_start_time) = validate_task_fields(
+        &body.name,
+        body.minutes,
+        body.priority,
+        body.mandatory_days,
+        body.mandatory_start_time.as_deref(),
+        &body.assigned_children,
+    )?;
+
+    // Validate child IDs exist
+    if let Some(ref children) = body.assigned_children {
+        validate_child_ids_exist(&state.store, children).await?;
+    }
+
+    let task = state
+        .store
+        .update_task(
+            &p.task_id,
+            &name,
+            minutes,
+            priority,
+            mandatory_days,
+            mandatory_start_time.as_deref(),
+            body.assigned_children,
+        )
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("not found") {
+                AppError::not_found(format!("task '{}' not found", p.task_id))
+            } else {
+                AppError::internal(e)
+            }
+        })?;
+
+    let result = state
+        .store
+        .get_task_with_assignments(&task.id)
+        .await
+        .map_err(AppError::internal)?
+        .unwrap_or((task, Vec::new()));
+
+    Ok(Json(task_to_management_dto(result.0, result.1)))
+}
+
+async fn api_delete_task(
+    State(state): State<AppState>,
+    Extension(_auth): Extension<AuthCtx>,
+    Path(p): Path<TaskPath>,
+) -> Result<Json<api::DeleteTaskResp>, AppError> {
+    let deleted = state
+        .store
+        .soft_delete_task(&p.task_id)
+        .await
+        .map_err(AppError::internal)?;
+
+    if !deleted {
+        return Err(AppError::not_found(format!(
+            "task '{}' not found",
+            p.task_id
+        )));
+    }
+
+    Ok(Json(api::DeleteTaskResp { deleted: true }))
 }
 
 async fn api_list_child_tasks(
@@ -531,6 +800,11 @@ struct ChildDevicePath {
 #[derive(Deserialize)]
 struct ChildTaskPath {
     id: String,
+    task_id: String,
+}
+
+#[derive(Deserialize)]
+struct TaskPath {
     task_id: String,
 }
 
