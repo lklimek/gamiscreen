@@ -11,12 +11,12 @@ CREATE TABLE balance_transactions (
 -- Add account_balance column to balances table
 ALTER TABLE balances ADD COLUMN account_balance INTEGER NOT NULL DEFAULT 0;
 
--- Migrate existing data: compute initial account_balance from historical rewards/usage.
--- account_balance = earned - borrowed - used (clamped to <= 0, since positive balance
+-- Migrate existing data: compute initial account_balance from historical rewards.
+-- account_balance = earned - borrowed (clamped to <= 0, since positive balance
 -- is already reflected in minutes_remaining and we only need to track debt).
+-- Usage does not affect account_balance — it only reduces minutes_remaining.
 UPDATE balances SET account_balance = MIN(0,
     (SELECT COALESCE(SUM(CASE WHEN is_borrowed = 0 THEN minutes ELSE 0 END), 0)
           - COALESCE(SUM(CASE WHEN is_borrowed = 1 THEN minutes ELSE 0 END), 0)
      FROM rewards WHERE rewards.child_id = balances.child_id)
-    - (SELECT COUNT(DISTINCT minute_ts) FROM usage_minutes WHERE usage_minutes.child_id = balances.child_id)
 );

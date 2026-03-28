@@ -2037,14 +2037,16 @@ async fn test_scenario_reward_history_borrowed_vs_earned() {
     let history = get_reward_history(&server, &parent, "alice").await;
     assert_eq!(history.len(), 2);
 
-    // With the new system, is_borrowed on reward rows is always false.
-    // Debt is tracked in balance_transactions, not on reward rows.
+    // is_borrowed is a display flag — true for lent rewards, false for earned
     let borrowed = history.iter().find(|h| h.minutes == 20).unwrap();
     assert!(
-        !borrowed.is_borrowed,
-        "new system always sets is_borrowed=false on reward rows"
+        borrowed.is_borrowed,
+        "lent reward should have is_borrowed=true for UI display"
     );
 
     let earned = history.iter().find(|h| h.minutes == 2).unwrap();
-    assert!(!earned.is_borrowed);
+    assert!(
+        !earned.is_borrowed,
+        "earned reward should have is_borrowed=false"
+    );
 }

@@ -658,13 +658,13 @@ impl Store {
                     .select(balances::account_balance)
                     .first(conn)?;
 
-                // Insert reward row (is_borrowed kept false for audit — debt tracked via balance_transactions)
+                // Insert reward row — is_borrowed is a display flag for "(lent)" labels in UI
                 let new_reward = NewReward {
                     child_id: &child,
                     task_id: task_opt.as_deref(),
                     minutes: mins,
                     description: description_opt.as_deref(),
-                    is_borrowed: false,
+                    is_borrowed,
                 };
                 diesel::insert_into(rewards::table)
                     .values(&new_reward)
@@ -1018,7 +1018,7 @@ fn apply_reward_to_balance(
     } else {
         // EARN: repay debt first, then add surplus to remaining
         if account_balance < 0 {
-            let repay = mins.min(account_balance.abs());
+            let repay = mins.min(account_balance.saturating_abs());
             let surplus = mins - repay;
             diesel::insert_into(balance_transactions::table)
                 .values(&NewBalanceTransaction {
@@ -1166,7 +1166,7 @@ mod tests {
             task_id: None,
             minutes: mins,
             description: Some("test"),
-            is_borrowed: false, // historical column, always false for new rewards
+            is_borrowed, // display flag for "(lent)" labels in reward history
         };
         diesel::insert_into(rewards::table)
             .values(&new_reward)
@@ -1373,5 +1373,56 @@ mod tests {
         // 4. Balance stays at -5 (debt from borrowing, usage doesn't change it)
         let balance = store.compute_balance("kid1").await.expect("balance");
         assert_eq!(balance, -5, "balance reflects loan debt of -5");
+    }
+
+    #[test]
+    fn balance_transactions_recorded_for_lend_then_earn() {
+        use models::BalanceTransaction;
+        use schema::balance_transactions;
+
+        let mut conn = setup_test_db();
+
+        // Step 1: Lend 10 minutes (creates debt)
+        let (_rem, bal) = do_reward(&mut conn, "child1", 10, true);
+        assert_eq!(bal, -10);
+
+        // Step 2: Earn 15 minutes (10 repays debt, 5 surplus to remaining)
+        let (_rem, bal) = do_reward(&mut conn, "child1", 15, false);
+        assert_eq!(bal, 0, "debt fully repaid");
+
+        // Query balance_transactions and verify content
+        let txns: Vec<BalanceTransaction> = balance_transactions::table
+            .filter(balance_transactions::child_id.eq("child1"))
+            .order(balance_transactions::id.asc())
+            .load(&mut conn)
+            .expect("query balance_transactions");
+
+        assert_eq!(txns.len(), 2, "expected lend + auto-repayment transactions");
+
+        // First transaction: lend (negative amount)
+        assert_eq!(txns[0].child_id, "child1");
+        assert_eq!(txns[0].amount, -10, "lend creates negative transaction");
+        assert_eq!(
+            txns[0].description.as_deref(),
+            Some("Lent time"),
+            "lend description"
+        );
+        assert!(
+            txns[0].related_reward_id.is_some(),
+            "should reference a reward"
+        );
+
+        // Second transaction: auto-repayment (positive amount)
+        assert_eq!(txns[1].child_id, "child1");
+        assert_eq!(txns[1].amount, 10, "auto-repayment of full debt");
+        assert_eq!(
+            txns[1].description.as_deref(),
+            Some("Auto-repayment"),
+            "repayment description"
+        );
+        assert!(
+            txns[1].related_reward_id.is_some(),
+            "should reference a reward"
+        );
     }
 }
