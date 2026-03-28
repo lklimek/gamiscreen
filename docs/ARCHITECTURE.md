@@ -17,10 +17,10 @@
 
 ## Data Flow (high level)
 
-- **Balance** = total earned rewards - total borrowed rewards - total usage minutes. Can go negative through borrowing.
-- **Remaining** is stored separately and tracks actual usable screen time, including borrowed minutes.
-- Parents grant minutes (task-based or custom). Earning while in debt first pays off the debt before increasing remaining.
-- Borrowing adds time to remaining immediately but decreases balance (creating debt).
+- Two independent tracking mechanisms:
+  - **`minutes_remaining`** (screen clock): actual usable screen time. Affected by usage (heartbeats), penalties, borrowing (increases it), and earning (surplus after debt repayment).
+  - **`account_balance`** (virtual bank, stored column): 0 = no debt, negative = debt from borrowing. Only affected by borrowing (decreases) and earning (repays debt first, surplus goes to remaining).
+- Usage only affects `minutes_remaining`. Penalties only affect `minutes_remaining`. Borrowing decreases `account_balance` and increases `minutes_remaining`. Earning repays debt first (increases `account_balance` toward 0), then surplus goes to `minutes_remaining`.
 - **Required tasks** can block screen time even with a positive remaining value. All required tasks must be completed daily (UTC) before time is unlocked.
 - Clients send a heartbeat every minute; the server deduplicates timestamps per child/device and decrements remaining.
 - When remaining time reaches zero, tasks are blocking, or the server is unreachable for ~5 minutes, the client locks the session.
