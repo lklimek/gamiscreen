@@ -42,7 +42,7 @@ pub struct ChildDto {
 }
 
 /// A task definition that can earn screen time when completed.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct TaskDto {
     pub id: String,
@@ -52,12 +52,18 @@ pub struct TaskDto {
     pub minutes: i32,
     /// When true, the child must complete this task daily before any screen time unlocks.
     pub required: bool,
+    /// Priority level: 1 (high), 2 (normal), 3 (low).
+    pub priority: i32,
+    /// 7-bit bitmask of mandatory days (bit 0 = Mon .. bit 6 = Sun). 0 = optional task.
+    pub mandatory_days: i32,
+    /// Start time for mandatory tasks in "HH:MM" format (family timezone). `None` for optional tasks.
+    pub mandatory_start_time: Option<String>,
 }
 
 /// A task enriched with the child's most recent completion timestamp.
 ///
 /// Returned by the per-child tasks endpoint so the UI can show completion state.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct TaskWithStatusDto {
     pub id: String,
@@ -68,6 +74,80 @@ pub struct TaskWithStatusDto {
     pub required: bool,
     /// RFC 3339 UTC timestamp of the most recent completion, or `None` if never done.
     pub last_done: Option<String>,
+    /// Priority level: 1 (high), 2 (normal), 3 (low).
+    pub priority: i32,
+    /// 7-bit bitmask of mandatory days (bit 0 = Mon .. bit 6 = Sun). 0 = optional task.
+    pub mandatory_days: i32,
+    /// Start time for mandatory tasks in "HH:MM" format (family timezone). `None` for optional tasks.
+    pub mandatory_start_time: Option<String>,
+    /// True when this mandatory task is currently due and not yet completed today.
+    pub is_currently_blocking: bool,
+}
+
+/// Request body for creating a new task (parent-only).
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct CreateTaskReq {
+    /// Task name (1-100 chars, non-empty after trim).
+    pub name: String,
+    /// Screen-time minutes awarded on completion (non-zero).
+    pub minutes: i32,
+    /// Priority level: 1 (high), 2 (normal), 3 (low). Defaults to 2.
+    pub priority: Option<i32>,
+    /// 7-bit bitmask of mandatory days (bit 0 = Mon .. bit 6 = Sun). Defaults to 0 (optional).
+    pub mandatory_days: Option<i32>,
+    /// Start time in "HH:MM" format (family timezone). Required when mandatory_days > 0.
+    pub mandatory_start_time: Option<String>,
+    /// Child IDs this task is assigned to. `None` = all children.
+    pub assigned_children: Option<Vec<String>>,
+}
+
+/// Request body for updating an existing task (full replacement, parent-only).
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct UpdateTaskReq {
+    /// Task name (1-100 chars, non-empty after trim).
+    pub name: String,
+    /// Screen-time minutes awarded on completion (non-zero).
+    pub minutes: i32,
+    /// Priority level: 1 (high), 2 (normal), 3 (low). Defaults to 2.
+    pub priority: Option<i32>,
+    /// 7-bit bitmask of mandatory days (bit 0 = Mon .. bit 6 = Sun). Defaults to 0 (optional).
+    pub mandatory_days: Option<i32>,
+    /// Start time in "HH:MM" format (family timezone). Required when mandatory_days > 0.
+    pub mandatory_start_time: Option<String>,
+    /// Child IDs this task is assigned to. `None` = all children.
+    pub assigned_children: Option<Vec<String>>,
+}
+
+/// Parent-facing task with full management details (response for GET/POST/PUT).
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct TaskManagementDto {
+    pub id: String,
+    pub name: String,
+    /// Screen-time minutes awarded on completion.
+    pub minutes: i32,
+    /// Priority level: 1 (high), 2 (normal), 3 (low).
+    pub priority: i32,
+    /// 7-bit bitmask of mandatory days (bit 0 = Mon .. bit 6 = Sun). 0 = optional task.
+    pub mandatory_days: i32,
+    /// Start time for mandatory tasks in "HH:MM" format (family timezone).
+    pub mandatory_start_time: Option<String>,
+    /// Child IDs this task is assigned to. `None` = all children.
+    pub assigned_children: Option<Vec<String>>,
+    /// RFC 3339 timestamp when the task was created.
+    pub created_at: String,
+    /// RFC 3339 timestamp when the task was last updated.
+    pub updated_at: String,
+}
+
+/// Response for task deletion.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct DeleteTaskResp {
+    /// True when the task was successfully soft-deleted.
+    pub deleted: bool,
 }
 
 /// Current screen-time state for a child.

@@ -446,6 +446,14 @@ async fn api_list_tasks(
             name: t.name,
             minutes: t.minutes,
             required: t.required,
+            // TODO(T-06): populate from DB once task model has new columns
+            priority: 2,
+            mandatory_days: if t.required { 127 } else { 0 },
+            mandatory_start_time: if t.required {
+                Some("00:00".to_string())
+            } else {
+                None
+            },
         })
         .collect();
     Ok(Json(items))
@@ -473,6 +481,15 @@ async fn api_list_child_tasks(
                 chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc)
                     .to_rfc3339()
             }),
+            // TODO(T-08): populate from DB and compute blocking state
+            priority: 2,
+            mandatory_days: if t.required { 127 } else { 0 },
+            mandatory_start_time: if t.required {
+                Some("00:00".to_string())
+            } else {
+                None
+            },
+            is_currently_blocking: false,
         })
         .collect();
     Ok(Json(items))
