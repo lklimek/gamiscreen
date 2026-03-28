@@ -523,6 +523,16 @@ async fn api_child_reward(
     Path(p): Path<ChildPathId>,
     Json(body): Json<api::RewardReq>,
 ) -> Result<Json<api::RewardResp>, AppError> {
+    // Verify the child exists before processing the reward
+    let exists = state
+        .store
+        .child_exists(&p.id)
+        .await
+        .map_err(AppError::internal)?;
+    if !exists {
+        return Err(AppError::bad_request(format!("unknown child: {}", p.id)));
+    }
+
     // Invalidate cache for this child; compute after DB update
     let child_mutex = state.child_mutex(&p.id).await;
     let mut child_guard = child_mutex.lock().await;

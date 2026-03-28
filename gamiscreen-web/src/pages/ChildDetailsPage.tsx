@@ -96,6 +96,87 @@ function detectViewportVariant(): ViewportVariant {
   return isLandscape ? "mobileLandscape" : "mobilePortrait";
 }
 
+/** Single task row — extracted from ChildDetailsPage for readability. */
+function TaskRow(props: {
+  task: TaskWithStatusDto;
+  isParent: boolean;
+  isChild: boolean;
+  wasSubmitted: boolean;
+  childId: string;
+  onConfirm: (task: TaskWithStatusDto) => void;
+  onSubmit: (taskId: string) => Promise<void>;
+}) {
+  const {
+    task: t,
+    isParent,
+    isChild,
+    wasSubmitted,
+    onConfirm,
+    onSubmit,
+  } = props;
+  const last = t.last_done ? new Date(t.last_done) : null;
+  const now = new Date();
+  const isDoneToday = last
+    ? last.getFullYear() === now.getFullYear() &&
+      last.getMonth() === now.getMonth() &&
+      last.getDate() === now.getDate()
+    : false;
+  const isNegative = t.minutes < 0;
+  const taskRowStyle: React.CSSProperties = t.required
+    ? {
+        borderLeft: "4px solid #2563eb",
+        background: "#eff6ff",
+        borderRadius: 8,
+        paddingLeft: 12,
+      }
+    : {};
+
+  return (
+    <div
+      className={`row taskRow${isNegative ? " taskRowNegative" : ""}`}
+      style={taskRowStyle}
+      aria-label={
+        t.required
+          ? `Required task: ${t.name}, ${t.minutes} minutes`
+          : undefined
+      }
+    >
+      <div className="row taskRowHeader">
+        <span>{t.required ? <strong>* {t.name}</strong> : t.name}</span>
+        {isDoneToday && <mark title={last?.toLocaleString() || ""}>Done</mark>}
+      </div>
+      <div className="row taskRowActions">
+        <span className={`subtitle${isNegative ? " negativeMinutes" : ""}`}>
+          {t.minutes > 0 ? "+" : ""}
+          {t.minutes} min
+        </span>
+        {isParent && (
+          <button
+            className={isDoneToday ? "contrast" : undefined}
+            onClick={() => onConfirm(t)}
+          >
+            Accept
+          </button>
+        )}
+        {isChild &&
+          (wasSubmitted || isDoneToday ? (
+            <button
+              className="secondary"
+              disabled
+              title={
+                isDoneToday ? "Already done today" : "Submitted for approval"
+              }
+            >
+              {isDoneToday ? "Done" : "Submitted"}
+            </button>
+          ) : (
+            <button onClick={() => onSubmit(t.id)}>Submit</button>
+          ))}
+      </div>
+    </div>
+  );
+}
+
 export function ChildDetailsPage(props: { childId: string }) {
   const { childId } = props;
   const [displayName, setDisplayName] = useState<string>(childId);
@@ -150,6 +231,36 @@ export function ChildDetailsPage(props: { childId: string }) {
   // Track locally submitted tasks to avoid duplicate submissions until page reload or approval
   const [submitted, setSubmitted] = useState<Set<string>>(new Set());
   const usageRequestIdRef = useRef(0);
+
+  const sortedTasks = useMemo(
+    () =>
+      [...tasks].sort((a, b) =>
+        a.required === b.required ? 0 : a.required ? -1 : 1,
+      ),
+    [tasks],
+  );
+
+  const handleTaskConfirm = useCallback((task: TaskWithStatusDto) => {
+    setTaskNote("");
+    setConfirm({ mode: "task", task });
+  }, []);
+
+  const handleTaskSubmit = useCallback(
+    async (taskId: string) => {
+      try {
+        await submitTask(childId, taskId);
+        setError(null);
+        setSubmitted((prev) => {
+          const next = new Set(prev);
+          next.add(taskId);
+          return next;
+        });
+      } catch (e: any) {
+        setError(e.message || "Failed to submit task");
+      }
+    },
+    [childId],
+  );
 
   const handleEnableNotifications = useCallback(async () => {
     try {
@@ -641,101 +752,18 @@ export function ChildDetailsPage(props: { childId: string }) {
           </p>
         )}
         <div className="col" style={{ gap: 6 }}>
-          {[...tasks]
-            .sort((a, b) =>
-              a.required === b.required ? 0 : a.required ? -1 : 1,
-            )
-            .map((t) => {
-              const last = t.last_done ? new Date(t.last_done) : null;
-              const todayStr = new Date().toISOString().slice(0, 10);
-              const isDoneToday = last
-                ? last.toISOString().slice(0, 10) === todayStr
-                : false;
-              const wasSubmitted = submitted.has(t.id);
-              const canClick =
-                isParent || (isChild && !wasSubmitted && !isDoneToday);
-              const isNegative = t.minutes < 0;
-              const taskRowStyle: React.CSSProperties = t.required
-                ? {
-                    borderLeft: "4px solid #2563eb",
-                    background: "#eff6ff",
-                    borderRadius: 8,
-                    paddingLeft: 12,
-                  }
-                : {};
-              return (
-                <div
-                  className={`row taskRow${isNegative ? " taskRowNegative" : ""}`}
-                  key={t.id}
-                  style={taskRowStyle}
-                  aria-label={
-                    t.required
-                      ? `Required task: ${t.name}, ${t.minutes} minutes`
-                      : undefined
-                  }
-                >
-                  <div className="row taskRowHeader">
-                    <span>
-                      {t.required ? <strong>* {t.name}</strong> : t.name}
-                    </span>
-                    {isDoneToday && (
-                      <mark title={last?.toLocaleString() || ""}>Done</mark>
-                    )}
-                  </div>
-                  <div className="row taskRowActions">
-                    <span
-                      className={`subtitle${isNegative ? " negativeMinutes" : ""}`}
-                    >
-                      {t.minutes > 0 ? "+" : ""}
-                      {t.minutes} min
-                    </span>
-                    {isParent && (
-                      <button
-                        className={isDoneToday ? "contrast" : undefined}
-                        onClick={() => {
-                          setTaskNote("");
-                          setConfirm({ mode: "task", task: t });
-                        }}
-                      >
-                        Accept
-                      </button>
-                    )}
-                    {isChild &&
-                      (wasSubmitted || isDoneToday ? (
-                        <button
-                          className="secondary"
-                          disabled
-                          title={
-                            isDoneToday
-                              ? "Already done today"
-                              : "Submitted for approval"
-                          }
-                        >
-                          {isDoneToday ? "Done" : "Submitted"}
-                        </button>
-                      ) : (
-                        <button
-                          onClick={async () => {
-                            try {
-                              await submitTask(childId, t.id);
-                              setError(null);
-                              setSubmitted((prev) => {
-                                const next = new Set(prev);
-                                next.add(t.id);
-                                return next;
-                              });
-                            } catch (e: any) {
-                              setError(e.message || "Failed to submit task");
-                            }
-                          }}
-                        >
-                          Submit
-                        </button>
-                      ))}
-                  </div>
-                </div>
-              );
-            })}
+          {sortedTasks.map((t) => (
+            <TaskRow
+              key={t.id}
+              task={t}
+              isParent={isParent}
+              isChild={isChild}
+              wasSubmitted={submitted.has(t.id)}
+              childId={childId}
+              onConfirm={handleTaskConfirm}
+              onSubmit={handleTaskSubmit}
+            />
+          ))}
           {tasks.length === 0 && <p className="subtitle">No tasks</p>}
         </div>
       </div>
