@@ -13,6 +13,7 @@ pub struct AppConfig {
     pub config_version: String,
     pub tenant_id: String,
     pub children: Vec<Child>,
+    #[serde(default)]
     pub tasks: Vec<Task>,
     pub jwt_secret: String,
     pub users: Vec<UserConfig>,

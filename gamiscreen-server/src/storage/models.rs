@@ -20,7 +20,7 @@ pub struct NewChild<'a> {
     pub display_name: &'a str,
 }
 
-#[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
+#[derive(Debug, Clone, Queryable, QueryableByName, Identifiable, Selectable)]
 #[diesel(table_name = tasks)]
 pub struct Task {
     pub id: String,

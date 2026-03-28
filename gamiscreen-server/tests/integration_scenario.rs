@@ -246,6 +246,8 @@ async fn start_server(
         ],
         dev_cors_origin: None,
         listen_port: None,
+        timezone: None,
+        family_tz: chrono_tz::UTC,
     };
 
     let store = storage::Store::connect_sqlite(tmp_db.to_str().unwrap())
@@ -312,6 +314,8 @@ async fn start_server_with_tasks(
         ],
         dev_cors_origin: None,
         listen_port: None,
+        timezone: None,
+        family_tz: chrono_tz::UTC,
     };
 
     let store = storage::Store::connect_sqlite(tmp_db.to_str().unwrap())
