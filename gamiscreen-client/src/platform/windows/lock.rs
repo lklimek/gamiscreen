@@ -59,8 +59,8 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
     const WTS_SESSION_UNLOCK: usize = 0x8;
     if msg == WM_WTSSESSION_CHANGE {
         // SAFETY: The GWLP_USERDATA pointer was set to Arc::into_raw(state) in
-        // run_session_watcher (line ~157). The Arc is intentionally leaked at the end
-        // of run_session_watcher (line ~204) to guarantee this pointer remains valid
+        // `run_session_watcher`, after the `SetWindowLongPtrW` call. The Arc is
+        // intentionally leaked at the end of `run_session_watcher` to guarantee this pointer remains valid
         // for the lifetime of the message loop. The null check below guards against
         // the window receiving messages before SetWindowLongPtrW completes.
         let ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const AtomicBool;

@@ -18,8 +18,8 @@ pub fn last_error() -> std::io::Error {
 
 /// Verify that this process is running in the expected Windows session.
 ///
-/// Returns `Ok(())` if the session matches or the check cannot be performed.
-/// Returns `Err` if the process is in a different session than expected.
+/// Returns `Ok(())` if the session matches.
+/// Returns `Err` if the check fails or the session doesn't match.
 pub fn verify_session_id(expected: u32) -> Result<(), crate::AppError> {
     let mut actual_session: u32 = 0;
     let pid = std::process::id();

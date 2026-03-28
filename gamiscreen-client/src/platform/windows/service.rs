@@ -634,16 +634,21 @@ async fn session_worker_task(
     // prematurely — closing happens explicitly below based on `handles_safe_to_close`.
     let proc_h = child.process_handle.0 as usize;
     let thread_h = child.thread_handle.0 as usize;
-    // Prevent SendHandle::drop from closing handles we now manage manually.
-    let _ = std::mem::ManuallyDrop::new(child.process_handle);
-    let _ = std::mem::ManuallyDrop::new(child.thread_handle);
+    // Transfer ownership out of ChildProcess — these handles are now managed
+    // manually via WaitForSingleObject + CloseHandle below. ManuallyDrop
+    // prevents SendHandle::Drop from closing them prematurely.
+    let _process_handle = std::mem::ManuallyDrop::new(child.process_handle);
+    let _thread_handle = std::mem::ManuallyDrop::new(child.thread_handle);
 
     let mut wait_handle = tokio::task::spawn_blocking(move || unsafe {
         let h = proc_h as windows_sys::Win32::Foundation::HANDLE;
-        const INFINITE: u32 = 0xFFFFFFFF;
+        // WAIT_FAILED is not exported by windows_sys; define locally (WinBase.h value).
         const WAIT_FAILED_VAL: u32 = 0xFFFFFFFF;
 
-        let wait_result = windows_sys::Win32::System::Threading::WaitForSingleObject(h, INFINITE);
+        let wait_result = windows_sys::Win32::System::Threading::WaitForSingleObject(
+            h,
+            windows_sys::Win32::System::Threading::INFINITE,
+        );
         if wait_result == WAIT_FAILED_VAL {
             return Err(last_error());
         }
@@ -669,6 +674,8 @@ async fn session_worker_task(
                     warn!(session_id, error=%err, "TerminateProcess failed");
                 }
                 let wait_ret = windows_sys::Win32::System::Threading::WaitForSingleObject(h, 5000);
+                // WAIT_TIMEOUT and WAIT_FAILED are not exported by windows_sys;
+                // define locally using WinBase.h values.
                 const WAIT_TIMEOUT: u32 = 0x00000102;
                 const WAIT_FAILED_VAL: u32 = 0xFFFFFFFF;
                 match wait_ret {
@@ -749,6 +756,9 @@ impl Drop for SendHandle {
         // CloseHandle is safe to call once per handle value.
         if !self.0.is_null() {
             let ret = unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
+            if ret == 0 {
+                warn!(handle = ?self.0, "CloseHandle failed in SendHandle::Drop");
+            }
             debug_assert!(ret != 0, "CloseHandle failed in SendHandle::Drop");
         }
     }
