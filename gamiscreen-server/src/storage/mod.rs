@@ -523,12 +523,10 @@ impl Store {
                     description: Some(&task_name),
                     is_borrowed: false,
                 };
-                diesel::insert_into(rewards::table)
+                let reward_id: i32 = diesel::insert_into(rewards::table)
                     .values(&new_reward)
-                    .execute(conn)?;
-
-                // Get the inserted reward id for balance_transactions FK
-                let reward_id: i32 = last_insert_rowid(conn)?;
+                    .returning(rewards::id)
+                    .get_result(conn)?;
 
                 let (rem_delta, bal_delta) = apply_reward_to_balance(
                     conn,
@@ -663,12 +661,10 @@ impl Store {
                     description: description_opt.as_deref(),
                     is_borrowed,
                 };
-                diesel::insert_into(rewards::table)
+                let reward_id: i32 = diesel::insert_into(rewards::table)
                     .values(&new_reward)
-                    .execute(conn)?;
-
-                // Get the inserted reward id for balance_transactions FK
-                let reward_id: i32 = last_insert_rowid(conn)?;
+                    .returning(rewards::id)
+                    .get_result(conn)?;
 
                 let (rem_delta, bal_delta) = apply_reward_to_balance(
                     conn,
@@ -1035,28 +1031,6 @@ fn apply_reward_to_balance(
     }
 }
 
-/// Retrieve the rowid of the last INSERT on this connection.
-///
-/// # Safety note
-///
-/// `last_insert_rowid()` is **connection-scoped**, not transaction-scoped — it returns
-/// the rowid of the most recent INSERT on the same connection, regardless of transaction
-/// boundaries. This is safe here because:
-///
-/// 1. All callers run inside `immediate_transaction`, which serializes writes on the
-///    connection — no concurrent INSERT can interleave.
-/// 2. No triggers exist on the `rewards` table that could perform a hidden INSERT and
-///    shift the rowid.
-///
-/// If triggers are ever added to `rewards`, this must be revisited — use a `RETURNING`
-/// clause instead.
-fn last_insert_rowid(conn: &mut SqliteConnection) -> Result<i32, diesel::result::Error> {
-    diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>(
-        "last_insert_rowid()",
-    ))
-    .get_result(conn)
-}
-
 fn configure_sqlite_conn(conn: &mut SqliteConnection) -> Result<(), diesel::result::Error> {
     // Enable WAL for better read/write concurrency and set a busy timeout
     // Ignore the result rows; Diesel's execute is fine for PRAGMAs
@@ -1189,18 +1163,11 @@ mod tests {
             description: Some("test"),
             is_borrowed, // display flag for "(lent)" labels in reward history
         };
-        diesel::insert_into(rewards::table)
+        let reward_id: i32 = diesel::insert_into(rewards::table)
             .values(&new_reward)
-            .execute(conn)
+            .returning(rewards::id)
+            .get_result(conn)
             .unwrap();
-
-        // Get the inserted reward id
-        let reward_id: i32 = diesel::sql_query("SELECT last_insert_rowid() as id")
-            .load::<LastInsertRowId>(conn)
-            .unwrap()
-            .first()
-            .unwrap()
-            .id;
 
         let (rem_delta, bal_delta) =
             apply_reward_to_balance(conn, child_id, mins, is_borrowed, acct, reward_id).unwrap();
@@ -1219,13 +1186,6 @@ mod tests {
             .first(conn)
             .unwrap();
         (r, b)
-    }
-
-    // Helper struct for last_insert_rowid query
-    #[derive(QueryableByName)]
-    struct LastInsertRowId {
-        #[diesel(sql_type = diesel::sql_types::Integer)]
-        id: i32,
     }
 
     #[test]
