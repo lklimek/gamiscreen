@@ -10,6 +10,22 @@ use models::{
     Session, Task,
 };
 use tracing::trace;
+use uuid::Uuid;
+
+/// Generate a human-readable task ID from the task name.
+///
+/// The ID is composed of the slugified name plus an 8-character hex suffix
+/// derived from a UUID v4, e.g. `homework-a1b2c3d4`.
+pub fn generate_task_id(name: &str) -> String {
+    let slug_part = slug::slugify(name);
+    let suffix = &Uuid::new_v4().simple().to_string()[..8];
+    if slug_part.is_empty() {
+        // Fallback for names that slugify to empty (e.g. all-emoji names)
+        format!("task-{suffix}")
+    } else {
+        format!("{slug_part}-{suffix}")
+    }
+}
 
 /// Structured error type for all storage operations.
 #[derive(Debug, thiserror::Error)]
@@ -99,11 +115,16 @@ impl Store {
 
             // Upsert tasks
             for t in &tasks_owned {
+                let mandatory_days = if t.required { 127 } else { 0 };
+                let mandatory_start_time = if t.required { Some("00:00") } else { None };
                 let new_task = NewTask {
                     id: &t.id,
                     name: &t.name,
                     minutes: t.minutes,
                     required: t.required,
+                    priority: 2,
+                    mandatory_days,
+                    mandatory_start_time,
                 };
                 diesel::insert_into(tasks::table)
                     .values(&new_task)
@@ -453,14 +474,9 @@ impl Store {
                     .inner_join(tasks::table.on(tasks::id.eq(task_submissions::task_id)))
                     .order(task_submissions::submitted_at.desc())
                     .select((
-                        (
-                            task_submissions::id,
-                            task_submissions::child_id,
-                            task_submissions::task_id,
-                            task_submissions::submitted_at,
-                        ),
-                        (children::id, children::display_name),
-                        (tasks::id, tasks::name, tasks::minutes, tasks::required),
+                        models::TaskSubmission::as_select(),
+                        Child::as_select(),
+                        Task::as_select(),
                     ))
                     .load::<(models::TaskSubmission, Child, Task)>(&mut conn)?;
                 Ok(rows)

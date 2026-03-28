@@ -30,6 +30,8 @@ time = { version = "0.3.47", features = ["macros", "serde"] }
 diesel = { version = "2.3.6", features = ["sqlite", "chrono", "r2d2"] }
 diesel_migrations = "2.3.1"
 chrono = { version = "0.4.43", features = ["serde"] }
+chrono-tz = "0.10"
+slug = "0.1"
 bcrypt = "0.18.0"
 uuid = { version = "1.20.0", features = ["v4", "serde"] }
 rust-embed = "8.11.0"
