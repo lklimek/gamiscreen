@@ -97,7 +97,7 @@ impl AppState {
         if effective != prev {
             let balance = self
                 .store
-                .compute_balance(child_id)
+                .get_balance(child_id)
                 .await
                 .map_err(AppError::internal)?;
             let event = ServerEvent::RemainingUpdated {
@@ -127,7 +127,7 @@ impl AppState {
         let effective = if all_done { remaining } else { 0 };
         let balance = self
             .store
-            .compute_balance(child_id)
+            .get_balance(child_id)
             .await
             .map_err(AppError::internal)?;
         Ok((effective, balance, !all_done))
@@ -1170,7 +1170,7 @@ async fn sse_notifications(
         let child_mutex = state.child_mutex(&cid).await;
         let mut guard = child_mutex.lock().await;
         if let Ok(rem) = state.remaining_minutes(&cid, &mut guard).await {
-            let balance = state.store.compute_balance(&cid).await.unwrap_or(0);
+            let balance = state.store.get_balance(&cid).await.unwrap_or(0);
             let blocked = !state
                 .store
                 .all_required_tasks_done_today(&cid, state.config.family_tz)

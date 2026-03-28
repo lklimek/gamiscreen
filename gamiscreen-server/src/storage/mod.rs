@@ -879,15 +879,10 @@ impl Store {
                     description: Some(&task_name),
                     is_borrowed: false,
                 };
-                diesel::insert_into(rewards::table)
+                let reward_id: i32 = diesel::insert_into(rewards::table)
                     .values(&new_reward)
-                    .execute(conn)?;
-
-                // Get the inserted reward id for balance_transactions FK
-                let reward_id: i32 = diesel::select(
-                    diesel::dsl::sql::<diesel::sql_types::Integer>("last_insert_rowid()"),
-                )
-                .get_result(conn)?;
+                    .returning(rewards::id)
+                    .get_result(conn)?;
 
                 let (rem_delta, bal_delta) = apply_reward_to_balance(
                     conn,
@@ -1022,15 +1017,10 @@ impl Store {
                     description: description_opt.as_deref(),
                     is_borrowed,
                 };
-                diesel::insert_into(rewards::table)
+                let reward_id: i32 = diesel::insert_into(rewards::table)
                     .values(&new_reward)
-                    .execute(conn)?;
-
-                // Get the inserted reward id for balance_transactions FK
-                let reward_id: i32 = diesel::select(
-                    diesel::dsl::sql::<diesel::sql_types::Integer>("last_insert_rowid()"),
-                )
-                .get_result(conn)?;
+                    .returning(rewards::id)
+                    .get_result(conn)?;
 
                 let (rem_delta, bal_delta) = apply_reward_to_balance(
                     conn,
@@ -1169,13 +1159,13 @@ impl Store {
         .await?
     }
 
-    pub async fn compute_balance(&self, child_id: &str) -> Result<i32, StorageError> {
+    pub async fn get_balance(&self, child_id: &str) -> Result<i32, StorageError> {
         let pool = self.pool.clone();
         let child = child_id.to_string();
         tokio::task::spawn_blocking(move || -> Result<i32, StorageError> {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
-            compute_balance_inner(&mut conn, &child)
+            get_balance_inner(&mut conn, &child)
         })
         .await?
     }
@@ -1324,7 +1314,7 @@ fn record_task_done_inner(
 /// This is a simple column read — no computation. The account_balance is
 /// maintained transactionally by `add_reward_minutes` and `approve_submission`.
 /// Negative values indicate debt from borrowed time.
-fn compute_balance_inner(conn: &mut SqliteConnection, child_id: &str) -> Result<i32, StorageError> {
+fn get_balance_inner(conn: &mut SqliteConnection, child_id: &str) -> Result<i32, StorageError> {
     use schema::balances;
     Ok(balances::table
         .filter(balances::child_id.eq(child_id))
@@ -1764,18 +1754,11 @@ mod tests {
             description: Some("test"),
             is_borrowed, // display flag for "(lent)" labels in reward history
         };
-        diesel::insert_into(rewards::table)
+        let reward_id: i32 = diesel::insert_into(rewards::table)
             .values(&new_reward)
-            .execute(conn)
+            .returning(rewards::id)
+            .get_result(conn)
             .unwrap();
-
-        // Get the inserted reward id
-        let reward_id: i32 = diesel::sql_query("SELECT last_insert_rowid() as id")
-            .load::<LastInsertRowId>(conn)
-            .unwrap()
-            .first()
-            .unwrap()
-            .id;
 
         let (rem_delta, bal_delta) =
             apply_reward_to_balance(conn, child_id, mins, is_borrowed, acct, reward_id).unwrap();
@@ -1794,13 +1777,6 @@ mod tests {
             .first(conn)
             .unwrap();
         (r, b)
-    }
-
-    // Helper struct for last_insert_rowid query
-    #[derive(QueryableByName)]
-    struct LastInsertRowId {
-        #[diesel(sql_type = diesel::sql_types::Integer)]
-        id: i32,
     }
 
     #[test]
@@ -2837,7 +2813,7 @@ mod tests {
             .await
             .expect("earn 1 min");
 
-        let balance = store.compute_balance("kid1").await.expect("balance");
+        let balance = store.get_balance("kid1").await.expect("balance");
         assert_eq!(balance, 0, "no debt after pure earning");
 
         // 2. Borrow 5 minutes (remaining=6, balance=-5)
@@ -2848,7 +2824,7 @@ mod tests {
 
         let remaining = store.get_remaining("kid1").await.expect("remaining");
         assert_eq!(remaining, 6, "remaining after earn 1 + borrow 5");
-        let balance = store.compute_balance("kid1").await.expect("balance");
+        let balance = store.get_balance("kid1").await.expect("balance");
         assert_eq!(balance, -5, "debt from borrowing 5");
 
         // 3. Use 6 minutes (remaining=0, balance=-5 — usage doesn't touch balance)
@@ -2863,7 +2839,7 @@ mod tests {
         assert_eq!(remaining, 0, "remaining after using all 6 minutes");
 
         // 4. Balance stays at -5 (debt from borrowing, usage doesn't change it)
-        let balance = store.compute_balance("kid1").await.expect("balance");
+        let balance = store.get_balance("kid1").await.expect("balance");
         assert_eq!(balance, -5, "balance reflects loan debt of -5");
     }
 
