@@ -736,29 +736,34 @@ async fn api_list_child_tasks(
     // ACL enforced by middleware
     let rows = state
         .store
-        .list_tasks_with_last_done(&id)
+        .list_tasks_for_child(&id)
         .await
         .map_err(AppError::internal)?;
+    let family_tz = state.config.family_tz;
+    let now = chrono::Utc::now().with_timezone(&family_tz);
     let items = rows
         .into_iter()
-        .map(|(t, last)| api::TaskWithStatusDto {
-            id: t.id,
-            name: t.name,
-            minutes: t.minutes,
-            required: t.required,
-            last_done: last.map(|dt| {
-                chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc)
-                    .to_rfc3339()
-            }),
-            // TODO(T-08): populate from DB and compute blocking state
-            priority: 2,
-            mandatory_days: if t.required { 127 } else { 0 },
-            mandatory_start_time: if t.required {
-                Some("00:00".to_string())
-            } else {
-                None
-            },
-            is_currently_blocking: false,
+        .map(|(t, last)| {
+            let is_currently_blocking = crate::storage::is_blocking_from_last_done(
+                t.mandatory_days,
+                t.mandatory_start_time.as_deref(),
+                last,
+                now,
+            );
+            api::TaskWithStatusDto {
+                id: t.id,
+                name: t.name,
+                minutes: t.minutes,
+                required: t.mandatory_days != 0,
+                last_done: last.map(|dt| {
+                    chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc)
+                        .to_rfc3339()
+                }),
+                priority: t.priority,
+                mandatory_days: t.mandatory_days,
+                mandatory_start_time: t.mandatory_start_time,
+                is_currently_blocking,
+            }
         })
         .collect();
     Ok(Json(items))

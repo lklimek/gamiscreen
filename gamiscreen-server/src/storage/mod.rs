@@ -1287,6 +1287,47 @@ fn compute_balance_inner(conn: &mut SqliteConnection, child_id: &str) -> Result<
         .first(conn)?)
 }
 
+/// Compute whether a task is currently blocking based on its fields and last completion time.
+///
+/// This is a pure function (no DB access) that determines blocking status from:
+/// - The task's `mandatory_days` bitmask and `mandatory_start_time`
+/// - The last completion timestamp (`last_done` in UTC)
+/// - The current time in the family timezone
+///
+/// A task is blocking when:
+/// 1. `mandatory_days` includes today (in family timezone)
+/// 2. Current time >= `mandatory_start_time` (in family timezone)
+/// 3. The task has NOT been completed today (in family timezone)
+pub fn is_blocking_from_last_done(
+    mandatory_days: i32,
+    mandatory_start_time: Option<&str>,
+    last_done: Option<NaiveDateTime>,
+    now: chrono::DateTime<Tz>,
+) -> bool {
+    let weekday = now.weekday();
+
+    // Not mandatory today
+    if !is_mandatory_on_day(mandatory_days, weekday) {
+        return false;
+    }
+
+    // Not yet past start time
+    let current_time = format!("{:02}:{:02}", now.hour(), now.minute());
+    if !is_past_start_time(&current_time, mandatory_start_time) {
+        return false;
+    }
+
+    // Check if completed today in family timezone
+    match last_done {
+        None => true, // Never completed => blocking
+        Some(done_utc) => {
+            let done_in_tz = chrono::DateTime::<Utc>::from_naive_utc_and_offset(done_utc, Utc)
+                .with_timezone(&now.timezone());
+            done_in_tz.date_naive() != now.date_naive()
+        }
+    }
+}
+
 /// Check whether a task's mandatory_days bitmask includes the given day-of-week.
 ///
 /// Bitmask encoding: Mon=bit0(1), Tue=bit1(2), ..., Sun=bit6(64).
