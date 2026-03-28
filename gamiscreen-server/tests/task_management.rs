@@ -1914,3 +1914,77 @@ async fn tc017_reassignment_preserves_history() {
         .await;
     assert!(count > 0, "alice's completions should be preserved");
 }
+
+/// TC-072: Time format validation requires strict HH:MM (zero-padded).
+#[tokio::test]
+async fn tc072_time_format_validation_strict() {
+    let Some(s) = TestServer::spawn_default().await else {
+        return;
+    };
+    let t = s.parent_token().await;
+
+    // Valid zero-padded times should succeed
+    for valid in ["00:00", "03:00", "09:30", "14:00", "23:59"] {
+        let task = s
+            .create_task(
+                &t,
+                json!({
+                    "name": format!("Task at {valid}"),
+                    "minutes": 10,
+                    "mandatory_days": 1,
+                    "mandatory_start_time": valid,
+                }),
+            )
+            .await;
+        assert_eq!(
+            task.mandatory_start_time.as_deref(),
+            Some(valid),
+            "valid time {valid} should be accepted"
+        );
+    }
+
+    // Non-zero-padded and malformed times should be rejected
+    for invalid in ["3:00", "9:30", "3:0", "24:00", "00:60", "abc", "1:2:3", ""] {
+        s.create_task_expect_error(
+            &t,
+            json!({
+                "name": format!("Bad time {invalid}"),
+                "minutes": 10,
+                "mandatory_days": 1,
+                "mandatory_start_time": invalid,
+            }),
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
+    }
+}
+
+/// TC-ACL-001: Child cannot access GET /tasks (parent management endpoint).
+#[tokio::test]
+async fn tc_acl_child_cannot_get_tasks() {
+    let Some(s) = TestServer::spawn_default().await else {
+        return;
+    };
+    let child_token = s.child_token("alice").await;
+
+    // Child should get 403 on the parent-only tasks listing
+    s.expect_status(
+        "GET",
+        &tenant_path("tasks"),
+        Some(&child_token),
+        None,
+        StatusCode::FORBIDDEN,
+    )
+    .await;
+
+    // Parent should still have access
+    let parent_token = s.parent_token().await;
+    s.expect_status(
+        "GET",
+        &tenant_path("tasks"),
+        Some(&parent_token),
+        None,
+        StatusCode::OK,
+    )
+    .await;
+}

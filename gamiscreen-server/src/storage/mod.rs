@@ -334,6 +334,51 @@ impl Store {
         .await?
     }
 
+    /// List all non-deleted tasks with their child assignments in two queries
+    /// (avoids N+1 per-task lookups).
+    pub async fn list_tasks_with_assignments(
+        &self,
+    ) -> Result<Vec<(Task, Vec<String>)>, StorageError> {
+        use schema::tasks::dsl::*;
+        let pool = self.pool.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<(Task, Vec<String>)>, StorageError> {
+            let mut conn = pool.get()?;
+            configure_sqlite_conn(&mut conn)?;
+
+            let all_tasks: Vec<Task> = tasks
+                .filter(deleted_at.is_null())
+                .order((priority.asc(), name.asc()))
+                .load::<Task>(&mut conn)?;
+
+            let task_ids: Vec<&str> = all_tasks.iter().map(|t| t.id.as_str()).collect();
+
+            // Fetch all assignments in one query
+            let all_assignments: Vec<(String, String)> = schema::task_assignments::table
+                .filter(schema::task_assignments::task_id.eq_any(&task_ids))
+                .select((
+                    schema::task_assignments::task_id,
+                    schema::task_assignments::child_id,
+                ))
+                .load::<(String, String)>(&mut conn)?;
+
+            // Group assignments by task_id
+            let mut assignment_map: std::collections::HashMap<String, Vec<String>> =
+                std::collections::HashMap::new();
+            for (tid, cid) in all_assignments {
+                assignment_map.entry(tid).or_default().push(cid);
+            }
+
+            Ok(all_tasks
+                .into_iter()
+                .map(|t| {
+                    let assigned = assignment_map.remove(&t.id).unwrap_or_default();
+                    (t, assigned)
+                })
+                .collect())
+        })
+        .await?
+    }
+
     /// Create a new task with optional child assignments.
     ///
     /// Generates a slug-based ID, derives `required` from `mandatory_days`,
@@ -1328,6 +1373,23 @@ pub fn is_blocking_from_last_done(
     }
 }
 
+/// Convert a date in a given timezone to its midnight UTC `NaiveDateTime`,
+/// with a DST-gap fallback to 01:00 if midnight does not exist.
+fn day_start_utc(date: chrono::NaiveDate, tz: chrono_tz::Tz) -> chrono::NaiveDateTime {
+    date.and_hms_opt(0, 0, 0)
+        .expect("valid midnight")
+        .and_local_timezone(tz)
+        .earliest()
+        .or_else(|| {
+            date.and_hms_opt(1, 0, 0)
+                .expect("valid 01:00")
+                .and_local_timezone(tz)
+                .earliest()
+        })
+        .expect("valid day start")
+        .naive_utc()
+}
+
 /// Check whether a task's mandatory_days bitmask includes the given day-of-week.
 ///
 /// Bitmask encoding: Mon=bit0(1), Tue=bit1(2), ..., Sun=bit6(64).
@@ -1372,37 +1434,9 @@ fn all_required_tasks_done_today_inner(
 
     // Day boundaries in family timezone, converted to UTC NaiveDateTime for DB comparison.
     // task_completions.done_at is stored in UTC.
-    let today_start_utc = today
-        .and_hms_opt(0, 0, 0)
-        .expect("valid midnight")
-        .and_local_timezone(now.timezone())
-        .earliest()
-        // DST gap: if midnight doesn't exist, use the next valid time
-        .or_else(|| {
-            today
-                .and_hms_opt(1, 0, 0)
-                .expect("valid 01:00")
-                .and_local_timezone(now.timezone())
-                .earliest()
-        })
-        .expect("valid day start")
-        .naive_utc();
-
+    let today_start_utc = day_start_utc(today, now.timezone());
     let tomorrow = today + chrono::Days::new(1);
-    let tomorrow_start_utc = tomorrow
-        .and_hms_opt(0, 0, 0)
-        .expect("valid midnight")
-        .and_local_timezone(now.timezone())
-        .earliest()
-        .or_else(|| {
-            tomorrow
-                .and_hms_opt(1, 0, 0)
-                .expect("valid 01:00")
-                .and_local_timezone(now.timezone())
-                .earliest()
-        })
-        .expect("valid day start")
-        .naive_utc();
+    let tomorrow_start_utc = day_start_utc(tomorrow, now.timezone());
 
     // Find mandatory tasks assigned to this child that are active right now.
     // Uses raw SQL for the bitmask `&` operation (Diesel doesn't support SQLite bitwise AND).
@@ -1500,36 +1534,9 @@ fn is_task_currently_blocking_inner(
 
     // Check if completed today
     let today = now.date_naive();
-    let today_start_utc = today
-        .and_hms_opt(0, 0, 0)
-        .expect("valid midnight")
-        .and_local_timezone(now.timezone())
-        .earliest()
-        .or_else(|| {
-            today
-                .and_hms_opt(1, 0, 0)
-                .expect("valid 01:00")
-                .and_local_timezone(now.timezone())
-                .earliest()
-        })
-        .expect("valid day start")
-        .naive_utc();
-
+    let today_start_utc = day_start_utc(today, now.timezone());
     let tomorrow = today + chrono::Days::new(1);
-    let tomorrow_start_utc = tomorrow
-        .and_hms_opt(0, 0, 0)
-        .expect("valid midnight")
-        .and_local_timezone(now.timezone())
-        .earliest()
-        .or_else(|| {
-            tomorrow
-                .and_hms_opt(1, 0, 0)
-                .expect("valid 01:00")
-                .and_local_timezone(now.timezone())
-                .earliest()
-        })
-        .expect("valid day start")
-        .naive_utc();
+    let tomorrow_start_utc = day_start_utc(tomorrow, now.timezone());
 
     let completion_count: i64 = schema::task_completions::table
         .filter(schema::task_completions::child_id.eq(child_id))

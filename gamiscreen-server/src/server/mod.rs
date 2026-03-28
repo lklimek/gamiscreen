@@ -482,7 +482,7 @@ fn validate_task_fields(
     if trimmed_name.is_empty() {
         return Err(AppError::bad_request("name must be non-empty"));
     }
-    if trimmed_name.len() > 100 {
+    if trimmed_name.chars().count() > 100 {
         return Err(AppError::bad_request("name must be at most 100 characters"));
     }
 
@@ -533,20 +533,28 @@ fn validate_task_fields(
     ))
 }
 
-/// Validate "HH:MM" time format (00:00-23:59).
+/// Validate strict "HH:MM" time format (00:00-23:59).
+///
+/// Requires exactly 5 characters with zero-padded hours and minutes
+/// (e.g. "03:00" not "3:00") because the blocking logic uses lexicographic
+/// string comparison which only works correctly with fixed-width format.
 fn validate_time_format(time_str: &str) -> Result<(), AppError> {
-    let parts: Vec<&str> = time_str.split(':').collect();
-    if parts.len() != 2 {
+    let bytes = time_str.as_bytes();
+    if bytes.len() != 5 || bytes[2] != b':' {
         return Err(AppError::bad_request(
-            "mandatory_start_time must be in HH:MM format",
+            "mandatory_start_time must be in HH:MM format (zero-padded, e.g. 03:00)",
         ));
     }
-    let hours: u32 = parts[0]
-        .parse()
-        .map_err(|_| AppError::bad_request("mandatory_start_time must be in HH:MM format"))?;
-    let mins: u32 = parts[1]
-        .parse()
-        .map_err(|_| AppError::bad_request("mandatory_start_time must be in HH:MM format"))?;
+    let hours: u32 = time_str[0..2].parse().map_err(|_| {
+        AppError::bad_request(
+            "mandatory_start_time must be in HH:MM format (zero-padded, e.g. 03:00)",
+        )
+    })?;
+    let mins: u32 = time_str[3..5].parse().map_err(|_| {
+        AppError::bad_request(
+            "mandatory_start_time must be in HH:MM format (zero-padded, e.g. 03:00)",
+        )
+    })?;
     if hours > 23 || mins > 59 {
         return Err(AppError::bad_request(
             "mandatory_start_time must be between 00:00 and 23:59",
@@ -579,17 +587,15 @@ async fn api_list_tasks(
     State(state): State<AppState>,
     Extension(_auth): Extension<AuthCtx>,
 ) -> Result<Json<Vec<api::TaskManagementDto>>, AppError> {
-    let rows = state.store.list_tasks().await.map_err(AppError::internal)?;
-    let mut items = Vec::with_capacity(rows.len());
-    for task in rows {
-        let (task, assigned) = state
-            .store
-            .get_task_with_assignments(&task.id)
-            .await
-            .map_err(AppError::internal)?
-            .unwrap_or((task, Vec::new()));
-        items.push(task_to_management_dto(task, assigned));
-    }
+    let rows = state
+        .store
+        .list_tasks_with_assignments()
+        .await
+        .map_err(AppError::internal)?;
+    let items = rows
+        .into_iter()
+        .map(|(task, assigned)| task_to_management_dto(task, assigned))
+        .collect();
     Ok(Json(items))
 }
 

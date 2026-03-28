@@ -88,7 +88,6 @@ fn allow_parent(method: &Method, rest: &[&str]) -> Result<(), AppError> {
 
 fn allow_child(method: &Method, rest: &[&str], claims: &JwtClaims) -> Result<(), AppError> {
     match rest {
-        ["tasks"] if *method == Method::GET => Ok(()),
         ["children", child, "remaining"] if *method == Method::GET => ensure_child(claims, child),
         ["children", child, "usage"] if *method == Method::GET => ensure_child(claims, child),
         ["children", child, "tasks"] if *method == Method::GET => ensure_child(claims, child),

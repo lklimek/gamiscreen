@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   createTask,
   updateTask,
@@ -40,6 +40,18 @@ export function TaskFormPage({ taskId }: TaskFormPageProps) {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const deleteDialogRef = useRef<HTMLDialogElement>(null);
+
+  // Sync dialog open/close with showModal()/close() for proper modal behavior
+  useEffect(() => {
+    const dialog = deleteDialogRef.current;
+    if (!dialog) return;
+    if (showDeleteDialog && !dialog.open) {
+      dialog.showModal();
+    } else if (!showDeleteDialog && dialog.open) {
+      dialog.close();
+    }
+  }, [showDeleteDialog]);
 
   // Validation
   const [nameError, setNameError] = useState<string | null>(null);
@@ -571,44 +583,45 @@ export function TaskFormPage({ taskId }: TaskFormPageProps) {
         </>
       )}
 
-      {/* Delete confirmation dialog */}
-      {showDeleteDialog && (
-        <dialog open>
-          <article className="col" style={{ gap: 12 }}>
-            <header>
-              <strong>Delete Task</strong>
-            </header>
-            <p className="subtitle">
-              Delete &quot;{name}&quot;? Completion history will be kept.
-            </p>
-            <footer
-              className="row"
-              style={{ gap: 8, justifyContent: "flex-end" }}
+      {/* Delete confirmation dialog — uses showModal() for focus trapping & backdrop */}
+      <dialog
+        ref={deleteDialogRef}
+        onClose={() => setShowDeleteDialog(false)}
+      >
+        <article className="col" style={{ gap: 12 }}>
+          <header>
+            <strong>Delete Task</strong>
+          </header>
+          <p className="subtitle">
+            Delete &quot;{name}&quot;? Completion history will be kept.
+          </p>
+          <footer
+            className="row"
+            style={{ gap: 8, justifyContent: "flex-end" }}
+          >
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={loading}
+              style={{
+                background: "#dc2626",
+                borderColor: "#dc2626",
+                color: "#fff",
+              }}
             >
-              <button
-                type="button"
-                onClick={handleDelete}
-                disabled={loading}
-                style={{
-                  background: "#dc2626",
-                  borderColor: "#dc2626",
-                  color: "#fff",
-                }}
-              >
-                {loading ? "Deleting..." : "Delete"}
-              </button>
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => setShowDeleteDialog(false)}
-                disabled={loading}
-              >
-                Cancel
-              </button>
-            </footer>
-          </article>
-        </dialog>
-      )}
+              {loading ? "Deleting..." : "Delete"}
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => setShowDeleteDialog(false)}
+              disabled={loading}
+            >
+              Cancel
+            </button>
+          </footer>
+        </article>
+      </dialog>
     </section>
   );
 }
