@@ -1,7 +1,8 @@
 pub mod models;
 pub mod schema;
 
-use chrono::{NaiveDateTime, Utc};
+use chrono::{Datelike, NaiveDateTime, Timelike, Utc};
+use chrono_tz::Tz;
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
@@ -1137,13 +1138,41 @@ impl Store {
     pub async fn all_required_tasks_done_today(
         &self,
         child_id: &str,
+        family_tz: Tz,
     ) -> Result<bool, StorageError> {
         let pool = self.pool.clone();
         let child = child_id.to_string();
         tokio::task::spawn_blocking(move || -> Result<bool, StorageError> {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
-            all_required_tasks_done_today_inner(&mut conn, &child)
+            let now = Utc::now().with_timezone(&family_tz);
+            all_required_tasks_done_today_inner(&mut conn, &child, now)
+        })
+        .await?
+    }
+
+    /// Check if a single task is currently blocking a child.
+    ///
+    /// A task is blocking when:
+    /// - It is not soft-deleted
+    /// - It is assigned to the child (or to all children)
+    /// - Its `mandatory_days` bitmask includes the current day-of-week
+    /// - The current time >= `mandatory_start_time`
+    /// - It has NOT been completed today by this child
+    pub async fn is_task_currently_blocking(
+        &self,
+        task: &Task,
+        child_id: &str,
+        family_tz: Tz,
+    ) -> Result<bool, StorageError> {
+        let pool = self.pool.clone();
+        let task_owned = task.clone();
+        let child = child_id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<bool, StorageError> {
+            let mut conn = pool.get()?;
+            configure_sqlite_conn(&mut conn)?;
+            let now = Utc::now().with_timezone(&family_tz);
+            is_task_currently_blocking_inner(&mut conn, &task_owned, &child, now)
         })
         .await?
     }
@@ -1258,40 +1287,219 @@ fn compute_balance_inner(conn: &mut SqliteConnection, child_id: &str) -> Result<
         .first(conn)?)
 }
 
-// Note: required tasks are global, not per-child. All children must complete all required tasks.
-// Day boundary uses UTC. Configure server timezone or document for users in non-UTC zones.
+/// Check whether a task's mandatory_days bitmask includes the given day-of-week.
+///
+/// Bitmask encoding: Mon=bit0(1), Tue=bit1(2), ..., Sun=bit6(64).
+/// Uses `chrono::Weekday::num_days_from_monday()` (Mon=0..Sun=6).
+fn is_mandatory_on_day(mandatory_days: i32, weekday: chrono::Weekday) -> bool {
+    if mandatory_days == 0 {
+        return false;
+    }
+    let bit = 1 << weekday.num_days_from_monday();
+    (mandatory_days & bit) != 0
+}
+
+/// Check whether the current time is past the task's mandatory start time.
+///
+/// `current_time_str` should be "HH:MM" in family timezone.
+/// `start_time` is the task's mandatory_start_time ("HH:MM").
+/// String comparison works for "HH:MM" ordering.
+fn is_past_start_time(current_time_str: &str, start_time: Option<&str>) -> bool {
+    match start_time {
+        None => true, // No start time means always active when mandatory
+        Some(st) => current_time_str >= st,
+    }
+}
+
+/// Timezone-aware blocking logic: checks if all mandatory tasks for a child are done today.
+///
+/// A task is considered mandatory right now when:
+/// - It is not soft-deleted (`deleted_at IS NULL`)
+/// - It is assigned to this child (or to all children — no rows in task_assignments)
+/// - Its `mandatory_days` bitmask includes the current day-of-week in family timezone
+/// - The current time in family timezone >= `mandatory_start_time`
+///
+/// `now` is the current time in the family timezone. Passed as parameter for testability.
 fn all_required_tasks_done_today_inner(
     conn: &mut SqliteConnection,
     child_id: &str,
+    now: chrono::DateTime<Tz>,
 ) -> Result<bool, StorageError> {
-    let today = Utc::now().date_naive();
-    let today_start = today
-        .and_hms_opt(0, 0, 0)
-        .expect("valid midnight timestamp");
-    let tomorrow_start = (today + chrono::Days::new(1))
-        .and_hms_opt(0, 0, 0)
-        .expect("valid midnight timestamp");
+    let today = now.date_naive();
+    let weekday = now.weekday();
+    let current_time = format!("{:02}:{:02}", now.hour(), now.minute());
 
-    let required_task_ids: Vec<String> = schema::tasks::table
-        .filter(schema::tasks::required.eq(true))
-        .select(schema::tasks::id)
-        .load(conn)?;
+    // Day boundaries in family timezone, converted to UTC NaiveDateTime for DB comparison.
+    // task_completions.done_at is stored in UTC.
+    let today_start_utc = today
+        .and_hms_opt(0, 0, 0)
+        .expect("valid midnight")
+        .and_local_timezone(now.timezone())
+        .earliest()
+        // DST gap: if midnight doesn't exist, use the next valid time
+        .or_else(|| {
+            today
+                .and_hms_opt(1, 0, 0)
+                .expect("valid 01:00")
+                .and_local_timezone(now.timezone())
+                .earliest()
+        })
+        .expect("valid day start")
+        .naive_utc();
 
-    if required_task_ids.is_empty() {
+    let tomorrow = today + chrono::Days::new(1);
+    let tomorrow_start_utc = tomorrow
+        .and_hms_opt(0, 0, 0)
+        .expect("valid midnight")
+        .and_local_timezone(now.timezone())
+        .earliest()
+        .or_else(|| {
+            tomorrow
+                .and_hms_opt(1, 0, 0)
+                .expect("valid 01:00")
+                .and_local_timezone(now.timezone())
+                .earliest()
+        })
+        .expect("valid day start")
+        .naive_utc();
+
+    // Find mandatory tasks assigned to this child that are active right now.
+    // Uses raw SQL for the bitmask `&` operation (Diesel doesn't support SQLite bitwise AND).
+    let day_bit = 1i32 << weekday.num_days_from_monday();
+
+    #[derive(QueryableByName)]
+    struct TaskIdRow {
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        id: String,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+        mandatory_start_time: Option<String>,
+    }
+
+    let candidate_tasks: Vec<TaskIdRow> = diesel::sql_query(
+        "SELECT t.id, t.mandatory_start_time \
+         FROM tasks t \
+         WHERE t.deleted_at IS NULL \
+         AND (t.mandatory_days & ?) != 0 \
+         AND (NOT EXISTS (SELECT 1 FROM task_assignments ta WHERE ta.task_id = t.id) \
+              OR EXISTS (SELECT 1 FROM task_assignments ta WHERE ta.task_id = t.id AND ta.child_id = ?))",
+    )
+    .bind::<diesel::sql_types::Integer, _>(day_bit)
+    .bind::<diesel::sql_types::Text, _>(child_id)
+    .load::<TaskIdRow>(conn)?;
+
+    // Filter by start time in Rust (simple string comparison)
+    let blocking_task_ids: Vec<&str> = candidate_tasks
+        .iter()
+        .filter(|t| is_past_start_time(&current_time, t.mandatory_start_time.as_deref()))
+        .map(|t| t.id.as_str())
+        .collect();
+
+    if blocking_task_ids.is_empty() {
         return Ok(true);
     }
 
+    // Check completions for today (in family timezone day boundary)
     let completed_task_ids: Vec<String> = schema::task_completions::table
         .filter(schema::task_completions::child_id.eq(child_id))
-        .filter(schema::task_completions::done_at.ge(today_start))
-        .filter(schema::task_completions::done_at.lt(tomorrow_start))
+        .filter(schema::task_completions::done_at.ge(today_start_utc))
+        .filter(schema::task_completions::done_at.lt(tomorrow_start_utc))
         .select(schema::task_completions::task_id)
         .distinct()
         .load(conn)?;
 
-    Ok(required_task_ids
+    Ok(blocking_task_ids
         .iter()
-        .all(|tid| completed_task_ids.contains(tid)))
+        .all(|tid| completed_task_ids.iter().any(|c| c == *tid)))
+}
+
+/// Check if a single task is currently blocking a child.
+///
+/// This is used by the enhanced child tasks endpoint (T-10) to compute
+/// `is_currently_blocking` per-task.
+fn is_task_currently_blocking_inner(
+    conn: &mut SqliteConnection,
+    task: &Task,
+    child_id: &str,
+    now: chrono::DateTime<Tz>,
+) -> Result<bool, StorageError> {
+    // Soft-deleted tasks never block
+    if task.deleted_at.is_some() {
+        return Ok(false);
+    }
+
+    let weekday = now.weekday();
+
+    // Not mandatory today
+    if !is_mandatory_on_day(task.mandatory_days, weekday) {
+        return Ok(false);
+    }
+
+    // Not yet past start time
+    let current_time = format!("{:02}:{:02}", now.hour(), now.minute());
+    if !is_past_start_time(&current_time, task.mandatory_start_time.as_deref()) {
+        return Ok(false);
+    }
+
+    // Check assignment: if task has assignment rows but child is not in them, not blocking
+    let assignment_count: i64 = schema::task_assignments::table
+        .filter(schema::task_assignments::task_id.eq(&task.id))
+        .count()
+        .get_result(conn)?;
+
+    if assignment_count > 0 {
+        let assigned_to_child: i64 = schema::task_assignments::table
+            .filter(schema::task_assignments::task_id.eq(&task.id))
+            .filter(schema::task_assignments::child_id.eq(child_id))
+            .count()
+            .get_result(conn)?;
+        if assigned_to_child == 0 {
+            return Ok(false);
+        }
+    }
+
+    // Check if completed today
+    let today = now.date_naive();
+    let today_start_utc = today
+        .and_hms_opt(0, 0, 0)
+        .expect("valid midnight")
+        .and_local_timezone(now.timezone())
+        .earliest()
+        .or_else(|| {
+            today
+                .and_hms_opt(1, 0, 0)
+                .expect("valid 01:00")
+                .and_local_timezone(now.timezone())
+                .earliest()
+        })
+        .expect("valid day start")
+        .naive_utc();
+
+    let tomorrow = today + chrono::Days::new(1);
+    let tomorrow_start_utc = tomorrow
+        .and_hms_opt(0, 0, 0)
+        .expect("valid midnight")
+        .and_local_timezone(now.timezone())
+        .earliest()
+        .or_else(|| {
+            tomorrow
+                .and_hms_opt(1, 0, 0)
+                .expect("valid 01:00")
+                .and_local_timezone(now.timezone())
+                .earliest()
+        })
+        .expect("valid day start")
+        .naive_utc();
+
+    let completion_count: i64 = schema::task_completions::table
+        .filter(schema::task_completions::child_id.eq(child_id))
+        .filter(schema::task_completions::task_id.eq(&task.id))
+        .filter(schema::task_completions::done_at.ge(today_start_utc))
+        .filter(schema::task_completions::done_at.lt(tomorrow_start_utc))
+        .count()
+        .get_result(conn)?;
+
+    // Blocking if NOT completed today
+    Ok(completion_count == 0)
 }
 
 /// Apply reward/penalty logic to balances and record balance transactions.
@@ -2174,6 +2382,374 @@ mod tests {
 
         let count_after = store.pending_submissions_count().await.unwrap();
         assert_eq!(count_after, 0);
+    }
+
+    // ── Blocking logic tests ────────────────────────────────────────
+
+    /// Helper: create a DateTime<Tz> for a specific date/time in a timezone.
+    fn make_dt(
+        tz: Tz,
+        year: i32,
+        month: u32,
+        day: u32,
+        hour: u32,
+        min: u32,
+    ) -> chrono::DateTime<Tz> {
+        use chrono::NaiveDate;
+        let naive = NaiveDate::from_ymd_opt(year, month, day)
+            .unwrap()
+            .and_hms_opt(hour, min, 0)
+            .unwrap();
+        naive
+            .and_local_timezone(tz)
+            .earliest()
+            .expect("valid datetime in timezone")
+    }
+
+    /// Helper: insert a task directly into the test DB with full control.
+    fn insert_task_raw(
+        conn: &mut SqliteConnection,
+        id: &str,
+        name: &str,
+        minutes: i32,
+        mandatory_days: i32,
+        mandatory_start_time: Option<&str>,
+    ) {
+        let required = mandatory_days != 0;
+        diesel::sql_query(
+            "INSERT INTO tasks (id, name, minutes, required, priority, mandatory_days, mandatory_start_time) \
+             VALUES (?, ?, ?, ?, 2, ?, ?)",
+        )
+        .bind::<diesel::sql_types::Text, _>(id)
+        .bind::<diesel::sql_types::Text, _>(name)
+        .bind::<diesel::sql_types::Integer, _>(minutes)
+        .bind::<diesel::sql_types::Bool, _>(required)
+        .bind::<diesel::sql_types::Integer, _>(mandatory_days)
+        .bind::<diesel::sql_types::Nullable<diesel::sql_types::Text>, _>(mandatory_start_time)
+        .execute(conn)
+        .unwrap();
+    }
+
+    /// Helper: insert a task assignment.
+    fn insert_assignment(conn: &mut SqliteConnection, task_id: &str, child_id: &str) {
+        diesel::sql_query("INSERT INTO task_assignments (task_id, child_id) VALUES (?, ?)")
+            .bind::<diesel::sql_types::Text, _>(task_id)
+            .bind::<diesel::sql_types::Text, _>(child_id)
+            .execute(conn)
+            .unwrap();
+    }
+
+    /// Helper: insert a task completion at a specific UTC time.
+    fn insert_completion_at(
+        conn: &mut SqliteConnection,
+        child_id: &str,
+        task_id: &str,
+        done_at_utc: NaiveDateTime,
+    ) {
+        diesel::sql_query(
+            "INSERT INTO task_completions (child_id, task_id, by_username, done_at) VALUES (?, ?, 'parent', ?)",
+        )
+        .bind::<diesel::sql_types::Text, _>(child_id)
+        .bind::<diesel::sql_types::Text, _>(task_id)
+        .bind::<diesel::sql_types::Timestamp, _>(done_at_utc)
+        .execute(conn)
+        .unwrap();
+    }
+
+    #[test]
+    fn blocking_task_mandatory_on_monday_checked_monday() {
+        let mut conn = setup_task_crud_db();
+        // mandatory_days=1 means Monday only (bit0)
+        insert_task_raw(&mut conn, "task1", "Monday Task", 10, 1, Some("00:00"));
+
+        // Monday 2026-03-30 at 10:00 UTC
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 10, 0);
+        assert_eq!(now.weekday(), chrono::Weekday::Mon);
+
+        let result = all_required_tasks_done_today_inner(&mut conn, "child1", now).unwrap();
+        assert!(!result, "task not completed, should be blocking");
+    }
+
+    #[test]
+    fn blocking_task_mandatory_on_monday_checked_tuesday() {
+        let mut conn = setup_task_crud_db();
+        // mandatory_days=1 means Monday only
+        insert_task_raw(&mut conn, "task1", "Monday Task", 10, 1, Some("00:00"));
+
+        // Tuesday 2026-03-31 at 10:00 UTC
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 31, 10, 0);
+        assert_eq!(now.weekday(), chrono::Weekday::Tue);
+
+        let result = all_required_tasks_done_today_inner(&mut conn, "child1", now).unwrap();
+        assert!(result, "Monday task should not block on Tuesday");
+    }
+
+    #[test]
+    fn blocking_task_before_start_time() {
+        let mut conn = setup_task_crud_db();
+        // Every day (127), start at 15:00
+        insert_task_raw(&mut conn, "task1", "Afternoon Task", 10, 127, Some("15:00"));
+
+        // Monday 2026-03-30 at 14:00 UTC
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 14, 0);
+
+        let result = all_required_tasks_done_today_inner(&mut conn, "child1", now).unwrap();
+        assert!(result, "before start_time, task should not block");
+    }
+
+    #[test]
+    fn blocking_task_after_start_time() {
+        let mut conn = setup_task_crud_db();
+        // Every day (127), start at 15:00
+        insert_task_raw(&mut conn, "task1", "Afternoon Task", 10, 127, Some("15:00"));
+
+        // Monday 2026-03-30 at 15:01 UTC
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 15, 1);
+
+        let result = all_required_tasks_done_today_inner(&mut conn, "child1", now).unwrap();
+        assert!(!result, "after start_time, incomplete task should block");
+    }
+
+    #[test]
+    fn blocking_task_completed_before_start_time_still_counts() {
+        let mut conn = setup_task_crud_db();
+        // Every day (127), start at 15:00
+        insert_task_raw(&mut conn, "task1", "Afternoon Task", 10, 127, Some("15:00"));
+
+        // Complete at 10:00 UTC on 2026-03-30
+        let completion_time = chrono::NaiveDate::from_ymd_opt(2026, 3, 30)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+        insert_completion_at(&mut conn, "child1", "task1", completion_time);
+
+        // Check at 15:01 UTC
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 15, 1);
+
+        let result = all_required_tasks_done_today_inner(&mut conn, "child1", now).unwrap();
+        assert!(result, "task completed earlier today should count as done");
+    }
+
+    #[test]
+    fn blocking_task_not_assigned_to_child() {
+        let mut conn = setup_task_crud_db();
+        // Every day, assigned to child2 only
+        insert_task_raw(&mut conn, "task1", "Child2 Task", 10, 127, Some("00:00"));
+        insert_assignment(&mut conn, "task1", "child2");
+
+        // Check for child1 on Monday at 10:00
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 10, 0);
+
+        let result = all_required_tasks_done_today_inner(&mut conn, "child1", now).unwrap();
+        assert!(result, "task assigned to another child should not block");
+    }
+
+    #[test]
+    fn blocking_soft_deleted_task_ignored() {
+        let mut conn = setup_task_crud_db();
+        // Insert then soft-delete
+        insert_task_raw(&mut conn, "task1", "Deleted Task", 10, 127, Some("00:00"));
+        diesel::sql_query("UPDATE tasks SET deleted_at = CURRENT_TIMESTAMP WHERE id = 'task1'")
+            .execute(&mut conn)
+            .unwrap();
+
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 10, 0);
+
+        let result = all_required_tasks_done_today_inner(&mut conn, "child1", now).unwrap();
+        assert!(result, "soft-deleted task should not block");
+    }
+
+    #[test]
+    fn blocking_no_mandatory_tasks_returns_true() {
+        let mut conn = setup_task_crud_db();
+        // Optional task (mandatory_days=0)
+        insert_task_raw(&mut conn, "task1", "Optional", 10, 0, None);
+
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 10, 0);
+
+        let result = all_required_tasks_done_today_inner(&mut conn, "child1", now).unwrap();
+        assert!(result, "no mandatory tasks means not blocking");
+    }
+
+    #[test]
+    fn blocking_multiple_tasks_one_incomplete() {
+        let mut conn = setup_task_crud_db();
+        // Two mandatory tasks for every day
+        insert_task_raw(&mut conn, "task1", "Task A", 10, 127, Some("00:00"));
+        insert_task_raw(&mut conn, "task2", "Task B", 10, 127, Some("00:00"));
+
+        // Complete only task1
+        let completion_time = chrono::NaiveDate::from_ymd_opt(2026, 3, 30)
+            .unwrap()
+            .and_hms_opt(8, 0, 0)
+            .unwrap();
+        insert_completion_at(&mut conn, "child1", "task1", completion_time);
+
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 10, 0);
+
+        let result = all_required_tasks_done_today_inner(&mut conn, "child1", now).unwrap();
+        assert!(!result, "one incomplete mandatory task should block");
+    }
+
+    #[test]
+    fn blocking_timezone_same_utc_different_result() {
+        let mut conn = setup_task_crud_db();
+        // Task mandatory on Tuesday (bit1=2), start at 00:00
+        insert_task_raw(&mut conn, "task1", "Tuesday Task", 10, 2, Some("00:00"));
+
+        // UTC time: Monday 2026-03-30 at 23:00 UTC
+        // In UTC: Monday -> task not active (only Tuesday)
+        // In UTC+2 (Europe/Warsaw CEST): Tuesday 01:00 -> task IS active
+        let utc_now = chrono::NaiveDate::from_ymd_opt(2026, 3, 30)
+            .unwrap()
+            .and_hms_opt(23, 0, 0)
+            .unwrap()
+            .and_utc();
+
+        // Check in UTC: should be Monday, task not blocking
+        let now_utc = utc_now.with_timezone(&chrono_tz::UTC);
+        assert_eq!(now_utc.weekday(), chrono::Weekday::Mon);
+        let result_utc = all_required_tasks_done_today_inner(&mut conn, "child1", now_utc).unwrap();
+        assert!(result_utc, "Monday in UTC, Tuesday task should not block");
+
+        // Check in Warsaw (UTC+2 in CEST): should be Tuesday, task blocking
+        let warsaw: Tz = "Europe/Warsaw".parse().unwrap();
+        let now_warsaw = utc_now.with_timezone(&warsaw);
+        assert_eq!(now_warsaw.weekday(), chrono::Weekday::Tue);
+        let result_warsaw =
+            all_required_tasks_done_today_inner(&mut conn, "child1", now_warsaw).unwrap();
+        assert!(
+            !result_warsaw,
+            "Tuesday in Warsaw, Tuesday task should block"
+        );
+    }
+
+    // ── is_task_currently_blocking tests ──────────────────────────────
+
+    #[test]
+    fn is_blocking_mandatory_today_incomplete() {
+        let mut conn = setup_task_crud_db();
+        insert_task_raw(&mut conn, "task1", "Monday Task", 10, 1, Some("00:00"));
+
+        let task = schema::tasks::table
+            .find("task1")
+            .first::<Task>(&mut conn)
+            .unwrap();
+
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 10, 0); // Monday
+        let blocking = is_task_currently_blocking_inner(&mut conn, &task, "child1", now).unwrap();
+        assert!(
+            blocking,
+            "incomplete mandatory task on its day should block"
+        );
+    }
+
+    #[test]
+    fn is_blocking_mandatory_different_day() {
+        let mut conn = setup_task_crud_db();
+        insert_task_raw(&mut conn, "task1", "Monday Task", 10, 1, Some("00:00"));
+
+        let task = schema::tasks::table
+            .find("task1")
+            .first::<Task>(&mut conn)
+            .unwrap();
+
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 31, 10, 0); // Tuesday
+        let blocking = is_task_currently_blocking_inner(&mut conn, &task, "child1", now).unwrap();
+        assert!(!blocking, "Monday task should not block on Tuesday");
+    }
+
+    #[test]
+    fn is_blocking_soft_deleted() {
+        let mut conn = setup_task_crud_db();
+        insert_task_raw(&mut conn, "task1", "Deleted", 10, 127, Some("00:00"));
+        diesel::sql_query("UPDATE tasks SET deleted_at = CURRENT_TIMESTAMP WHERE id = 'task1'")
+            .execute(&mut conn)
+            .unwrap();
+
+        let task = schema::tasks::table
+            .find("task1")
+            .first::<Task>(&mut conn)
+            .unwrap();
+
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 10, 0);
+        let blocking = is_task_currently_blocking_inner(&mut conn, &task, "child1", now).unwrap();
+        assert!(!blocking, "soft-deleted task should never block");
+    }
+
+    #[test]
+    fn is_blocking_not_assigned_to_child() {
+        let mut conn = setup_task_crud_db();
+        insert_task_raw(&mut conn, "task1", "Child2 Only", 10, 127, Some("00:00"));
+        insert_assignment(&mut conn, "task1", "child2");
+
+        let task = schema::tasks::table
+            .find("task1")
+            .first::<Task>(&mut conn)
+            .unwrap();
+
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 10, 0);
+        let blocking = is_task_currently_blocking_inner(&mut conn, &task, "child1", now).unwrap();
+        assert!(!blocking, "task assigned to other child should not block");
+    }
+
+    #[test]
+    fn is_blocking_assigned_to_all_children() {
+        let mut conn = setup_task_crud_db();
+        // No assignment rows = all children
+        insert_task_raw(&mut conn, "task1", "Everyone", 10, 127, Some("00:00"));
+
+        let task = schema::tasks::table
+            .find("task1")
+            .first::<Task>(&mut conn)
+            .unwrap();
+
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 10, 0);
+        let blocking = is_task_currently_blocking_inner(&mut conn, &task, "child1", now).unwrap();
+        assert!(
+            blocking,
+            "task with no assignments should block all children"
+        );
+    }
+
+    // ── Helper function unit tests ────────────────────────────────────
+
+    #[test]
+    fn is_mandatory_on_day_bitmask() {
+        use chrono::Weekday;
+        // Monday only (1)
+        assert!(is_mandatory_on_day(1, Weekday::Mon));
+        assert!(!is_mandatory_on_day(1, Weekday::Tue));
+
+        // Every day (127)
+        for wd in [
+            Weekday::Mon,
+            Weekday::Tue,
+            Weekday::Wed,
+            Weekday::Thu,
+            Weekday::Fri,
+            Weekday::Sat,
+            Weekday::Sun,
+        ] {
+            assert!(is_mandatory_on_day(127, wd));
+        }
+
+        // Weekdays only (31 = 0b0011111)
+        assert!(is_mandatory_on_day(31, Weekday::Mon));
+        assert!(is_mandatory_on_day(31, Weekday::Fri));
+        assert!(!is_mandatory_on_day(31, Weekday::Sat));
+        assert!(!is_mandatory_on_day(31, Weekday::Sun));
+
+        // None (0)
+        assert!(!is_mandatory_on_day(0, Weekday::Mon));
+    }
+
+    #[test]
+    fn is_past_start_time_logic() {
+        assert!(is_past_start_time("15:01", Some("15:00")));
+        assert!(is_past_start_time("15:00", Some("15:00")));
+        assert!(!is_past_start_time("14:59", Some("15:00")));
+        assert!(is_past_start_time("00:00", None)); // no start_time = always active
     }
 
     #[test]

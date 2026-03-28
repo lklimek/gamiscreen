@@ -89,7 +89,7 @@ impl AppState {
         **guard = Some(stored);
         let all_done = self
             .store
-            .all_required_tasks_done_today(child_id)
+            .all_required_tasks_done_today(child_id, self.config.family_tz)
             .await
             .map_err(AppError::internal)?;
         let effective = if all_done { stored } else { 0 };
@@ -121,7 +121,7 @@ impl AppState {
             .map_err(AppError::internal)?;
         let all_done = self
             .store
-            .all_required_tasks_done_today(child_id)
+            .all_required_tasks_done_today(child_id, self.config.family_tz)
             .await
             .map_err(AppError::internal)?;
         let effective = if all_done { remaining } else { 0 };
@@ -159,7 +159,7 @@ impl AppState {
         };
         let all_done = self
             .store
-            .all_required_tasks_done_today(child_id)
+            .all_required_tasks_done_today(child_id, self.config.family_tz)
             .await
             .map_err(AppError::internal)?;
         if all_done { Ok(stored) } else { Ok(0) }
@@ -1162,7 +1162,7 @@ async fn sse_notifications(
             let balance = state.store.compute_balance(&cid).await.unwrap_or(0);
             let blocked = !state
                 .store
-                .all_required_tasks_done_today(&cid)
+                .all_required_tasks_done_today(&cid, state.config.family_tz)
                 .await
                 .unwrap_or(false); // on failure, assume tasks NOT done (blocked)
             init_items.push(ServerEvent::RemainingUpdated {
