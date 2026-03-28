@@ -807,7 +807,7 @@ impl Store {
         .await?
     }
 
-    pub async fn compute_balance(&self, child_id: &str) -> Result<i32, StorageError> {
+    pub async fn get_balance(&self, child_id: &str) -> Result<i32, StorageError> {
         let pool = self.pool.clone();
         let child = child_id.to_string();
         tokio::task::spawn_blocking(move || -> Result<i32, StorageError> {
@@ -1036,6 +1036,20 @@ fn apply_reward_to_balance(
 }
 
 /// Retrieve the rowid of the last INSERT on this connection.
+///
+/// # Safety note
+///
+/// `last_insert_rowid()` is **connection-scoped**, not transaction-scoped — it returns
+/// the rowid of the most recent INSERT on the same connection, regardless of transaction
+/// boundaries. This is safe here because:
+///
+/// 1. All callers run inside `immediate_transaction`, which serializes writes on the
+///    connection — no concurrent INSERT can interleave.
+/// 2. No triggers exist on the `rewards` table that could perform a hidden INSERT and
+///    shift the rowid.
+///
+/// If triggers are ever added to `rewards`, this must be revisited — use a `RETURNING`
+/// clause instead.
 fn last_insert_rowid(conn: &mut SqliteConnection) -> Result<i32, diesel::result::Error> {
     diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>(
         "last_insert_rowid()",
@@ -1352,7 +1366,7 @@ mod tests {
             .await
             .expect("earn 1 min");
 
-        let balance = store.compute_balance("kid1").await.expect("balance");
+        let balance = store.get_balance("kid1").await.expect("balance");
         assert_eq!(balance, 0, "no debt after pure earning");
 
         // 2. Borrow 5 minutes (remaining=6, balance=-5)
@@ -1363,7 +1377,7 @@ mod tests {
 
         let remaining = store.get_remaining("kid1").await.expect("remaining");
         assert_eq!(remaining, 6, "remaining after earn 1 + borrow 5");
-        let balance = store.compute_balance("kid1").await.expect("balance");
+        let balance = store.get_balance("kid1").await.expect("balance");
         assert_eq!(balance, -5, "debt from borrowing 5");
 
         // 3. Use 6 minutes (remaining=0, balance=-5 — usage doesn't touch balance)
@@ -1378,7 +1392,7 @@ mod tests {
         assert_eq!(remaining, 0, "remaining after using all 6 minutes");
 
         // 4. Balance stays at -5 (debt from borrowing, usage doesn't change it)
-        let balance = store.compute_balance("kid1").await.expect("balance");
+        let balance = store.get_balance("kid1").await.expect("balance");
         assert_eq!(balance, -5, "balance reflects loan debt of -5");
     }
 
