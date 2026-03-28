@@ -8,23 +8,38 @@ import { LoginPage } from './pages/LoginPage'
 import { NotificationsPage } from './pages/NotificationsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { StatusPage } from './pages/StatusPage'
+import { TaskListPage } from './pages/TaskListPage'
+import { TaskFormPage } from './pages/TaskFormPage'
 import { NotificationSettings, getNotificationSettings, saveNotificationSettings } from './notifications'
 import { isEmbeddedMode } from './nativeBridge'
 
-type Route = 'status' | 'login' | 'child' | 'notifications' | 'settings'
+type Route = 'status' | 'login' | 'child' | 'notifications' | 'settings' | 'tasks' | 'tasks/new' | 'tasks/edit'
 
-function useHashRoute(): [Route, (r: Route, opts?: { childId?: string }) => void, { childId?: string }] {
+function useHashRoute(): [Route, (r: Route, opts?: { childId?: string }) => void, { childId?: string; taskId?: string }] {
   const parse = () => {
     const raw = window.location.hash.replace(/^#\/?/, '')
     const [path, qs] = raw.split('?')
     const parts = path.split('/')
     const base = (parts[0] || 'status') as Route
     const childId = parts[0] === 'child' && parts[1] ? decodeURIComponent(parts[1]) : (new URLSearchParams(qs).get('child') || undefined)
-    return { route: base, params: { childId } }
+    // Task routes: #tasks, #tasks/new, #tasks/<id>
+    let taskId: string | undefined
+    let route: Route = base
+    if (parts[0] === 'tasks') {
+      if (parts[1] === 'new') {
+        route = 'tasks/new'
+      } else if (parts[1]) {
+        route = 'tasks/edit'
+        taskId = decodeURIComponent(parts[1])
+      } else {
+        route = 'tasks'
+      }
+    }
+    return { route, params: { childId, taskId } }
   }
   const init = parse()
   const [route, setRoute] = useState<Route>(init.route)
-  const [params, setParams] = useState<{ childId?: string }>(init.params)
+  const [params, setParams] = useState<{ childId?: string; taskId?: string }>(init.params)
   useEffect(() => {
     const fn = () => { const p = parse(); setRoute(p.route); setParams(p.params) }
     window.addEventListener('hashchange', fn)
@@ -283,6 +298,14 @@ export function App() {
     if (cl?.role === 'child' && cl.child_id && route !== 'child' && route !== 'settings') {
         nav('child', { childId: cl.child_id })
       }
+      // Redirect children away from parent-only task routes
+      if (cl?.role === 'child' && (route === 'tasks' || route === 'tasks/new' || route === 'tasks/edit')) {
+        if (cl.child_id) {
+          nav('child', { childId: cl.child_id })
+        } else {
+          nav('status')
+        }
+      }
     }
   }, [hasToken, authReady, route, nav])
 
@@ -373,11 +396,20 @@ export function App() {
     if (route === 'child' && params.childId) {
       return <ChildDetailsPage childId={params.childId} />
     }
+    if (route === 'tasks/new') {
+      return <TaskFormPage />
+    }
+    if (route === 'tasks/edit' && params.taskId) {
+      return <TaskFormPage taskId={params.taskId} />
+    }
+    if (route === 'tasks') {
+      return <TaskListPage />
+    }
     if (route === 'notifications') {
       return <NotificationsPage />
     }
     return <StatusPage />
-  }, [authReady, claims?.child_id, claims?.role, handleLogin, handleNotificationSettingsChange, hasToken, installAvailable, installed, isChild, notificationSettings, params.childId, route, triggerInstall])
+  }, [authReady, claims?.child_id, claims?.role, handleLogin, handleNotificationSettingsChange, hasToken, installAvailable, installed, isChild, notificationSettings, params.childId, params.taskId, route, triggerInstall])
 
   return (
     <main className="container">
@@ -414,6 +446,12 @@ export function App() {
                     <span aria-hidden="true" style={{ marginRight: 8 }}>📊</span>
                     Status
                   </a>
+                  {claims?.role === 'parent' && (
+                    <a href="#tasks" onClick={() => setMenuOpen(false)} style={{ display: 'block', padding: '8px 12px', textDecoration: 'none' }}>
+                      <span aria-hidden="true" style={{ marginRight: 8 }}>📋</span>
+                      Tasks
+                    </a>
+                  )}
                   <a href="#settings" onClick={() => setMenuOpen(false)} style={{ display: 'block', padding: '8px 12px', textDecoration: 'none' }}>
                     <span aria-hidden="true" style={{ marginRight: 8 }}>⚙️</span>
                     Settings

@@ -5,6 +5,8 @@ import type {
   ClientRegisterReq,
   ClientRegisterResp,
   ConfigResp,
+  CreateTaskReq,
+  DeleteTaskResp,
   HeartbeatReq,
   HeartbeatResp,
   JwtClaims,
@@ -17,7 +19,9 @@ import type {
   Role,
   SubmitTaskReq,
   TaskDto,
+  TaskManagementDto,
   TaskWithStatusDto,
+  UpdateTaskReq,
   UsageBucketDto,
   UsageSeriesDto,
   VersionInfoDto,
@@ -31,6 +35,8 @@ export type {
   ClientRegisterReq,
   ClientRegisterResp,
   ConfigResp,
+  CreateTaskReq,
+  DeleteTaskResp,
   HeartbeatReq,
   HeartbeatResp,
   JwtClaims,
@@ -43,7 +49,9 @@ export type {
   Role,
   SubmitTaskReq,
   TaskDto,
+  TaskManagementDto,
   TaskWithStatusDto,
+  UpdateTaskReq,
   UsageBucketDto,
   UsageSeriesDto,
   VersionInfoDto,
@@ -358,4 +366,34 @@ export async function getConfig() {
 export async function getServerVersion(): Promise<string> {
   const { version } = await request<VersionInfoDto>(`${API_V1_PREFIX}/version`)
   return version
+}
+
+// Task management (parent-only)
+
+export async function listTasksManagement() {
+  return request<TaskManagementDto[]>(tenantPath('tasks'))
+}
+
+export async function getTaskManagement(taskId: string) {
+  return request<TaskManagementDto>(tenantPath(`tasks/${encodeURIComponent(taskId)}`))
+}
+
+export async function createTask(body: CreateTaskReq) {
+  return request<TaskManagementDto>(tenantPath('tasks'), {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function updateTask(taskId: string, body: UpdateTaskReq) {
+  return request<TaskManagementDto>(tenantPath(`tasks/${encodeURIComponent(taskId)}`), {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+}
+
+export async function deleteTask(taskId: string) {
+  return request<DeleteTaskResp>(tenantPath(`tasks/${encodeURIComponent(taskId)}`), {
+    method: 'DELETE',
+  })
 }
