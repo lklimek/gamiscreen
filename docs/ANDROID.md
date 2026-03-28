@@ -128,7 +128,7 @@ You can trigger the same upload with `workflow_dispatch` by selecting the `relea
 
 - Build shared business logic as `libgamiscreen.so` via `cargo-ndk` targeting `armeabi-v7a`, `arm64-v8a`, and `x86_64`.
 - Expose a minimal JNI/UniFFI surface:
-  - Balance calculation utilities.
+  - Balance column read (stored `account_balance`, no computation).
   - Countdown/lock orchestration states.
   - Request signing or crypto helpers if required.
 - Kotlin coroutines should call into Rust on `Dispatchers.Default` to avoid blocking the main thread.

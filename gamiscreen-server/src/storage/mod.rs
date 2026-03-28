@@ -528,10 +528,7 @@ impl Store {
                     .execute(conn)?;
 
                 // Get the inserted reward id for balance_transactions FK
-                let reward_id: i32 = diesel::select(
-                    diesel::dsl::sql::<diesel::sql_types::Integer>("last_insert_rowid()"),
-                )
-                .get_result(conn)?;
+                let reward_id: i32 = last_insert_rowid(conn)?;
 
                 let (rem_delta, bal_delta) = apply_reward_to_balance(
                     conn,
@@ -671,10 +668,7 @@ impl Store {
                     .execute(conn)?;
 
                 // Get the inserted reward id for balance_transactions FK
-                let reward_id: i32 = diesel::select(
-                    diesel::dsl::sql::<diesel::sql_types::Integer>("last_insert_rowid()"),
-                )
-                .get_result(conn)?;
+                let reward_id: i32 = last_insert_rowid(conn)?;
 
                 let (rem_delta, bal_delta) = apply_reward_to_balance(
                     conn,
@@ -819,7 +813,7 @@ impl Store {
         tokio::task::spawn_blocking(move || -> Result<i32, StorageError> {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
-            compute_balance_inner(&mut conn, &child)
+            get_balance_inner(&mut conn, &child)
         })
         .await?
     }
@@ -940,7 +934,7 @@ fn record_task_done_inner(
 /// This is a simple column read — no computation. The account_balance is
 /// maintained transactionally by `add_reward_minutes` and `approve_submission`.
 /// Negative values indicate debt from borrowed time.
-fn compute_balance_inner(conn: &mut SqliteConnection, child_id: &str) -> Result<i32, StorageError> {
+fn get_balance_inner(conn: &mut SqliteConnection, child_id: &str) -> Result<i32, StorageError> {
     use schema::balances;
     Ok(balances::table
         .filter(balances::child_id.eq(child_id))
@@ -990,6 +984,11 @@ fn all_required_tasks_done_today_inner(
 /// stored `minutes_remaining` and `account_balance` columns respectively.
 ///
 /// This also inserts the appropriate `balance_transactions` row(s) for audit.
+///
+/// **Audit scope**: `balance_transactions` records only debt-affecting events
+/// (lending and auto-repayment). Penalties, normal earnings (when no debt exists),
+/// and usage do not create rows — they only affect `minutes_remaining` and/or
+/// `account_balance` directly.
 fn apply_reward_to_balance(
     conn: &mut SqliteConnection,
     child_id: &str,
@@ -1034,6 +1033,14 @@ fn apply_reward_to_balance(
             Ok((mins, 0))
         }
     }
+}
+
+/// Retrieve the rowid of the last INSERT on this connection.
+fn last_insert_rowid(conn: &mut SqliteConnection) -> Result<i32, diesel::result::Error> {
+    diesel::select(diesel::dsl::sql::<diesel::sql_types::Integer>(
+        "last_insert_rowid()",
+    ))
+    .get_result(conn)
 }
 
 fn configure_sqlite_conn(conn: &mut SqliteConnection) -> Result<(), diesel::result::Error> {

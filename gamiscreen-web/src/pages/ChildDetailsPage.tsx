@@ -38,6 +38,27 @@ const USAGE_BASE_PRESETS = [
   { key: "1w", label: "1 week", bucketMinutes: MINUTES_PER_WEEK },
 ] as const;
 
+/** Compute repayment feedback message when earning while in debt. */
+function computeRepaymentFeedback(
+  balanceBefore: number,
+  balanceAfter: number,
+  earnedMinutes: number,
+): string | null {
+  const repaid = Math.max(
+    0,
+    Math.min(
+      earnedMinutes,
+      Math.abs(balanceBefore) - Math.abs(Math.min(balanceAfter, 0)),
+    ),
+  );
+  const added = earnedMinutes - repaid;
+  if (repaid <= 0) return null;
+  return (
+    `${formatMinutes(earnedMinutes)} earned: ${formatMinutes(repaid)} repaid debt` +
+    (added > 0 ? `, ${formatMinutes(added)} added to screen time` : "")
+  );
+}
+
 type UsageBasePreset = (typeof USAGE_BASE_PRESETS)[number];
 type UsagePresetKey = UsageBasePreset["key"];
 type UsageOption = UsageBasePreset & { windowMinutes: number };
@@ -385,19 +406,12 @@ export function ChildDetailsPage(props: { childId: string }) {
 
         // Show auto-repayment feedback when debt was partially or fully repaid
         if (balanceBefore < 0 && earnedMinutes > 0) {
-          const repaid = Math.min(
+          const msg = computeRepaymentFeedback(
+            balanceBefore,
+            resp.balance,
             earnedMinutes,
-            Math.abs(balanceBefore) - Math.abs(Math.min(resp.balance, 0)),
           );
-          const added = earnedMinutes - repaid;
-          if (repaid > 0) {
-            setRewardFeedback(
-              `${formatMinutes(earnedMinutes)} earned: ${formatMinutes(repaid)} repaid debt` +
-                (added > 0
-                  ? `, ${formatMinutes(added)} added to screen time`
-                  : ""),
-            );
-          }
+          if (msg) setRewardFeedback(msg);
         }
       } else {
         const mins = confirm.minutes;
@@ -415,19 +429,12 @@ export function ChildDetailsPage(props: { childId: string }) {
 
         // Show auto-repayment feedback for non-borrowed positive rewards during debt
         if (balanceBefore < 0 && mins > 0 && !confirm.isBorrowed) {
-          const repaid = Math.min(
+          const msg = computeRepaymentFeedback(
+            balanceBefore,
+            resp.balance,
             mins,
-            Math.abs(balanceBefore) - Math.abs(Math.min(resp.balance, 0)),
           );
-          const added = mins - repaid;
-          if (repaid > 0) {
-            setRewardFeedback(
-              `${formatMinutes(mins)} earned: ${formatMinutes(repaid)} repaid debt` +
-                (added > 0
-                  ? `, ${formatMinutes(added)} added to screen time`
-                  : ""),
-            );
-          }
+          if (msg) setRewardFeedback(msg);
         }
       }
       setConfirm(null);
