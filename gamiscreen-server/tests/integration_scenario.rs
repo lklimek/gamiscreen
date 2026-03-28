@@ -788,13 +788,14 @@ async fn child_access_control() {
 
     let child_token = server.login("alice", "kidpass").await;
 
+    // GET /tasks is restricted to parents; children should use /children/{id}/tasks
     server
-        .request_expect_json::<Vec<api::TaskManagementDto>>(
+        .request_expect_status(
             "GET",
             &tenant_path("tasks"),
             Some(&child_token),
             None,
-            StatusCode::OK,
+            StatusCode::FORBIDDEN,
         )
         .await;
 
