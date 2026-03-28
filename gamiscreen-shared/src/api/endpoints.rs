@@ -149,3 +149,32 @@ pub fn child_push_unsubscribe(base: &str, tenant_id: &str, child_id: &str) -> St
 pub fn tenant_config(base: &str, tenant_id: &str) -> String {
     base_join(base, &format!("{}/config", tenant_scope(tenant_id)))
 }
+
+/// `POST` -- create a new task for a family (parent-only).
+pub fn create_task(base: &str, tenant_id: &str) -> String {
+    base_join(base, &format!("{}/tasks", tenant_scope(tenant_id)))
+}
+
+/// `PUT` -- update an existing task (parent-only, full replacement).
+pub fn update_task(base: &str, tenant_id: &str, task_id: &str) -> String {
+    base_join(
+        base,
+        &format!("{}/tasks/{}", tenant_scope(tenant_id), enc(task_id)),
+    )
+}
+
+/// `DELETE` -- soft-delete a task (parent-only).
+pub fn delete_task(base: &str, tenant_id: &str, task_id: &str) -> String {
+    base_join(
+        base,
+        &format!("{}/tasks/{}", tenant_scope(tenant_id), enc(task_id)),
+    )
+}
+
+/// `GET` -- fetch a single task by ID (parent-only).
+pub fn get_task(base: &str, tenant_id: &str, task_id: &str) -> String {
+    base_join(
+        base,
+        &format!("{}/tasks/{}", tenant_scope(tenant_id), enc(task_id)),
+    )
+}

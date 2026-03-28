@@ -10,6 +10,7 @@ CREATE TABLE balance_transactions (
 
 CREATE INDEX idx_balance_transactions_child_id ON balance_transactions(child_id);
 
+
 -- Add account_balance column to balances table
 ALTER TABLE balances ADD COLUMN account_balance INTEGER NOT NULL DEFAULT 0;
 

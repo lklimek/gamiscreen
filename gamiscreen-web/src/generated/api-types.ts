@@ -27,7 +27,19 @@ minutes: number,
 /**
  * When true, the child must complete this task daily before any screen time unlocks.
  */
-required: boolean, };
+required: boolean, 
+/**
+ * Priority level: 1 (high), 2 (normal), 3 (low).
+ */
+priority: number, 
+/**
+ * 7-bit bitmask of mandatory days (bit 0 = Mon .. bit 6 = Sun). 0 = optional task.
+ */
+mandatory_days: number, 
+/**
+ * Start time for mandatory tasks in "HH:MM" format (family timezone). `None` for optional tasks.
+ */
+mandatory_start_time: string | null, };
 
 export type TaskWithStatusDto = { id: string, name: string, 
 /**
@@ -41,7 +53,111 @@ required: boolean,
 /**
  * RFC 3339 UTC timestamp of the most recent completion, or `None` if never done.
  */
-last_done: string | null, };
+last_done: string | null, 
+/**
+ * Priority level: 1 (high), 2 (normal), 3 (low).
+ */
+priority: number, 
+/**
+ * 7-bit bitmask of mandatory days (bit 0 = Mon .. bit 6 = Sun). 0 = optional task.
+ */
+mandatory_days: number, 
+/**
+ * Start time for mandatory tasks in "HH:MM" format (family timezone). `None` for optional tasks.
+ */
+mandatory_start_time: string | null, 
+/**
+ * True when this mandatory task is currently due and not yet completed today.
+ */
+is_currently_blocking: boolean, };
+
+export type CreateTaskReq = { 
+/**
+ * Task name (1-100 chars, non-empty after trim).
+ */
+name: string, 
+/**
+ * Screen-time minutes awarded on completion (non-zero).
+ */
+minutes: number, 
+/**
+ * Priority level: 1 (high), 2 (normal), 3 (low). Defaults to 2.
+ */
+priority: number | null, 
+/**
+ * 7-bit bitmask of mandatory days (bit 0 = Mon .. bit 6 = Sun). Defaults to 0 (optional).
+ */
+mandatory_days: number | null, 
+/**
+ * Start time in "HH:MM" format (family timezone). Required when mandatory_days > 0.
+ */
+mandatory_start_time: string | null, 
+/**
+ * Child IDs this task is assigned to. `None` = all children.
+ */
+assigned_children: Array<string> | null, };
+
+export type UpdateTaskReq = { 
+/**
+ * Task name (1-100 chars, non-empty after trim).
+ */
+name: string, 
+/**
+ * Screen-time minutes awarded on completion (non-zero).
+ */
+minutes: number, 
+/**
+ * Priority level: 1 (high), 2 (normal), 3 (low). Defaults to 2.
+ */
+priority: number | null, 
+/**
+ * 7-bit bitmask of mandatory days (bit 0 = Mon .. bit 6 = Sun). Defaults to 0 (optional).
+ */
+mandatory_days: number | null, 
+/**
+ * Start time in "HH:MM" format (family timezone). Required when mandatory_days > 0.
+ */
+mandatory_start_time: string | null, 
+/**
+ * Child IDs this task is assigned to. `None` = all children.
+ */
+assigned_children: Array<string> | null, };
+
+export type TaskManagementDto = { id: string, name: string, 
+/**
+ * Screen-time minutes awarded on completion.
+ */
+minutes: number, 
+/**
+ * Priority level: 1 (high), 2 (normal), 3 (low).
+ */
+priority: number, 
+/**
+ * 7-bit bitmask of mandatory days (bit 0 = Mon .. bit 6 = Sun). 0 = optional task.
+ */
+mandatory_days: number, 
+/**
+ * Start time for mandatory tasks in "HH:MM" format (family timezone).
+ */
+mandatory_start_time: string | null, 
+/**
+ * Child IDs this task is assigned to. `None` = all children.
+ */
+assigned_children: Array<string> | null, 
+/**
+ * RFC 3339 timestamp when the task was created.
+ */
+created_at: string, 
+/**
+ * RFC 3339 timestamp when the task was last updated.
+ */
+updated_at: string, };
+
+export type DeleteTaskResp = { 
+/**
+ * True when the task was successfully soft-deleted.
+ */
+deleted: boolean, };
 
 export type RemainingDto = { child_id: string, 
 /**

@@ -1,15 +1,32 @@
 pub mod models;
 pub mod schema;
 
-use chrono::Utc;
+use chrono::{Datelike, NaiveDateTime, Timelike, Utc};
+use chrono_tz::Tz;
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 use models::{
-    Child, NewChild, NewPushSubscription, NewReward, NewSession, NewTask, PushSubscription,
-    Session, Task,
+    Child, NewChild, NewPushSubscription, NewReward, NewSession, NewTask, NewTaskAssignment,
+    PushSubscription, Session, Task,
 };
-use tracing::trace;
+use tracing::{info, trace};
+use uuid::Uuid;
+
+/// Generate a human-readable task ID from the task name.
+///
+/// The ID is composed of the slugified name plus an 8-character hex suffix
+/// derived from a UUID v4, e.g. `homework-a1b2c3d4`.
+pub fn generate_task_id(name: &str) -> String {
+    let slug_part = slug::slugify(name);
+    let suffix = &Uuid::new_v4().simple().to_string()[..8];
+    if slug_part.is_empty() {
+        // Fallback for names that slugify to empty (e.g. all-emoji names)
+        format!("task-{suffix}")
+    } else {
+        format!("{slug_part}-{suffix}")
+    }
+}
 
 /// Structured error type for all storage operations.
 #[derive(Debug, thiserror::Error)]
@@ -63,63 +80,18 @@ impl Store {
         Ok(Store { pool })
     }
 
+    /// Seed children and tasks from config.
+    ///
+    /// This is a convenience wrapper that calls `seed_children_from_config` and
+    /// `migrate_yaml_tasks_to_db`. Kept for backward compatibility with tests.
     pub async fn seed_from_config(
         &self,
         cfg_children: &[gamiscreen_shared::domain::Child],
         cfg_tasks: &[gamiscreen_shared::domain::Task],
     ) -> Result<(), StorageError> {
-        use schema::{children, tasks};
-
-        let pool = self.pool.clone();
-        let children_owned = cfg_children.to_owned();
-        let tasks_owned = cfg_tasks.to_owned();
-        tokio::task::spawn_blocking(move || -> Result<(), StorageError> {
-            let mut conn = pool.get()?;
-            configure_sqlite_conn(&mut conn)?;
-
-            // Upsert children
-            for c in &children_owned {
-                let new_child = NewChild {
-                    id: &c.id,
-                    display_name: &c.display_name,
-                };
-                diesel::insert_into(children::table)
-                    .values(&new_child)
-                    .on_conflict(children::id)
-                    .do_update()
-                    .set(children::display_name.eq(new_child.display_name))
-                    .execute(&mut conn)?;
-
-                // Ensure every child has a balances row (migration populates existing data)
-                diesel::insert_into(schema::balances::table)
-                    .values(schema::balances::child_id.eq(&c.id))
-                    .on_conflict_do_nothing()
-                    .execute(&mut conn)?;
-            }
-
-            // Upsert tasks
-            for t in &tasks_owned {
-                let new_task = NewTask {
-                    id: &t.id,
-                    name: &t.name,
-                    minutes: t.minutes,
-                    required: t.required,
-                };
-                diesel::insert_into(tasks::table)
-                    .values(&new_task)
-                    .on_conflict(tasks::id)
-                    .do_update()
-                    .set((
-                        tasks::name.eq(new_task.name),
-                        tasks::minutes.eq(new_task.minutes),
-                        tasks::required.eq(new_task.required),
-                    ))
-                    .execute(&mut conn)?;
-            }
-
-            Ok(())
-        })
-        .await?
+        self.seed_children_from_config(cfg_children).await?;
+        self.migrate_yaml_tasks_to_db(cfg_tasks).await?;
+        Ok(())
     }
 
     pub async fn list_children(&self) -> Result<Vec<Child>, StorageError> {
@@ -354,7 +326,396 @@ impl Store {
         tokio::task::spawn_blocking(move || -> Result<Vec<Task>, StorageError> {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
-            Ok(tasks.order(name.asc()).load::<Task>(&mut conn)?)
+            Ok(tasks
+                .filter(deleted_at.is_null())
+                .order((priority.asc(), name.asc()))
+                .load::<Task>(&mut conn)?)
+        })
+        .await?
+    }
+
+    /// List all non-deleted tasks with their child assignments in two queries
+    /// (avoids N+1 per-task lookups).
+    pub async fn list_tasks_with_assignments(
+        &self,
+    ) -> Result<Vec<(Task, Vec<String>)>, StorageError> {
+        use schema::tasks::dsl::*;
+        let pool = self.pool.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<(Task, Vec<String>)>, StorageError> {
+            let mut conn = pool.get()?;
+            configure_sqlite_conn(&mut conn)?;
+
+            let all_tasks: Vec<Task> = tasks
+                .filter(deleted_at.is_null())
+                .order((priority.asc(), name.asc()))
+                .load::<Task>(&mut conn)?;
+
+            let task_ids: Vec<&str> = all_tasks.iter().map(|t| t.id.as_str()).collect();
+
+            // Fetch all assignments in one query
+            let all_assignments: Vec<(String, String)> = schema::task_assignments::table
+                .filter(schema::task_assignments::task_id.eq_any(&task_ids))
+                .select((
+                    schema::task_assignments::task_id,
+                    schema::task_assignments::child_id,
+                ))
+                .load::<(String, String)>(&mut conn)?;
+
+            // Group assignments by task_id
+            let mut assignment_map: std::collections::HashMap<String, Vec<String>> =
+                std::collections::HashMap::new();
+            for (tid, cid) in all_assignments {
+                assignment_map.entry(tid).or_default().push(cid);
+            }
+
+            Ok(all_tasks
+                .into_iter()
+                .map(|t| {
+                    let assigned = assignment_map.remove(&t.id).unwrap_or_default();
+                    (t, assigned)
+                })
+                .collect())
+        })
+        .await?
+    }
+
+    /// Create a new task with optional child assignments.
+    ///
+    /// Generates a slug-based ID, derives `required` from `mandatory_days`,
+    /// and inserts assignment rows if specific children are provided.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_task(
+        &self,
+        name_: &str,
+        minutes_: i32,
+        priority_: i32,
+        mandatory_days_: i32,
+        mandatory_start_time_: Option<&str>,
+        assigned_children: Option<Vec<String>>,
+    ) -> Result<Task, StorageError> {
+        let pool = self.pool.clone();
+        let name_owned = name_.to_string();
+        let minutes_owned = minutes_;
+        let priority_owned = priority_;
+        let mandatory_days_owned = mandatory_days_;
+        let mandatory_start_time_owned = mandatory_start_time_.map(|s| s.to_string());
+        let children_owned = assigned_children;
+        tokio::task::spawn_blocking(move || -> Result<Task, StorageError> {
+            let mut conn = pool.get()?;
+            configure_sqlite_conn(&mut conn)?;
+            conn.immediate_transaction(|conn| -> Result<Task, StorageError> {
+                let task_id = generate_task_id(&name_owned);
+                let required = mandatory_days_owned != 0;
+                let new_task = NewTask {
+                    id: &task_id,
+                    name: &name_owned,
+                    minutes: minutes_owned,
+                    required,
+                    priority: priority_owned,
+                    mandatory_days: mandatory_days_owned,
+                    mandatory_start_time: mandatory_start_time_owned.as_deref(),
+                };
+                diesel::insert_into(schema::tasks::table)
+                    .values(&new_task)
+                    .execute(conn)?;
+
+                sync_task_assignments_inner(conn, &task_id, &children_owned)?;
+
+                let task = schema::tasks::table
+                    .filter(schema::tasks::id.eq(&task_id))
+                    .first::<Task>(conn)?;
+                Ok(task)
+            })
+        })
+        .await?
+    }
+
+    /// Update an existing task. Returns error if task not found or soft-deleted.
+    ///
+    /// Replaces all fields and reassigns children.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_task(
+        &self,
+        id_: &str,
+        name_: &str,
+        minutes_: i32,
+        priority_: i32,
+        mandatory_days_: i32,
+        mandatory_start_time_: Option<&str>,
+        assigned_children: Option<Vec<String>>,
+    ) -> Result<Task, StorageError> {
+        let pool = self.pool.clone();
+        let id_owned = id_.to_string();
+        let name_owned = name_.to_string();
+        let minutes_owned = minutes_;
+        let priority_owned = priority_;
+        let mandatory_days_owned = mandatory_days_;
+        let mandatory_start_time_owned = mandatory_start_time_.map(|s| s.to_string());
+        let children_owned = assigned_children;
+        tokio::task::spawn_blocking(move || -> Result<Task, StorageError> {
+            let mut conn = pool.get()?;
+            configure_sqlite_conn(&mut conn)?;
+            conn.immediate_transaction(|conn| -> Result<Task, StorageError> {
+                use schema::tasks::dsl::*;
+
+                // Verify task exists and is not soft-deleted
+                let existing: Option<Task> = tasks
+                    .filter(id.eq(&id_owned))
+                    .filter(deleted_at.is_null())
+                    .first::<Task>(conn)
+                    .optional()?;
+
+                if existing.is_none() {
+                    return Err(StorageError::InvalidInput(format!(
+                        "task '{}' not found or deleted",
+                        id_owned
+                    )));
+                }
+
+                let now = Utc::now().naive_utc();
+                let required_val = mandatory_days_owned != 0;
+
+                diesel::update(tasks.filter(id.eq(&id_owned)))
+                    .set((
+                        name.eq(&name_owned),
+                        minutes.eq(minutes_owned),
+                        required.eq(required_val),
+                        priority.eq(priority_owned),
+                        mandatory_days.eq(mandatory_days_owned),
+                        mandatory_start_time.eq(mandatory_start_time_owned.as_deref()),
+                        updated_at.eq(now),
+                    ))
+                    .execute(conn)?;
+
+                sync_task_assignments_inner(conn, &id_owned, &children_owned)?;
+
+                let task = tasks.filter(id.eq(&id_owned)).first::<Task>(conn)?;
+                Ok(task)
+            })
+        })
+        .await?
+    }
+
+    /// Soft-delete a task and remove its pending submissions.
+    ///
+    /// Returns `true` if the task was found and deleted, `false` if not found.
+    pub async fn soft_delete_task(&self, id_: &str) -> Result<bool, StorageError> {
+        let pool = self.pool.clone();
+        let id_owned = id_.to_string();
+        tokio::task::spawn_blocking(move || -> Result<bool, StorageError> {
+            let mut conn = pool.get()?;
+            configure_sqlite_conn(&mut conn)?;
+            conn.immediate_transaction(|conn| -> Result<bool, StorageError> {
+                use schema::tasks::dsl::*;
+
+                let now = Utc::now().naive_utc();
+                let updated =
+                    diesel::update(tasks.filter(id.eq(&id_owned)).filter(deleted_at.is_null()))
+                        .set(deleted_at.eq(Some(now)))
+                        .execute(conn)?;
+
+                if updated == 0 {
+                    return Ok(false);
+                }
+
+                // Delete pending task_submissions for this task
+                diesel::delete(
+                    schema::task_submissions::table
+                        .filter(schema::task_submissions::task_id.eq(&id_owned)),
+                )
+                .execute(conn)?;
+
+                Ok(true)
+            })
+        })
+        .await?
+    }
+
+    /// Get a task with its assigned child IDs. Empty vec means all children.
+    ///
+    /// Excludes soft-deleted tasks.
+    pub async fn get_task_with_assignments(
+        &self,
+        id_: &str,
+    ) -> Result<Option<(Task, Vec<String>)>, StorageError> {
+        let pool = self.pool.clone();
+        let id_owned = id_.to_string();
+        tokio::task::spawn_blocking(
+            move || -> Result<Option<(Task, Vec<String>)>, StorageError> {
+                let mut conn = pool.get()?;
+                configure_sqlite_conn(&mut conn)?;
+                use schema::tasks::dsl::*;
+
+                let task_opt: Option<Task> = tasks
+                    .filter(id.eq(&id_owned))
+                    .filter(deleted_at.is_null())
+                    .first::<Task>(&mut conn)
+                    .optional()?;
+
+                let Some(task) = task_opt else {
+                    return Ok(None);
+                };
+
+                let assigned: Vec<String> = schema::task_assignments::table
+                    .filter(schema::task_assignments::task_id.eq(&id_owned))
+                    .select(schema::task_assignments::child_id)
+                    .load::<String>(&mut conn)?;
+
+                Ok(Some((task, assigned)))
+            },
+        )
+        .await?
+    }
+
+    /// List tasks assigned to a specific child (or all children), with last_done timestamp.
+    ///
+    /// A task is assigned to a child if it has no rows in `task_assignments` (meaning all
+    /// children) or has a specific row matching the child_id. Excludes soft-deleted tasks.
+    pub async fn list_tasks_for_child(
+        &self,
+        child_id_: &str,
+    ) -> Result<Vec<(Task, Option<NaiveDateTime>)>, StorageError> {
+        let pool = self.pool.clone();
+        let child_owned = child_id_.to_string();
+        tokio::task::spawn_blocking(
+            move || -> Result<Vec<(Task, Option<NaiveDateTime>)>, StorageError> {
+                let mut conn = pool.get()?;
+                configure_sqlite_conn(&mut conn)?;
+
+                // Get tasks that are either assigned to all children (no assignment rows)
+                // or specifically assigned to this child
+                let assigned_tasks: Vec<Task> = diesel::sql_query(
+                    "SELECT t.id, t.name, t.minutes, t.required, t.priority, \
+                     t.mandatory_days, t.mandatory_start_time, t.created_at, \
+                     t.updated_at, t.deleted_at \
+                     FROM tasks t \
+                     WHERE t.deleted_at IS NULL \
+                     AND (NOT EXISTS (SELECT 1 FROM task_assignments ta WHERE ta.task_id = t.id) \
+                          OR EXISTS (SELECT 1 FROM task_assignments ta WHERE ta.task_id = t.id AND ta.child_id = ?)) \
+                     ORDER BY t.priority ASC, t.name ASC",
+                )
+                .bind::<diesel::sql_types::Text, _>(&child_owned)
+                .load::<Task>(&mut conn)?;
+
+                // Fetch last done per task for this child
+                use diesel::dsl::max;
+                use schema::task_completions::dsl as tc;
+                let rows: Vec<(String, Option<NaiveDateTime>)> = tc::task_completions
+                    .filter(tc::child_id.eq(&child_owned))
+                    .group_by(tc::task_id)
+                    .select((tc::task_id, max(tc::done_at)))
+                    .load::<(String, Option<NaiveDateTime>)>(&mut conn)?;
+                let done_map: std::collections::HashMap<String, Option<NaiveDateTime>> =
+                    rows.into_iter().collect();
+
+                let out = assigned_tasks
+                    .into_iter()
+                    .map(|t| {
+                        let ld = done_map.get(&t.id).cloned().unwrap_or(None);
+                        (t, ld)
+                    })
+                    .collect();
+                Ok(out)
+            },
+        )
+        .await?
+    }
+
+    /// Seed children from config (always runs on startup).
+    pub async fn seed_children_from_config(
+        &self,
+        cfg_children: &[gamiscreen_shared::domain::Child],
+    ) -> Result<(), StorageError> {
+        use schema::children;
+
+        let pool = self.pool.clone();
+        let children_owned = cfg_children.to_owned();
+        tokio::task::spawn_blocking(move || -> Result<(), StorageError> {
+            let mut conn = pool.get()?;
+            configure_sqlite_conn(&mut conn)?;
+
+            for c in &children_owned {
+                let new_child = NewChild {
+                    id: &c.id,
+                    display_name: &c.display_name,
+                };
+                diesel::insert_into(children::table)
+                    .values(&new_child)
+                    .on_conflict(children::id)
+                    .do_update()
+                    .set(children::display_name.eq(new_child.display_name))
+                    .execute(&mut conn)?;
+
+                // Ensure every child has a balances row
+                diesel::insert_into(schema::balances::table)
+                    .values(schema::balances::child_id.eq(&c.id))
+                    .on_conflict_do_nothing()
+                    .execute(&mut conn)?;
+            }
+
+            Ok(())
+        })
+        .await?
+    }
+
+    /// Migrate tasks from YAML config to DB (runs only if no non-deleted tasks exist).
+    ///
+    /// Preserves original YAML IDs. Sets `priority = 2`, derives `mandatory_days`
+    /// from `required`, and assigns to all children (no assignment rows).
+    pub async fn migrate_yaml_tasks_to_db(
+        &self,
+        cfg_tasks: &[gamiscreen_shared::domain::Task],
+    ) -> Result<(), StorageError> {
+        use schema::tasks;
+
+        let pool = self.pool.clone();
+        let tasks_owned = cfg_tasks.to_owned();
+        tokio::task::spawn_blocking(move || -> Result<(), StorageError> {
+            let mut conn = pool.get()?;
+            configure_sqlite_conn(&mut conn)?;
+
+            // Check if any non-deleted tasks exist
+            let existing_count: i64 = tasks::table
+                .filter(tasks::deleted_at.is_null())
+                .count()
+                .get_result(&mut conn)?;
+
+            if existing_count > 0 {
+                info!(
+                    count = existing_count,
+                    "DB tasks exist, skipping YAML migration"
+                );
+                return Ok(());
+            }
+
+            if tasks_owned.is_empty() {
+                return Ok(());
+            }
+
+            for t in &tasks_owned {
+                let mandatory_days = if t.required { 127 } else { 0 };
+                let mandatory_start_time = if t.required { Some("00:00") } else { None };
+                let new_task = NewTask {
+                    id: &t.id,
+                    name: &t.name,
+                    minutes: t.minutes,
+                    required: t.required,
+                    priority: 2,
+                    mandatory_days,
+                    mandatory_start_time,
+                };
+                diesel::insert_into(tasks::table)
+                    .values(&new_task)
+                    .on_conflict(tasks::id)
+                    .do_nothing()
+                    .execute(&mut conn)?;
+            }
+
+            info!(
+                count = tasks_owned.len(),
+                "Migrated tasks from YAML config to database"
+            );
+            Ok(())
         })
         .await?
     }
@@ -453,14 +814,9 @@ impl Store {
                     .inner_join(tasks::table.on(tasks::id.eq(task_submissions::task_id)))
                     .order(task_submissions::submitted_at.desc())
                     .select((
-                        (
-                            task_submissions::id,
-                            task_submissions::child_id,
-                            task_submissions::task_id,
-                            task_submissions::submitted_at,
-                        ),
-                        (children::id, children::display_name),
-                        (tasks::id, tasks::name, tasks::minutes, tasks::required),
+                        models::TaskSubmission::as_select(),
+                        Child::as_select(),
+                        Task::as_select(),
                     ))
                     .load::<(models::TaskSubmission, Child, Task)>(&mut conn)?;
                 Ok(rows)
@@ -817,13 +1173,41 @@ impl Store {
     pub async fn all_required_tasks_done_today(
         &self,
         child_id: &str,
+        family_tz: Tz,
     ) -> Result<bool, StorageError> {
         let pool = self.pool.clone();
         let child = child_id.to_string();
         tokio::task::spawn_blocking(move || -> Result<bool, StorageError> {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
-            all_required_tasks_done_today_inner(&mut conn, &child)
+            let now = Utc::now().with_timezone(&family_tz);
+            all_required_tasks_done_today_inner(&mut conn, &child, now)
+        })
+        .await?
+    }
+
+    /// Check if a single task is currently blocking a child.
+    ///
+    /// A task is blocking when:
+    /// - It is not soft-deleted
+    /// - It is assigned to the child (or to all children)
+    /// - Its `mandatory_days` bitmask includes the current day-of-week
+    /// - The current time >= `mandatory_start_time`
+    /// - It has NOT been completed today by this child
+    pub async fn is_task_currently_blocking(
+        &self,
+        task: &Task,
+        child_id: &str,
+        family_tz: Tz,
+    ) -> Result<bool, StorageError> {
+        let pool = self.pool.clone();
+        let task_owned = task.clone();
+        let child = child_id.to_string();
+        tokio::task::spawn_blocking(move || -> Result<bool, StorageError> {
+            let mut conn = pool.get()?;
+            configure_sqlite_conn(&mut conn)?;
+            let now = Utc::now().with_timezone(&family_tz);
+            is_task_currently_blocking_inner(&mut conn, &task_owned, &child, now)
         })
         .await?
     }
@@ -938,40 +1322,222 @@ fn get_balance_inner(conn: &mut SqliteConnection, child_id: &str) -> Result<i32,
         .first(conn)?)
 }
 
-// Note: required tasks are global, not per-child. All children must complete all required tasks.
-// Day boundary uses UTC. Configure server timezone or document for users in non-UTC zones.
+/// Compute whether a task is currently blocking based on its fields and last completion time.
+///
+/// This is a pure function (no DB access) that determines blocking status from:
+/// - The task's `mandatory_days` bitmask and `mandatory_start_time`
+/// - The last completion timestamp (`last_done` in UTC)
+/// - The current time in the family timezone
+///
+/// A task is blocking when:
+/// 1. `mandatory_days` includes today (in family timezone)
+/// 2. Current time >= `mandatory_start_time` (in family timezone)
+/// 3. The task has NOT been completed today (in family timezone)
+pub fn is_blocking_from_last_done(
+    mandatory_days: i32,
+    mandatory_start_time: Option<&str>,
+    last_done: Option<NaiveDateTime>,
+    now: chrono::DateTime<Tz>,
+) -> bool {
+    let weekday = now.weekday();
+
+    // Not mandatory today
+    if !is_mandatory_on_day(mandatory_days, weekday) {
+        return false;
+    }
+
+    // Not yet past start time
+    let current_time = format!("{:02}:{:02}", now.hour(), now.minute());
+    if !is_past_start_time(&current_time, mandatory_start_time) {
+        return false;
+    }
+
+    // Check if completed today in family timezone
+    match last_done {
+        None => true, // Never completed => blocking
+        Some(done_utc) => {
+            let done_in_tz = chrono::DateTime::<Utc>::from_naive_utc_and_offset(done_utc, Utc)
+                .with_timezone(&now.timezone());
+            done_in_tz.date_naive() != now.date_naive()
+        }
+    }
+}
+
+/// Convert a date in a given timezone to its midnight UTC `NaiveDateTime`,
+/// with a DST-gap fallback to 01:00 if midnight does not exist.
+fn day_start_utc(date: chrono::NaiveDate, tz: chrono_tz::Tz) -> chrono::NaiveDateTime {
+    date.and_hms_opt(0, 0, 0)
+        .expect("valid midnight")
+        .and_local_timezone(tz)
+        .earliest()
+        .or_else(|| {
+            date.and_hms_opt(1, 0, 0)
+                .expect("valid 01:00")
+                .and_local_timezone(tz)
+                .earliest()
+        })
+        .expect("valid day start")
+        .naive_utc()
+}
+
+/// Check whether a task's mandatory_days bitmask includes the given day-of-week.
+///
+/// Bitmask encoding: Mon=bit0(1), Tue=bit1(2), ..., Sun=bit6(64).
+/// Uses `chrono::Weekday::num_days_from_monday()` (Mon=0..Sun=6).
+fn is_mandatory_on_day(mandatory_days: i32, weekday: chrono::Weekday) -> bool {
+    if mandatory_days == 0 {
+        return false;
+    }
+    let bit = 1 << weekday.num_days_from_monday();
+    (mandatory_days & bit) != 0
+}
+
+/// Check whether the current time is past the task's mandatory start time.
+///
+/// `current_time_str` should be "HH:MM" in family timezone.
+/// `start_time` is the task's mandatory_start_time ("HH:MM").
+/// String comparison works for "HH:MM" ordering.
+fn is_past_start_time(current_time_str: &str, start_time: Option<&str>) -> bool {
+    match start_time {
+        None => true, // No start time means always active when mandatory
+        Some(st) => current_time_str >= st,
+    }
+}
+
+/// Timezone-aware blocking logic: checks if all mandatory tasks for a child are done today.
+///
+/// A task is considered mandatory right now when:
+/// - It is not soft-deleted (`deleted_at IS NULL`)
+/// - It is assigned to this child (or to all children — no rows in task_assignments)
+/// - Its `mandatory_days` bitmask includes the current day-of-week in family timezone
+/// - The current time in family timezone >= `mandatory_start_time`
+///
+/// `now` is the current time in the family timezone. Passed as parameter for testability.
 fn all_required_tasks_done_today_inner(
     conn: &mut SqliteConnection,
     child_id: &str,
+    now: chrono::DateTime<Tz>,
 ) -> Result<bool, StorageError> {
-    let today = Utc::now().date_naive();
-    let today_start = today
-        .and_hms_opt(0, 0, 0)
-        .expect("valid midnight timestamp");
-    let tomorrow_start = (today + chrono::Days::new(1))
-        .and_hms_opt(0, 0, 0)
-        .expect("valid midnight timestamp");
+    let today = now.date_naive();
+    let weekday = now.weekday();
+    let current_time = format!("{:02}:{:02}", now.hour(), now.minute());
 
-    let required_task_ids: Vec<String> = schema::tasks::table
-        .filter(schema::tasks::required.eq(true))
-        .select(schema::tasks::id)
-        .load(conn)?;
+    // Day boundaries in family timezone, converted to UTC NaiveDateTime for DB comparison.
+    // task_completions.done_at is stored in UTC.
+    let today_start_utc = day_start_utc(today, now.timezone());
+    let tomorrow = today + chrono::Days::new(1);
+    let tomorrow_start_utc = day_start_utc(tomorrow, now.timezone());
 
-    if required_task_ids.is_empty() {
+    // Find mandatory tasks assigned to this child that are active right now.
+    // Uses raw SQL for the bitmask `&` operation (Diesel doesn't support SQLite bitwise AND).
+    let day_bit = 1i32 << weekday.num_days_from_monday();
+
+    #[derive(QueryableByName)]
+    struct TaskIdRow {
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        id: String,
+        #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+        mandatory_start_time: Option<String>,
+    }
+
+    let candidate_tasks: Vec<TaskIdRow> = diesel::sql_query(
+        "SELECT t.id, t.mandatory_start_time \
+         FROM tasks t \
+         WHERE t.deleted_at IS NULL \
+         AND (t.mandatory_days & ?) != 0 \
+         AND (NOT EXISTS (SELECT 1 FROM task_assignments ta WHERE ta.task_id = t.id) \
+              OR EXISTS (SELECT 1 FROM task_assignments ta WHERE ta.task_id = t.id AND ta.child_id = ?))",
+    )
+    .bind::<diesel::sql_types::Integer, _>(day_bit)
+    .bind::<diesel::sql_types::Text, _>(child_id)
+    .load::<TaskIdRow>(conn)?;
+
+    // Filter by start time in Rust (simple string comparison)
+    let blocking_task_ids: Vec<&str> = candidate_tasks
+        .iter()
+        .filter(|t| is_past_start_time(&current_time, t.mandatory_start_time.as_deref()))
+        .map(|t| t.id.as_str())
+        .collect();
+
+    if blocking_task_ids.is_empty() {
         return Ok(true);
     }
 
+    // Check completions for today (in family timezone day boundary)
     let completed_task_ids: Vec<String> = schema::task_completions::table
         .filter(schema::task_completions::child_id.eq(child_id))
-        .filter(schema::task_completions::done_at.ge(today_start))
-        .filter(schema::task_completions::done_at.lt(tomorrow_start))
+        .filter(schema::task_completions::done_at.ge(today_start_utc))
+        .filter(schema::task_completions::done_at.lt(tomorrow_start_utc))
         .select(schema::task_completions::task_id)
         .distinct()
         .load(conn)?;
 
-    Ok(required_task_ids
+    Ok(blocking_task_ids
         .iter()
-        .all(|tid| completed_task_ids.contains(tid)))
+        .all(|tid| completed_task_ids.iter().any(|c| c == *tid)))
+}
+
+/// Check if a single task is currently blocking a child.
+///
+/// This is used by the enhanced child tasks endpoint (T-10) to compute
+/// `is_currently_blocking` per-task.
+fn is_task_currently_blocking_inner(
+    conn: &mut SqliteConnection,
+    task: &Task,
+    child_id: &str,
+    now: chrono::DateTime<Tz>,
+) -> Result<bool, StorageError> {
+    // Soft-deleted tasks never block
+    if task.deleted_at.is_some() {
+        return Ok(false);
+    }
+
+    let weekday = now.weekday();
+
+    // Not mandatory today
+    if !is_mandatory_on_day(task.mandatory_days, weekday) {
+        return Ok(false);
+    }
+
+    // Not yet past start time
+    let current_time = format!("{:02}:{:02}", now.hour(), now.minute());
+    if !is_past_start_time(&current_time, task.mandatory_start_time.as_deref()) {
+        return Ok(false);
+    }
+
+    // Check assignment: if task has assignment rows but child is not in them, not blocking
+    let assignment_count: i64 = schema::task_assignments::table
+        .filter(schema::task_assignments::task_id.eq(&task.id))
+        .count()
+        .get_result(conn)?;
+
+    if assignment_count > 0 {
+        let assigned_to_child: i64 = schema::task_assignments::table
+            .filter(schema::task_assignments::task_id.eq(&task.id))
+            .filter(schema::task_assignments::child_id.eq(child_id))
+            .count()
+            .get_result(conn)?;
+        if assigned_to_child == 0 {
+            return Ok(false);
+        }
+    }
+
+    // Check if completed today
+    let today = now.date_naive();
+    let today_start_utc = day_start_utc(today, now.timezone());
+    let tomorrow = today + chrono::Days::new(1);
+    let tomorrow_start_utc = day_start_utc(tomorrow, now.timezone());
+
+    let completion_count: i64 = schema::task_completions::table
+        .filter(schema::task_completions::child_id.eq(child_id))
+        .filter(schema::task_completions::task_id.eq(&task.id))
+        .filter(schema::task_completions::done_at.ge(today_start_utc))
+        .filter(schema::task_completions::done_at.lt(tomorrow_start_utc))
+        .count()
+        .get_result(conn)?;
+
+    // Blocking if NOT completed today
+    Ok(completion_count == 0)
 }
 
 /// Apply reward/penalty logic to balances and record balance transactions.
@@ -980,11 +1546,6 @@ fn all_required_tasks_done_today_inner(
 /// stored `minutes_remaining` and `account_balance` columns respectively.
 ///
 /// This also inserts the appropriate `balance_transactions` row(s) for audit.
-///
-/// **Audit scope**: `balance_transactions` records only debt-affecting events
-/// (lending and auto-repayment). Penalties, normal earnings (when no debt exists),
-/// and usage do not create rows — they only affect `minutes_remaining` and/or
-/// `account_balance` directly.
 fn apply_reward_to_balance(
     conn: &mut SqliteConnection,
     child_id: &str,
@@ -1029,6 +1590,36 @@ fn apply_reward_to_balance(
             Ok((mins, 0))
         }
     }
+}
+
+/// Sync task assignments: replace all assignment rows for a task.
+///
+/// `None` or empty vec means "all children" (delete all rows).
+/// `Some(vec)` means specific children (delete existing, insert new).
+fn sync_task_assignments_inner(
+    conn: &mut SqliteConnection,
+    task_id: &str,
+    assigned_children: &Option<Vec<String>>,
+) -> Result<(), StorageError> {
+    // Always delete existing assignments first
+    diesel::delete(
+        schema::task_assignments::table.filter(schema::task_assignments::task_id.eq(task_id)),
+    )
+    .execute(conn)?;
+
+    // Insert new assignments if specific children are provided
+    if let Some(children) = assigned_children
+        && !children.is_empty()
+    {
+        for child_id in children {
+            let assignment = NewTaskAssignment { task_id, child_id };
+            diesel::insert_into(schema::task_assignments::table)
+                .values(&assignment)
+                .execute(conn)?;
+        }
+    }
+
+    Ok(())
 }
 
 fn configure_sqlite_conn(conn: &mut SqliteConnection) -> Result<(), diesel::result::Error> {
@@ -1287,6 +1878,902 @@ mod tests {
         // Penalty -3 during zero balance (remaining=15, balance=0)
         let (rem, bal) = do_reward(&mut conn, "child1", -3, false);
         assert_eq!((rem, bal), (15, 0));
+    }
+
+    // ── Task CRUD tests ──────────────────────────────────────────────
+
+    /// Setup a test DB with the full schema including new task columns and task_assignments.
+    fn setup_task_crud_db() -> SqliteConnection {
+        let mut conn =
+            SqliteConnection::establish(":memory:").expect("Failed to create test database");
+        diesel::sql_query(
+            "CREATE TABLE children (
+                id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL
+            )",
+        )
+        .execute(&mut conn)
+        .unwrap();
+        diesel::sql_query(
+            "CREATE TABLE balances (
+                child_id TEXT PRIMARY KEY REFERENCES children(id),
+                minutes_remaining INTEGER NOT NULL DEFAULT 0,
+                account_balance INTEGER NOT NULL DEFAULT 0
+            )",
+        )
+        .execute(&mut conn)
+        .unwrap();
+        diesel::sql_query(
+            "CREATE TABLE tasks (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                minutes INTEGER NOT NULL,
+                required INTEGER NOT NULL DEFAULT 0,
+                priority INTEGER NOT NULL DEFAULT 2,
+                mandatory_days INTEGER NOT NULL DEFAULT 0,
+                mandatory_start_time TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                deleted_at TIMESTAMP
+            )",
+        )
+        .execute(&mut conn)
+        .unwrap();
+        diesel::sql_query(
+            "CREATE TABLE task_assignments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                child_id TEXT NOT NULL REFERENCES children(id) ON DELETE CASCADE,
+                UNIQUE(task_id, child_id)
+            )",
+        )
+        .execute(&mut conn)
+        .unwrap();
+        diesel::sql_query(
+            "CREATE TABLE task_completions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                child_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                by_username TEXT NOT NULL,
+                done_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )",
+        )
+        .execute(&mut conn)
+        .unwrap();
+        diesel::sql_query(
+            "CREATE TABLE task_submissions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                child_id TEXT NOT NULL,
+                task_id TEXT NOT NULL,
+                submitted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )",
+        )
+        .execute(&mut conn)
+        .unwrap();
+        diesel::sql_query(
+            "CREATE TABLE rewards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                child_id TEXT NOT NULL REFERENCES children(id),
+                task_id TEXT REFERENCES tasks(id),
+                minutes INTEGER NOT NULL,
+                description TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                is_borrowed INTEGER NOT NULL DEFAULT 0
+            )",
+        )
+        .execute(&mut conn)
+        .unwrap();
+        diesel::sql_query(
+            "CREATE TABLE balance_transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                child_id TEXT NOT NULL REFERENCES children(id),
+                amount INTEGER NOT NULL,
+                description TEXT,
+                related_reward_id INTEGER REFERENCES rewards(id),
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )",
+        )
+        .execute(&mut conn)
+        .unwrap();
+        diesel::sql_query(
+            "CREATE TABLE usage_minutes (
+                child_id TEXT NOT NULL,
+                minute_ts BIGINT NOT NULL,
+                device_id TEXT NOT NULL,
+                PRIMARY KEY (child_id, minute_ts, device_id)
+            )",
+        )
+        .execute(&mut conn)
+        .unwrap();
+        diesel::sql_query(
+            "CREATE TABLE sessions (
+                jti TEXT PRIMARY KEY,
+                username TEXT NOT NULL,
+                issued_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_used_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )",
+        )
+        .execute(&mut conn)
+        .unwrap();
+        diesel::sql_query(
+            "CREATE TABLE push_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tenant_id TEXT NOT NULL,
+                child_id TEXT NOT NULL REFERENCES children(id),
+                endpoint TEXT NOT NULL UNIQUE,
+                p256dh TEXT NOT NULL,
+                auth TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_success_at TIMESTAMP,
+                last_error TEXT
+            )",
+        )
+        .execute(&mut conn)
+        .unwrap();
+        // Seed test children
+        diesel::sql_query("INSERT INTO children (id, display_name) VALUES ('child1', 'Alice')")
+            .execute(&mut conn)
+            .unwrap();
+        diesel::sql_query("INSERT INTO children (id, display_name) VALUES ('child2', 'Bob')")
+            .execute(&mut conn)
+            .unwrap();
+        diesel::sql_query("INSERT INTO balances (child_id) VALUES ('child1')")
+            .execute(&mut conn)
+            .unwrap();
+        diesel::sql_query("INSERT INTO balances (child_id) VALUES ('child2')")
+            .execute(&mut conn)
+            .unwrap();
+        conn
+    }
+
+    #[tokio::test]
+    async fn create_task_with_all_fields() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("test.db");
+        let store = Store::connect_sqlite(db_path.to_str().unwrap())
+            .await
+            .expect("connect");
+        // Seed children
+        let children = vec![gamiscreen_shared::domain::Child {
+            id: "alice".into(),
+            display_name: "Alice".into(),
+        }];
+        store.seed_children_from_config(&children).await.unwrap();
+
+        let task = store
+            .create_task(
+                "Homework",
+                30,
+                1,
+                31,
+                Some("15:00"),
+                Some(vec!["alice".into()]),
+            )
+            .await
+            .expect("create_task");
+
+        assert!(task.id.starts_with("homework-"));
+        assert_eq!(task.name, "Homework");
+        assert_eq!(task.minutes, 30);
+        assert_eq!(task.priority, 1);
+        assert_eq!(task.mandatory_days, 31);
+        assert_eq!(task.mandatory_start_time.as_deref(), Some("15:00"));
+        assert!(task.required); // mandatory_days != 0
+        assert!(task.deleted_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn create_task_with_defaults() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("test.db");
+        let store = Store::connect_sqlite(db_path.to_str().unwrap())
+            .await
+            .expect("connect");
+
+        let task = store
+            .create_task("Play", 15, 2, 0, None, None)
+            .await
+            .expect("create_task");
+
+        assert_eq!(task.priority, 2);
+        assert_eq!(task.mandatory_days, 0);
+        assert!(task.mandatory_start_time.is_none());
+        assert!(!task.required); // mandatory_days == 0
+    }
+
+    #[tokio::test]
+    async fn update_task_changes_persisted() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("test.db");
+        let store = Store::connect_sqlite(db_path.to_str().unwrap())
+            .await
+            .expect("connect");
+
+        let task = store
+            .create_task("Old Name", 10, 2, 0, None, None)
+            .await
+            .expect("create");
+
+        let updated = store
+            .update_task(&task.id, "New Name", 20, 1, 127, Some("08:00"), None)
+            .await
+            .expect("update");
+
+        assert_eq!(updated.name, "New Name");
+        assert_eq!(updated.minutes, 20);
+        assert_eq!(updated.priority, 1);
+        assert_eq!(updated.mandatory_days, 127);
+        assert_eq!(updated.mandatory_start_time.as_deref(), Some("08:00"));
+        assert!(updated.required);
+        assert!(updated.updated_at > task.updated_at || updated.updated_at == task.updated_at);
+    }
+
+    #[tokio::test]
+    async fn soft_delete_excludes_from_list() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("test.db");
+        let store = Store::connect_sqlite(db_path.to_str().unwrap())
+            .await
+            .expect("connect");
+
+        let task = store
+            .create_task("To Delete", 5, 2, 0, None, None)
+            .await
+            .expect("create");
+
+        let deleted = store.soft_delete_task(&task.id).await.expect("delete");
+        assert!(deleted);
+
+        let tasks = store.list_tasks().await.expect("list");
+        assert!(
+            tasks.is_empty(),
+            "soft-deleted task should not appear in list"
+        );
+
+        // Deleting again returns false
+        let deleted_again = store
+            .soft_delete_task(&task.id)
+            .await
+            .expect("delete again");
+        assert!(!deleted_again);
+    }
+
+    #[tokio::test]
+    async fn list_tasks_ordered_by_priority_then_name() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("test.db");
+        let store = Store::connect_sqlite(db_path.to_str().unwrap())
+            .await
+            .expect("connect");
+
+        // Create tasks with varying priorities and names
+        store
+            .create_task("Zebra", 5, 3, 0, None, None)
+            .await
+            .unwrap();
+        store
+            .create_task("Apple", 5, 1, 0, None, None)
+            .await
+            .unwrap();
+        store
+            .create_task("Banana", 5, 1, 0, None, None)
+            .await
+            .unwrap();
+        store
+            .create_task("Cherry", 5, 2, 0, None, None)
+            .await
+            .unwrap();
+
+        let tasks = store.list_tasks().await.unwrap();
+        let names: Vec<&str> = tasks.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, vec!["Apple", "Banana", "Cherry", "Zebra"]);
+    }
+
+    #[tokio::test]
+    async fn task_assignments_specific_children() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("test.db");
+        let store = Store::connect_sqlite(db_path.to_str().unwrap())
+            .await
+            .expect("connect");
+        let children = vec![
+            gamiscreen_shared::domain::Child {
+                id: "alice".into(),
+                display_name: "Alice".into(),
+            },
+            gamiscreen_shared::domain::Child {
+                id: "bob".into(),
+                display_name: "Bob".into(),
+            },
+        ];
+        store.seed_children_from_config(&children).await.unwrap();
+
+        // Create task assigned to alice only
+        let task = store
+            .create_task("Math", 20, 2, 0, None, Some(vec!["alice".into()]))
+            .await
+            .unwrap();
+
+        let (_, assigned) = store
+            .get_task_with_assignments(&task.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(assigned, vec!["alice"]);
+
+        // Update to all children (None)
+        store
+            .update_task(&task.id, "Math", 20, 2, 0, None, None)
+            .await
+            .unwrap();
+
+        let (_, assigned) = store
+            .get_task_with_assignments(&task.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            assigned.is_empty(),
+            "None means all children -> no assignment rows"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_tasks_for_child_filters_by_assignment() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("test.db");
+        let store = Store::connect_sqlite(db_path.to_str().unwrap())
+            .await
+            .expect("connect");
+        let children = vec![
+            gamiscreen_shared::domain::Child {
+                id: "alice".into(),
+                display_name: "Alice".into(),
+            },
+            gamiscreen_shared::domain::Child {
+                id: "bob".into(),
+                display_name: "Bob".into(),
+            },
+        ];
+        store.seed_children_from_config(&children).await.unwrap();
+
+        // Task for all children
+        store
+            .create_task("Brush Teeth", 5, 1, 0, None, None)
+            .await
+            .unwrap();
+        // Task for alice only
+        store
+            .create_task("Piano", 30, 2, 0, None, Some(vec!["alice".into()]))
+            .await
+            .unwrap();
+        // Task for bob only
+        store
+            .create_task("Soccer", 45, 2, 0, None, Some(vec!["bob".into()]))
+            .await
+            .unwrap();
+
+        let alice_tasks = store.list_tasks_for_child("alice").await.unwrap();
+        let alice_names: Vec<&str> = alice_tasks.iter().map(|(t, _)| t.name.as_str()).collect();
+        assert!(
+            alice_names.contains(&"Brush Teeth"),
+            "all-children task visible to alice"
+        );
+        assert!(
+            alice_names.contains(&"Piano"),
+            "alice-specific task visible"
+        );
+        assert!(
+            !alice_names.contains(&"Soccer"),
+            "bob-specific task not visible to alice"
+        );
+
+        let bob_tasks = store.list_tasks_for_child("bob").await.unwrap();
+        let bob_names: Vec<&str> = bob_tasks.iter().map(|(t, _)| t.name.as_str()).collect();
+        assert!(bob_names.contains(&"Brush Teeth"));
+        assert!(bob_names.contains(&"Soccer"));
+        assert!(!bob_names.contains(&"Piano"));
+    }
+
+    #[tokio::test]
+    async fn yaml_migration_skips_when_db_has_tasks() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("test.db");
+        let store = Store::connect_sqlite(db_path.to_str().unwrap())
+            .await
+            .expect("connect");
+
+        // Create a task in DB first
+        store
+            .create_task("Existing", 10, 2, 0, None, None)
+            .await
+            .unwrap();
+
+        // Attempt YAML migration
+        let yaml_tasks = vec![gamiscreen_shared::domain::Task {
+            id: "yaml-task".into(),
+            name: "YAML Task".into(),
+            minutes: 15,
+            required: true,
+        }];
+        store.migrate_yaml_tasks_to_db(&yaml_tasks).await.unwrap();
+
+        // Only the DB task should exist
+        let tasks = store.list_tasks().await.unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].name, "Existing");
+    }
+
+    #[tokio::test]
+    async fn yaml_migration_runs_when_db_empty() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("test.db");
+        let store = Store::connect_sqlite(db_path.to_str().unwrap())
+            .await
+            .expect("connect");
+
+        let yaml_tasks = vec![
+            gamiscreen_shared::domain::Task {
+                id: "brush-teeth".into(),
+                name: "Brush teeth".into(),
+                minutes: 10,
+                required: true,
+            },
+            gamiscreen_shared::domain::Task {
+                id: "read".into(),
+                name: "Read".into(),
+                minutes: 20,
+                required: false,
+            },
+        ];
+        store.migrate_yaml_tasks_to_db(&yaml_tasks).await.unwrap();
+
+        let tasks = store.list_tasks().await.unwrap();
+        assert_eq!(tasks.len(), 2);
+
+        // Required task should have mandatory_days=127
+        let brush = tasks.iter().find(|t| t.id == "brush-teeth").unwrap();
+        assert_eq!(brush.mandatory_days, 127);
+        assert_eq!(brush.mandatory_start_time.as_deref(), Some("00:00"));
+        assert!(brush.required);
+        assert_eq!(brush.priority, 2);
+
+        // Non-required task should have mandatory_days=0
+        let read = tasks.iter().find(|t| t.id == "read").unwrap();
+        assert_eq!(read.mandatory_days, 0);
+        assert!(read.mandatory_start_time.is_none());
+        assert!(!read.required);
+    }
+
+    #[tokio::test]
+    async fn yaml_migration_preserves_original_ids() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("test.db");
+        let store = Store::connect_sqlite(db_path.to_str().unwrap())
+            .await
+            .expect("connect");
+
+        let yaml_tasks = vec![gamiscreen_shared::domain::Task {
+            id: "my-custom-id".into(),
+            name: "Custom".into(),
+            minutes: 5,
+            required: false,
+        }];
+        store.migrate_yaml_tasks_to_db(&yaml_tasks).await.unwrap();
+
+        let tasks = store.list_tasks().await.unwrap();
+        assert_eq!(tasks[0].id, "my-custom-id");
+    }
+
+    #[tokio::test]
+    async fn update_nonexistent_task_returns_error() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("test.db");
+        let store = Store::connect_sqlite(db_path.to_str().unwrap())
+            .await
+            .expect("connect");
+
+        let result = store
+            .update_task("nonexistent", "Name", 10, 2, 0, None, None)
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn soft_delete_removes_pending_submissions() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let db_path = dir.path().join("test.db");
+        let store = Store::connect_sqlite(db_path.to_str().unwrap())
+            .await
+            .expect("connect");
+        let children = vec![gamiscreen_shared::domain::Child {
+            id: "alice".into(),
+            display_name: "Alice".into(),
+        }];
+        store.seed_children_from_config(&children).await.unwrap();
+
+        let task = store
+            .create_task("Test", 10, 2, 0, None, None)
+            .await
+            .unwrap();
+        store.submit_task("alice", &task.id).await.unwrap();
+
+        let count_before = store.pending_submissions_count().await.unwrap();
+        assert_eq!(count_before, 1);
+
+        store.soft_delete_task(&task.id).await.unwrap();
+
+        let count_after = store.pending_submissions_count().await.unwrap();
+        assert_eq!(count_after, 0);
+    }
+
+    // ── Blocking logic tests ────────────────────────────────────────
+
+    /// Helper: create a DateTime<Tz> for a specific date/time in a timezone.
+    fn make_dt(
+        tz: Tz,
+        year: i32,
+        month: u32,
+        day: u32,
+        hour: u32,
+        min: u32,
+    ) -> chrono::DateTime<Tz> {
+        use chrono::NaiveDate;
+        let naive = NaiveDate::from_ymd_opt(year, month, day)
+            .unwrap()
+            .and_hms_opt(hour, min, 0)
+            .unwrap();
+        naive
+            .and_local_timezone(tz)
+            .earliest()
+            .expect("valid datetime in timezone")
+    }
+
+    /// Helper: insert a task directly into the test DB with full control.
+    fn insert_task_raw(
+        conn: &mut SqliteConnection,
+        id: &str,
+        name: &str,
+        minutes: i32,
+        mandatory_days: i32,
+        mandatory_start_time: Option<&str>,
+    ) {
+        let required = mandatory_days != 0;
+        diesel::sql_query(
+            "INSERT INTO tasks (id, name, minutes, required, priority, mandatory_days, mandatory_start_time) \
+             VALUES (?, ?, ?, ?, 2, ?, ?)",
+        )
+        .bind::<diesel::sql_types::Text, _>(id)
+        .bind::<diesel::sql_types::Text, _>(name)
+        .bind::<diesel::sql_types::Integer, _>(minutes)
+        .bind::<diesel::sql_types::Bool, _>(required)
+        .bind::<diesel::sql_types::Integer, _>(mandatory_days)
+        .bind::<diesel::sql_types::Nullable<diesel::sql_types::Text>, _>(mandatory_start_time)
+        .execute(conn)
+        .unwrap();
+    }
+
+    /// Helper: insert a task assignment.
+    fn insert_assignment(conn: &mut SqliteConnection, task_id: &str, child_id: &str) {
+        diesel::sql_query("INSERT INTO task_assignments (task_id, child_id) VALUES (?, ?)")
+            .bind::<diesel::sql_types::Text, _>(task_id)
+            .bind::<diesel::sql_types::Text, _>(child_id)
+            .execute(conn)
+            .unwrap();
+    }
+
+    /// Helper: insert a task completion at a specific UTC time.
+    fn insert_completion_at(
+        conn: &mut SqliteConnection,
+        child_id: &str,
+        task_id: &str,
+        done_at_utc: NaiveDateTime,
+    ) {
+        diesel::sql_query(
+            "INSERT INTO task_completions (child_id, task_id, by_username, done_at) VALUES (?, ?, 'parent', ?)",
+        )
+        .bind::<diesel::sql_types::Text, _>(child_id)
+        .bind::<diesel::sql_types::Text, _>(task_id)
+        .bind::<diesel::sql_types::Timestamp, _>(done_at_utc)
+        .execute(conn)
+        .unwrap();
+    }
+
+    #[test]
+    fn blocking_task_mandatory_on_monday_checked_monday() {
+        let mut conn = setup_task_crud_db();
+        // mandatory_days=1 means Monday only (bit0)
+        insert_task_raw(&mut conn, "task1", "Monday Task", 10, 1, Some("00:00"));
+
+        // Monday 2026-03-30 at 10:00 UTC
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 10, 0);
+        assert_eq!(now.weekday(), chrono::Weekday::Mon);
+
+        let result = all_required_tasks_done_today_inner(&mut conn, "child1", now).unwrap();
+        assert!(!result, "task not completed, should be blocking");
+    }
+
+    #[test]
+    fn blocking_task_mandatory_on_monday_checked_tuesday() {
+        let mut conn = setup_task_crud_db();
+        // mandatory_days=1 means Monday only
+        insert_task_raw(&mut conn, "task1", "Monday Task", 10, 1, Some("00:00"));
+
+        // Tuesday 2026-03-31 at 10:00 UTC
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 31, 10, 0);
+        assert_eq!(now.weekday(), chrono::Weekday::Tue);
+
+        let result = all_required_tasks_done_today_inner(&mut conn, "child1", now).unwrap();
+        assert!(result, "Monday task should not block on Tuesday");
+    }
+
+    #[test]
+    fn blocking_task_before_start_time() {
+        let mut conn = setup_task_crud_db();
+        // Every day (127), start at 15:00
+        insert_task_raw(&mut conn, "task1", "Afternoon Task", 10, 127, Some("15:00"));
+
+        // Monday 2026-03-30 at 14:00 UTC
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 14, 0);
+
+        let result = all_required_tasks_done_today_inner(&mut conn, "child1", now).unwrap();
+        assert!(result, "before start_time, task should not block");
+    }
+
+    #[test]
+    fn blocking_task_after_start_time() {
+        let mut conn = setup_task_crud_db();
+        // Every day (127), start at 15:00
+        insert_task_raw(&mut conn, "task1", "Afternoon Task", 10, 127, Some("15:00"));
+
+        // Monday 2026-03-30 at 15:01 UTC
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 15, 1);
+
+        let result = all_required_tasks_done_today_inner(&mut conn, "child1", now).unwrap();
+        assert!(!result, "after start_time, incomplete task should block");
+    }
+
+    #[test]
+    fn blocking_task_completed_before_start_time_still_counts() {
+        let mut conn = setup_task_crud_db();
+        // Every day (127), start at 15:00
+        insert_task_raw(&mut conn, "task1", "Afternoon Task", 10, 127, Some("15:00"));
+
+        // Complete at 10:00 UTC on 2026-03-30
+        let completion_time = chrono::NaiveDate::from_ymd_opt(2026, 3, 30)
+            .unwrap()
+            .and_hms_opt(10, 0, 0)
+            .unwrap();
+        insert_completion_at(&mut conn, "child1", "task1", completion_time);
+
+        // Check at 15:01 UTC
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 15, 1);
+
+        let result = all_required_tasks_done_today_inner(&mut conn, "child1", now).unwrap();
+        assert!(result, "task completed earlier today should count as done");
+    }
+
+    #[test]
+    fn blocking_task_not_assigned_to_child() {
+        let mut conn = setup_task_crud_db();
+        // Every day, assigned to child2 only
+        insert_task_raw(&mut conn, "task1", "Child2 Task", 10, 127, Some("00:00"));
+        insert_assignment(&mut conn, "task1", "child2");
+
+        // Check for child1 on Monday at 10:00
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 10, 0);
+
+        let result = all_required_tasks_done_today_inner(&mut conn, "child1", now).unwrap();
+        assert!(result, "task assigned to another child should not block");
+    }
+
+    #[test]
+    fn blocking_soft_deleted_task_ignored() {
+        let mut conn = setup_task_crud_db();
+        // Insert then soft-delete
+        insert_task_raw(&mut conn, "task1", "Deleted Task", 10, 127, Some("00:00"));
+        diesel::sql_query("UPDATE tasks SET deleted_at = CURRENT_TIMESTAMP WHERE id = 'task1'")
+            .execute(&mut conn)
+            .unwrap();
+
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 10, 0);
+
+        let result = all_required_tasks_done_today_inner(&mut conn, "child1", now).unwrap();
+        assert!(result, "soft-deleted task should not block");
+    }
+
+    #[test]
+    fn blocking_no_mandatory_tasks_returns_true() {
+        let mut conn = setup_task_crud_db();
+        // Optional task (mandatory_days=0)
+        insert_task_raw(&mut conn, "task1", "Optional", 10, 0, None);
+
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 10, 0);
+
+        let result = all_required_tasks_done_today_inner(&mut conn, "child1", now).unwrap();
+        assert!(result, "no mandatory tasks means not blocking");
+    }
+
+    #[test]
+    fn blocking_multiple_tasks_one_incomplete() {
+        let mut conn = setup_task_crud_db();
+        // Two mandatory tasks for every day
+        insert_task_raw(&mut conn, "task1", "Task A", 10, 127, Some("00:00"));
+        insert_task_raw(&mut conn, "task2", "Task B", 10, 127, Some("00:00"));
+
+        // Complete only task1
+        let completion_time = chrono::NaiveDate::from_ymd_opt(2026, 3, 30)
+            .unwrap()
+            .and_hms_opt(8, 0, 0)
+            .unwrap();
+        insert_completion_at(&mut conn, "child1", "task1", completion_time);
+
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 10, 0);
+
+        let result = all_required_tasks_done_today_inner(&mut conn, "child1", now).unwrap();
+        assert!(!result, "one incomplete mandatory task should block");
+    }
+
+    #[test]
+    fn blocking_timezone_same_utc_different_result() {
+        let mut conn = setup_task_crud_db();
+        // Task mandatory on Tuesday (bit1=2), start at 00:00
+        insert_task_raw(&mut conn, "task1", "Tuesday Task", 10, 2, Some("00:00"));
+
+        // UTC time: Monday 2026-03-30 at 23:00 UTC
+        // In UTC: Monday -> task not active (only Tuesday)
+        // In UTC+2 (Europe/Warsaw CEST): Tuesday 01:00 -> task IS active
+        let utc_now = chrono::NaiveDate::from_ymd_opt(2026, 3, 30)
+            .unwrap()
+            .and_hms_opt(23, 0, 0)
+            .unwrap()
+            .and_utc();
+
+        // Check in UTC: should be Monday, task not blocking
+        let now_utc = utc_now.with_timezone(&chrono_tz::UTC);
+        assert_eq!(now_utc.weekday(), chrono::Weekday::Mon);
+        let result_utc = all_required_tasks_done_today_inner(&mut conn, "child1", now_utc).unwrap();
+        assert!(result_utc, "Monday in UTC, Tuesday task should not block");
+
+        // Check in Warsaw (UTC+2 in CEST): should be Tuesday, task blocking
+        let warsaw: Tz = "Europe/Warsaw".parse().unwrap();
+        let now_warsaw = utc_now.with_timezone(&warsaw);
+        assert_eq!(now_warsaw.weekday(), chrono::Weekday::Tue);
+        let result_warsaw =
+            all_required_tasks_done_today_inner(&mut conn, "child1", now_warsaw).unwrap();
+        assert!(
+            !result_warsaw,
+            "Tuesday in Warsaw, Tuesday task should block"
+        );
+    }
+
+    // ── is_task_currently_blocking tests ──────────────────────────────
+
+    #[test]
+    fn is_blocking_mandatory_today_incomplete() {
+        let mut conn = setup_task_crud_db();
+        insert_task_raw(&mut conn, "task1", "Monday Task", 10, 1, Some("00:00"));
+
+        let task = schema::tasks::table
+            .find("task1")
+            .first::<Task>(&mut conn)
+            .unwrap();
+
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 10, 0); // Monday
+        let blocking = is_task_currently_blocking_inner(&mut conn, &task, "child1", now).unwrap();
+        assert!(
+            blocking,
+            "incomplete mandatory task on its day should block"
+        );
+    }
+
+    #[test]
+    fn is_blocking_mandatory_different_day() {
+        let mut conn = setup_task_crud_db();
+        insert_task_raw(&mut conn, "task1", "Monday Task", 10, 1, Some("00:00"));
+
+        let task = schema::tasks::table
+            .find("task1")
+            .first::<Task>(&mut conn)
+            .unwrap();
+
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 31, 10, 0); // Tuesday
+        let blocking = is_task_currently_blocking_inner(&mut conn, &task, "child1", now).unwrap();
+        assert!(!blocking, "Monday task should not block on Tuesday");
+    }
+
+    #[test]
+    fn is_blocking_soft_deleted() {
+        let mut conn = setup_task_crud_db();
+        insert_task_raw(&mut conn, "task1", "Deleted", 10, 127, Some("00:00"));
+        diesel::sql_query("UPDATE tasks SET deleted_at = CURRENT_TIMESTAMP WHERE id = 'task1'")
+            .execute(&mut conn)
+            .unwrap();
+
+        let task = schema::tasks::table
+            .find("task1")
+            .first::<Task>(&mut conn)
+            .unwrap();
+
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 10, 0);
+        let blocking = is_task_currently_blocking_inner(&mut conn, &task, "child1", now).unwrap();
+        assert!(!blocking, "soft-deleted task should never block");
+    }
+
+    #[test]
+    fn is_blocking_not_assigned_to_child() {
+        let mut conn = setup_task_crud_db();
+        insert_task_raw(&mut conn, "task1", "Child2 Only", 10, 127, Some("00:00"));
+        insert_assignment(&mut conn, "task1", "child2");
+
+        let task = schema::tasks::table
+            .find("task1")
+            .first::<Task>(&mut conn)
+            .unwrap();
+
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 10, 0);
+        let blocking = is_task_currently_blocking_inner(&mut conn, &task, "child1", now).unwrap();
+        assert!(!blocking, "task assigned to other child should not block");
+    }
+
+    #[test]
+    fn is_blocking_assigned_to_all_children() {
+        let mut conn = setup_task_crud_db();
+        // No assignment rows = all children
+        insert_task_raw(&mut conn, "task1", "Everyone", 10, 127, Some("00:00"));
+
+        let task = schema::tasks::table
+            .find("task1")
+            .first::<Task>(&mut conn)
+            .unwrap();
+
+        let now = make_dt(chrono_tz::UTC, 2026, 3, 30, 10, 0);
+        let blocking = is_task_currently_blocking_inner(&mut conn, &task, "child1", now).unwrap();
+        assert!(
+            blocking,
+            "task with no assignments should block all children"
+        );
+    }
+
+    // ── Helper function unit tests ────────────────────────────────────
+
+    #[test]
+    fn is_mandatory_on_day_bitmask() {
+        use chrono::Weekday;
+        // Monday only (1)
+        assert!(is_mandatory_on_day(1, Weekday::Mon));
+        assert!(!is_mandatory_on_day(1, Weekday::Tue));
+
+        // Every day (127)
+        for wd in [
+            Weekday::Mon,
+            Weekday::Tue,
+            Weekday::Wed,
+            Weekday::Thu,
+            Weekday::Fri,
+            Weekday::Sat,
+            Weekday::Sun,
+        ] {
+            assert!(is_mandatory_on_day(127, wd));
+        }
+
+        // Weekdays only (31 = 0b0011111)
+        assert!(is_mandatory_on_day(31, Weekday::Mon));
+        assert!(is_mandatory_on_day(31, Weekday::Fri));
+        assert!(!is_mandatory_on_day(31, Weekday::Sat));
+        assert!(!is_mandatory_on_day(31, Weekday::Sun));
+
+        // None (0)
+        assert!(!is_mandatory_on_day(0, Weekday::Mon));
+    }
+
+    #[test]
+    fn is_past_start_time_logic() {
+        assert!(is_past_start_time("15:01", Some("15:00")));
+        assert!(is_past_start_time("15:00", Some("15:00")));
+        assert!(!is_past_start_time("14:59", Some("15:00")));
+        assert!(is_past_start_time("00:00", None)); // no start_time = always active
     }
 
     #[test]

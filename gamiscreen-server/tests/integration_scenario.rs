@@ -246,6 +246,8 @@ async fn start_server(
         ],
         dev_cors_origin: None,
         listen_port: None,
+        timezone: None,
+        family_tz: chrono_tz::UTC,
     };
 
     let store = storage::Store::connect_sqlite(tmp_db.to_str().unwrap())
@@ -312,6 +314,8 @@ async fn start_server_with_tasks(
         ],
         dev_cors_origin: None,
         listen_port: None,
+        timezone: None,
+        family_tz: chrono_tz::UTC,
     };
 
     let store = storage::Store::connect_sqlite(tmp_db.to_str().unwrap())
@@ -538,7 +542,7 @@ async fn parent_access_control() {
         .await;
     assert!(children.iter().any(|c| c.id == "alice"));
 
-    let tasks: Vec<api::TaskDto> = server
+    let tasks: Vec<api::TaskManagementDto> = server
         .request_expect_json(
             "GET",
             &tenant_path("tasks"),
@@ -784,13 +788,14 @@ async fn child_access_control() {
 
     let child_token = server.login("alice", "kidpass").await;
 
+    // GET /tasks is restricted to parents; children should use /children/{id}/tasks
     server
-        .request_expect_json::<Vec<api::TaskDto>>(
+        .request_expect_status(
             "GET",
             &tenant_path("tasks"),
             Some(&child_token),
             None,
-            StatusCode::OK,
+            StatusCode::FORBIDDEN,
         )
         .await;
 

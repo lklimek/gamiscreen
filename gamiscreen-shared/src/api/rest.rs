@@ -275,3 +275,90 @@ pub async fn get_config(
         .map_err(|e| RestError::Http(e.to_string()))?;
     handle_json(res).await
 }
+
+pub async fn create_task(
+    base: &str,
+    tenant_id: &str,
+    bearer: &str,
+    body: &CreateTaskReq,
+) -> Result<TaskManagementDto, RestError> {
+    let client = mk_client()?;
+    let url = ep::create_task(base, tenant_id);
+    let res = client
+        .post(url)
+        .bearer_auth(bearer)
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| RestError::Http(e.to_string()))?;
+    handle_json(res).await
+}
+
+pub async fn update_task(
+    base: &str,
+    tenant_id: &str,
+    task_id: &str,
+    bearer: &str,
+    body: &UpdateTaskReq,
+) -> Result<TaskManagementDto, RestError> {
+    let client = mk_client()?;
+    let url = ep::update_task(base, tenant_id, task_id);
+    let res = client
+        .put(url)
+        .bearer_auth(bearer)
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| RestError::Http(e.to_string()))?;
+    handle_json(res).await
+}
+
+pub async fn delete_task(
+    base: &str,
+    tenant_id: &str,
+    task_id: &str,
+    bearer: &str,
+) -> Result<DeleteTaskResp, RestError> {
+    let client = mk_client()?;
+    let url = ep::delete_task(base, tenant_id, task_id);
+    let res = client
+        .delete(url)
+        .bearer_auth(bearer)
+        .send()
+        .await
+        .map_err(|e| RestError::Http(e.to_string()))?;
+    handle_json(res).await
+}
+
+pub async fn get_task(
+    base: &str,
+    tenant_id: &str,
+    task_id: &str,
+    bearer: &str,
+) -> Result<TaskManagementDto, RestError> {
+    let client = mk_client()?;
+    let url = ep::get_task(base, tenant_id, task_id);
+    let res = client
+        .get(url)
+        .bearer_auth(bearer)
+        .send()
+        .await
+        .map_err(|e| RestError::Http(e.to_string()))?;
+    handle_json(res).await
+}
+
+pub async fn list_tasks_management(
+    base: &str,
+    tenant_id: &str,
+    bearer: &str,
+) -> Result<Vec<TaskManagementDto>, RestError> {
+    let client = mk_client()?;
+    let url = ep::tasks(base, tenant_id);
+    let res = client
+        .get(url)
+        .bearer_auth(bearer)
+        .send()
+        .await
+        .map_err(|e| RestError::Http(e.to_string()))?;
+    handle_json(res).await
+}

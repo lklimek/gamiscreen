@@ -2,8 +2,8 @@ use chrono::NaiveDateTime;
 use diesel::prelude::*;
 
 use crate::storage::schema::{
-    balance_transactions, balances, children, push_subscriptions, rewards, task_completions,
-    task_submissions, tasks, usage_minutes,
+    balance_transactions, balances, children, push_subscriptions, rewards, task_assignments,
+    task_completions, task_submissions, tasks, usage_minutes,
 };
 
 #[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
@@ -20,13 +20,19 @@ pub struct NewChild<'a> {
     pub display_name: &'a str,
 }
 
-#[derive(Debug, Clone, Queryable, Identifiable, Selectable)]
+#[derive(Debug, Clone, Queryable, QueryableByName, Identifiable, Selectable)]
 #[diesel(table_name = tasks)]
 pub struct Task {
     pub id: String,
     pub name: String,
     pub minutes: i32,
     pub required: bool,
+    pub priority: i32,
+    pub mandatory_days: i32,
+    pub mandatory_start_time: Option<String>,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+    pub deleted_at: Option<NaiveDateTime>,
 }
 
 #[derive(Insertable)]
@@ -36,6 +42,26 @@ pub struct NewTask<'a> {
     pub name: &'a str,
     pub minutes: i32,
     pub required: bool,
+    pub priority: i32,
+    pub mandatory_days: i32,
+    pub mandatory_start_time: Option<&'a str>,
+}
+
+#[derive(Debug, Clone, Queryable, Identifiable, Associations, Selectable)]
+#[diesel(table_name = task_assignments)]
+#[diesel(belongs_to(Task, foreign_key = task_id))]
+#[diesel(belongs_to(Child, foreign_key = child_id))]
+pub struct TaskAssignment {
+    pub id: i32,
+    pub task_id: String,
+    pub child_id: String,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = task_assignments)]
+pub struct NewTaskAssignment<'a> {
+    pub task_id: &'a str,
+    pub child_id: &'a str,
 }
 
 #[derive(Debug, Clone, Queryable, Identifiable, Associations, Selectable)]

@@ -89,7 +89,7 @@ impl AppState {
         **guard = Some(stored);
         let all_done = self
             .store
-            .all_required_tasks_done_today(child_id)
+            .all_required_tasks_done_today(child_id, self.config.family_tz)
             .await
             .map_err(AppError::internal)?;
         let effective = if all_done { stored } else { 0 };
@@ -121,7 +121,7 @@ impl AppState {
             .map_err(AppError::internal)?;
         let all_done = self
             .store
-            .all_required_tasks_done_today(child_id)
+            .all_required_tasks_done_today(child_id, self.config.family_tz)
             .await
             .map_err(AppError::internal)?;
         let effective = if all_done { remaining } else { 0 };
@@ -159,7 +159,7 @@ impl AppState {
         };
         let all_done = self
             .store
-            .all_required_tasks_done_today(child_id)
+            .all_required_tasks_done_today(child_id, self.config.family_tz)
             .await
             .map_err(AppError::internal)?;
         if all_done { Ok(stored) } else { Ok(0) }
@@ -181,7 +181,13 @@ pub fn router(state: AppState) -> Router {
 
     let tenant_private = Router::new()
         .route("/children", get(api_list_children))
-        .route("/tasks", get(api_list_tasks))
+        .route("/tasks", get(api_list_tasks).post(api_create_task))
+        .route(
+            "/tasks/{task_id}",
+            get(api_get_task)
+                .put(api_update_task)
+                .delete(api_delete_task),
+        )
         .route("/notifications", get(api_list_notifications))
         .route("/notifications/count", get(api_notifications_count))
         .route(
@@ -296,7 +302,13 @@ pub fn router(state: AppState) -> Router {
         }
         let cors = CorsLayer::new()
             .allow_origin(AllowOrigin::list(origins))
-            .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+            .allow_methods([
+                Method::GET,
+                Method::POST,
+                Method::PUT,
+                Method::DELETE,
+                Method::OPTIONS,
+            ])
             .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
         app.layer(cors)
     } else {
@@ -434,21 +446,292 @@ async fn api_list_children(
     Ok(Json(items))
 }
 
+fn task_to_management_dto(
+    task: crate::storage::models::Task,
+    assigned_children: Vec<String>,
+) -> api::TaskManagementDto {
+    api::TaskManagementDto {
+        id: task.id,
+        name: task.name,
+        minutes: task.minutes,
+        priority: task.priority,
+        mandatory_days: task.mandatory_days,
+        mandatory_start_time: task.mandatory_start_time,
+        assigned_children: if assigned_children.is_empty() {
+            None
+        } else {
+            Some(assigned_children)
+        },
+        created_at: task.created_at.and_utc().to_rfc3339(),
+        updated_at: task.updated_at.and_utc().to_rfc3339(),
+    }
+}
+
+/// Validate task fields common to create and update requests.
+/// Returns (name, minutes, priority, mandatory_days, mandatory_start_time) or an error.
+fn validate_task_fields(
+    name: &str,
+    minutes: i32,
+    priority: Option<i32>,
+    mandatory_days: Option<i32>,
+    mandatory_start_time: Option<&str>,
+    assigned_children: &Option<Vec<String>>,
+) -> Result<(String, i32, i32, i32, Option<String>), AppError> {
+    // Name: 1-100 chars after trim, non-empty
+    let trimmed_name = name.trim().to_string();
+    if trimmed_name.is_empty() {
+        return Err(AppError::bad_request("name must be non-empty"));
+    }
+    if trimmed_name.chars().count() > 100 {
+        return Err(AppError::bad_request("name must be at most 100 characters"));
+    }
+
+    // Minutes: non-zero
+    if minutes == 0 {
+        return Err(AppError::bad_request("minutes must be non-zero"));
+    }
+
+    // Priority: 1, 2, or 3 (default 2)
+    let priority = priority.unwrap_or(2);
+    if !(1..=3).contains(&priority) {
+        return Err(AppError::bad_request("priority must be 1, 2, or 3"));
+    }
+
+    // mandatory_days: 0-127 (default 0)
+    let mandatory_days = mandatory_days.unwrap_or(0);
+    if !(0..=127).contains(&mandatory_days) {
+        return Err(AppError::bad_request("mandatory_days must be 0-127"));
+    }
+
+    // mandatory_start_time: valid "HH:MM" format when mandatory_days > 0
+    let mandatory_start_time = if mandatory_days > 0 {
+        let time_str = mandatory_start_time.unwrap_or("00:00");
+        validate_time_format(time_str)?;
+        Some(time_str.to_string())
+    } else if let Some(time_str) = mandatory_start_time {
+        validate_time_format(time_str)?;
+        Some(time_str.to_string())
+    } else {
+        None
+    };
+
+    // assigned_children: if provided, must be non-empty
+    if let Some(children) = assigned_children
+        && children.is_empty()
+    {
+        return Err(AppError::bad_request(
+            "assigned_children must be non-empty when provided",
+        ));
+    }
+
+    Ok((
+        trimmed_name,
+        minutes,
+        priority,
+        mandatory_days,
+        mandatory_start_time,
+    ))
+}
+
+/// Validate strict "HH:MM" time format (00:00-23:59).
+///
+/// Requires exactly 5 characters with zero-padded hours and minutes
+/// (e.g. "03:00" not "3:00") because the blocking logic uses lexicographic
+/// string comparison which only works correctly with fixed-width format.
+fn validate_time_format(time_str: &str) -> Result<(), AppError> {
+    let bytes = time_str.as_bytes();
+    if bytes.len() != 5 || bytes[2] != b':' {
+        return Err(AppError::bad_request(
+            "mandatory_start_time must be in HH:MM format (zero-padded, e.g. 03:00)",
+        ));
+    }
+    let hours: u32 = time_str[0..2].parse().map_err(|_| {
+        AppError::bad_request(
+            "mandatory_start_time must be in HH:MM format (zero-padded, e.g. 03:00)",
+        )
+    })?;
+    let mins: u32 = time_str[3..5].parse().map_err(|_| {
+        AppError::bad_request(
+            "mandatory_start_time must be in HH:MM format (zero-padded, e.g. 03:00)",
+        )
+    })?;
+    if hours > 23 || mins > 59 {
+        return Err(AppError::bad_request(
+            "mandatory_start_time must be between 00:00 and 23:59",
+        ));
+    }
+    Ok(())
+}
+
+/// Validate that all child IDs in the list exist.
+async fn validate_child_ids_exist(
+    store: &crate::storage::Store,
+    children: &[String],
+) -> Result<(), AppError> {
+    for child_id in children {
+        let exists = store
+            .child_exists(child_id)
+            .await
+            .map_err(AppError::internal)?;
+        if !exists {
+            return Err(AppError::bad_request(format!(
+                "child '{}' not found",
+                child_id
+            )));
+        }
+    }
+    Ok(())
+}
+
 async fn api_list_tasks(
     State(state): State<AppState>,
     Extension(_auth): Extension<AuthCtx>,
-) -> Result<Json<Vec<api::TaskDto>>, AppError> {
-    let rows = state.store.list_tasks().await.map_err(AppError::internal)?;
+) -> Result<Json<Vec<api::TaskManagementDto>>, AppError> {
+    let rows = state
+        .store
+        .list_tasks_with_assignments()
+        .await
+        .map_err(AppError::internal)?;
     let items = rows
         .into_iter()
-        .map(|t| api::TaskDto {
-            id: t.id,
-            name: t.name,
-            minutes: t.minutes,
-            required: t.required,
-        })
+        .map(|(task, assigned)| task_to_management_dto(task, assigned))
         .collect();
     Ok(Json(items))
+}
+
+async fn api_get_task(
+    State(state): State<AppState>,
+    Extension(_auth): Extension<AuthCtx>,
+    Path(p): Path<TaskPath>,
+) -> Result<Json<api::TaskManagementDto>, AppError> {
+    let result = state
+        .store
+        .get_task_with_assignments(&p.task_id)
+        .await
+        .map_err(AppError::internal)?;
+    match result {
+        Some((task, assigned)) => Ok(Json(task_to_management_dto(task, assigned))),
+        None => Err(AppError::not_found(format!(
+            "task '{}' not found",
+            p.task_id
+        ))),
+    }
+}
+
+async fn api_create_task(
+    State(state): State<AppState>,
+    Extension(_auth): Extension<AuthCtx>,
+    Json(body): Json<api::CreateTaskReq>,
+) -> Result<(StatusCode, Json<api::TaskManagementDto>), AppError> {
+    let (name, minutes, priority, mandatory_days, mandatory_start_time) = validate_task_fields(
+        &body.name,
+        body.minutes,
+        body.priority,
+        body.mandatory_days,
+        body.mandatory_start_time.as_deref(),
+        &body.assigned_children,
+    )?;
+
+    // Validate child IDs exist
+    if let Some(ref children) = body.assigned_children {
+        validate_child_ids_exist(&state.store, children).await?;
+    }
+
+    let task = state
+        .store
+        .create_task(
+            &name,
+            minutes,
+            priority,
+            mandatory_days,
+            mandatory_start_time.as_deref(),
+            body.assigned_children,
+        )
+        .await
+        .map_err(AppError::internal)?;
+
+    let result = state
+        .store
+        .get_task_with_assignments(&task.id)
+        .await
+        .map_err(AppError::internal)?
+        .unwrap_or((task, Vec::new()));
+
+    Ok((
+        StatusCode::CREATED,
+        Json(task_to_management_dto(result.0, result.1)),
+    ))
+}
+
+async fn api_update_task(
+    State(state): State<AppState>,
+    Extension(_auth): Extension<AuthCtx>,
+    Path(p): Path<TaskPath>,
+    Json(body): Json<api::UpdateTaskReq>,
+) -> Result<Json<api::TaskManagementDto>, AppError> {
+    let (name, minutes, priority, mandatory_days, mandatory_start_time) = validate_task_fields(
+        &body.name,
+        body.minutes,
+        body.priority,
+        body.mandatory_days,
+        body.mandatory_start_time.as_deref(),
+        &body.assigned_children,
+    )?;
+
+    // Validate child IDs exist
+    if let Some(ref children) = body.assigned_children {
+        validate_child_ids_exist(&state.store, children).await?;
+    }
+
+    let task = state
+        .store
+        .update_task(
+            &p.task_id,
+            &name,
+            minutes,
+            priority,
+            mandatory_days,
+            mandatory_start_time.as_deref(),
+            body.assigned_children,
+        )
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("not found") {
+                AppError::not_found(format!("task '{}' not found", p.task_id))
+            } else {
+                AppError::internal(e)
+            }
+        })?;
+
+    let result = state
+        .store
+        .get_task_with_assignments(&task.id)
+        .await
+        .map_err(AppError::internal)?
+        .unwrap_or((task, Vec::new()));
+
+    Ok(Json(task_to_management_dto(result.0, result.1)))
+}
+
+async fn api_delete_task(
+    State(state): State<AppState>,
+    Extension(_auth): Extension<AuthCtx>,
+    Path(p): Path<TaskPath>,
+) -> Result<Json<api::DeleteTaskResp>, AppError> {
+    let deleted = state
+        .store
+        .soft_delete_task(&p.task_id)
+        .await
+        .map_err(AppError::internal)?;
+
+    if !deleted {
+        return Err(AppError::not_found(format!(
+            "task '{}' not found",
+            p.task_id
+        )));
+    }
+
+    Ok(Json(api::DeleteTaskResp { deleted: true }))
 }
 
 async fn api_list_child_tasks(
@@ -459,20 +742,34 @@ async fn api_list_child_tasks(
     // ACL enforced by middleware
     let rows = state
         .store
-        .list_tasks_with_last_done(&id)
+        .list_tasks_for_child(&id)
         .await
         .map_err(AppError::internal)?;
+    let family_tz = state.config.family_tz;
+    let now = chrono::Utc::now().with_timezone(&family_tz);
     let items = rows
         .into_iter()
-        .map(|(t, last)| api::TaskWithStatusDto {
-            id: t.id,
-            name: t.name,
-            minutes: t.minutes,
-            required: t.required,
-            last_done: last.map(|dt| {
-                chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc)
-                    .to_rfc3339()
-            }),
+        .map(|(t, last)| {
+            let is_currently_blocking = crate::storage::is_blocking_from_last_done(
+                t.mandatory_days,
+                t.mandatory_start_time.as_deref(),
+                last,
+                now,
+            );
+            api::TaskWithStatusDto {
+                id: t.id,
+                name: t.name,
+                minutes: t.minutes,
+                required: t.mandatory_days != 0,
+                last_done: last.map(|dt| {
+                    chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc)
+                        .to_rfc3339()
+                }),
+                priority: t.priority,
+                mandatory_days: t.mandatory_days,
+                mandatory_start_time: t.mandatory_start_time,
+                is_currently_blocking,
+            }
         })
         .collect();
     Ok(Json(items))
@@ -514,6 +811,11 @@ struct ChildDevicePath {
 #[derive(Deserialize)]
 struct ChildTaskPath {
     id: String,
+    task_id: String,
+}
+
+#[derive(Deserialize)]
+struct TaskPath {
     task_id: String,
 }
 
@@ -871,7 +1173,7 @@ async fn sse_notifications(
             let balance = state.store.get_balance(&cid).await.unwrap_or(0);
             let blocked = !state
                 .store
-                .all_required_tasks_done_today(&cid)
+                .all_required_tasks_done_today(&cid, state.config.family_tz)
                 .await
                 .unwrap_or(false); // on failure, assume tasks NOT done (blocked)
             init_items.push(ServerEvent::RemainingUpdated {
