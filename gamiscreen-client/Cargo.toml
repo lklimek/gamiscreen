@@ -32,7 +32,7 @@ futures-util = { version = "0.3.31", default-features = false, features = [
     "std",
 ] }
 url = "2.5.8"
-rpassword = "7.4.0"
+rpassword = "7.5.0"
 uuid = { version = "1.20.0", features = ["v4"] }
 chrono = { version = "0.4.43", default-features = false, features = ["clock"] }
 async-trait = "0.1.89"
