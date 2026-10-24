@@ -262,7 +262,7 @@ export async function listChildren() {
 }
 
 export async function listTasks() {
-  return request<TaskDto[]>(tenantPath('tasks'))
+  return listTasksManagement()
 }
 
 export async function getRemaining(childId: string) {

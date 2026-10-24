@@ -57,6 +57,7 @@ export function TaskFormPage({ taskId }: TaskFormPageProps) {
   const [nameError, setNameError] = useState<string | null>(null);
   const [minutesError, setMinutesError] = useState<string | null>(null);
   const [childrenError, setChildrenError] = useState<string | null>(null);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -125,8 +126,15 @@ export function TaskFormPage({ taskId }: TaskFormPageProps) {
       setChildrenError(null);
     }
 
+    if (mandatory && mandatoryDays === 0) {
+      setScheduleError("Select at least one mandatory day");
+      valid = false;
+    } else {
+      setScheduleError(null);
+    }
+
     return valid;
-  }, [name, minutes, assignAll, selectedChildren]);
+  }, [name, minutes, assignAll, selectedChildren, mandatory, mandatoryDays]);
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -440,6 +448,12 @@ export function TaskFormPage({ taskId }: TaskFormPageProps) {
                   );
                 })}
               </div>
+
+              {scheduleError && (
+                <small role="alert" style={{ color: "#dc2626" }}>
+                  {scheduleError}
+                </small>
+              )}
 
               {/* Start time */}
               <label className="col" style={{ gap: 4, marginTop: 12 }}>

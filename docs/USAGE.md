@@ -11,7 +11,9 @@ Parent
 
 Child
 1) Log in to the web app.
-2) Child view shows remaining minutes and today’s tasks (read‑only).
+2) Child view shows remaining minutes and assigned tasks; children submit completed tasks for parent approval.
+
+Parents use **Tasks** to create, edit and delete tasks, set priority and child assignments, and choose mandatory days and a start time in the configured family timezone. Tasks under **Now** are optional, currently blocking, or completed today; **Later** contains mandatory tasks that are not yet due. A mandatory task must have at least one scheduled day. Deleted tasks disappear from active lists while past completions and rewards remain available.
 
 Notes
 - Minutes can carry over if not used in a day.

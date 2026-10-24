@@ -406,6 +406,7 @@ impl Store {
             conn.immediate_transaction(|conn| -> Result<Task, StorageError> {
                 let task_id = generate_task_id(&name_owned);
                 let required = mandatory_days_owned != 0;
+                let now = Utc::now().naive_utc();
                 let new_task = NewTask {
                     id: &task_id,
                     name: &name_owned,
@@ -414,6 +415,8 @@ impl Store {
                     priority: priority_owned,
                     mandatory_days: mandatory_days_owned,
                     mandatory_start_time: mandatory_start_time_owned.as_deref(),
+                    created_at: now,
+                    updated_at: now,
                 };
                 diesel::insert_into(schema::tasks::table)
                     .values(&new_task)
@@ -695,6 +698,7 @@ impl Store {
             for t in &tasks_owned {
                 let mandatory_days = if t.required { 127 } else { 0 };
                 let mandatory_start_time = if t.required { Some("00:00") } else { None };
+                let now = Utc::now().naive_utc();
                 let new_task = NewTask {
                     id: &t.id,
                     name: &t.name,
@@ -703,6 +707,8 @@ impl Store {
                     priority: 2,
                     mandatory_days,
                     mandatory_start_time,
+                    created_at: now,
+                    updated_at: now,
                 };
                 diesel::insert_into(tasks::table)
                     .values(&new_task)
@@ -788,14 +794,33 @@ impl Store {
         tokio::task::spawn_blocking(move || -> Result<(), StorageError> {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
-            let rec = NewTaskSubmission {
-                child_id: &c,
-                task_id: &t,
-            };
-            diesel::insert_into(task_submissions::table)
-                .values(&rec)
-                .execute(&mut conn)?;
-            Ok(())
+            conn.immediate_transaction(|conn| {
+                use diesel::dsl::{exists, not};
+                use schema::{task_assignments as ta, tasks};
+                let available = tasks::table
+                    .filter(tasks::id.eq(&t))
+                    .filter(tasks::deleted_at.is_null())
+                    .filter(
+                        not(exists(ta::table.filter(ta::task_id.eq(&t)))).or(exists(
+                            ta::table
+                                .filter(ta::task_id.eq(&t))
+                                .filter(ta::child_id.eq(&c)),
+                        )),
+                    );
+                if !diesel::select(exists(available)).get_result::<bool>(conn)? {
+                    return Err(StorageError::InvalidInput(
+                        "task is not available to this child".into(),
+                    ));
+                }
+                let rec = NewTaskSubmission {
+                    child_id: &c,
+                    task_id: &t,
+                };
+                diesel::insert_into(task_submissions::table)
+                    .values(&rec)
+                    .execute(conn)?;
+                Ok(())
+            })
         })
         .await?
     }
@@ -974,6 +999,7 @@ impl Store {
             configure_sqlite_conn(&mut conn)?;
             Ok(tasks
                 .filter(id.eq(&tid))
+                .filter(deleted_at.is_null())
                 .first::<Task>(&mut conn)
                 .optional()?)
         })
@@ -1003,6 +1029,16 @@ impl Store {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
             conn.immediate_transaction(|conn| -> Result<i32, StorageError> {
+                if let Some(task_id) = &task_opt {
+                    let active = schema::tasks::table
+                        .filter(schema::tasks::id.eq(task_id))
+                        .filter(schema::tasks::deleted_at.is_null());
+                    if !diesel::select(diesel::dsl::exists(active)).get_result::<bool>(conn)? {
+                        return Err(StorageError::InvalidInput(
+                            "task is no longer available".into(),
+                        ));
+                    }
+                }
                 // Read current account_balance for debt tracking
                 let account_balance: i32 = balances::table
                     .filter(balances::child_id.eq(&child))
@@ -1352,15 +1388,17 @@ pub fn is_blocking_from_last_done(
         return false;
     }
 
-    // Check if completed today in family timezone
-    match last_done {
-        None => true, // Never completed => blocking
-        Some(done_utc) => {
-            let done_in_tz = chrono::DateTime::<Utc>::from_naive_utc_and_offset(done_utc, Utc)
-                .with_timezone(&now.timezone());
-            done_in_tz.date_naive() != now.date_naive()
-        }
-    }
+    !is_completed_today(last_done, now)
+}
+
+/// Whether the last completion belongs to the current day in the family timezone.
+pub fn is_completed_today(last_done: Option<NaiveDateTime>, now: chrono::DateTime<Tz>) -> bool {
+    last_done.is_some_and(|done| {
+        chrono::DateTime::<Utc>::from_naive_utc_and_offset(done, Utc)
+            .with_timezone(&now.timezone())
+            .date_naive()
+            == now.date_naive()
+    })
 }
 
 /// Convert a date in a given timezone to its midnight UTC `NaiveDateTime`,
@@ -2106,7 +2144,7 @@ mod tests {
         assert_eq!(updated.mandatory_days, 127);
         assert_eq!(updated.mandatory_start_time.as_deref(), Some("08:00"));
         assert!(updated.required);
-        assert!(updated.updated_at > task.updated_at || updated.updated_at == task.updated_at);
+        assert!(updated.updated_at >= task.updated_at);
     }
 
     #[tokio::test]
@@ -2428,6 +2466,32 @@ mod tests {
             .and_local_timezone(tz)
             .earliest()
             .expect("valid datetime in timezone")
+    }
+
+    #[test]
+    fn completion_status_uses_family_date_across_utc_midnight() {
+        let ny = chrono_tz::America::New_York;
+        let now = make_dt(ny, 2026, 3, 31, 0, 30);
+        let yesterday = make_dt(ny, 2026, 3, 30, 23, 30).naive_utc();
+        assert!(!is_completed_today(Some(yesterday), now));
+        assert!(is_blocking_from_last_done(
+            127,
+            Some("00:00"),
+            Some(yesterday),
+            now
+        ));
+
+        let tokyo = chrono_tz::Asia::Tokyo;
+        let now = make_dt(tokyo, 2026, 3, 31, 9, 30);
+        let earlier_today = make_dt(tokyo, 2026, 3, 31, 0, 30).naive_utc();
+        assert!(is_completed_today(Some(earlier_today), now));
+        assert!(!is_blocking_from_last_done(
+            127,
+            Some("00:00"),
+            Some(earlier_today),
+            now
+        ));
+        assert!(!is_completed_today(None, now));
     }
 
     /// Helper: insert a task directly into the test DB with full control.

@@ -55,6 +55,10 @@ required: boolean,
  */
 last_done: string | null, 
 /**
+ * Whether the most recent completion belongs to the current family-local day.
+ */
+completed_today: boolean,
+/**
  * Priority level: 1 (high), 2 (normal), 3 (low).
  */
 priority: number, 

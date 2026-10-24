@@ -33,14 +33,6 @@ import {
 import { formatMinutes } from "../formatTime";
 import { formatMandatoryDays } from "../taskHelpers";
 
-/** Determine if a task was completed today (browser local date). */
-function isDoneToday(lastDone: string | null): boolean {
-  if (!lastDone) return false;
-  const last = new Date(lastDone);
-  const todayStr = new Date().toISOString().slice(0, 10);
-  return last.toISOString().slice(0, 10) === todayStr;
-}
-
 /**
  * Classify a task into "now" or "later".
  *
@@ -52,7 +44,7 @@ function classifyTask(t: TaskWithStatusDto): "now" | "later" {
   const isOptional = t.mandatory_days === 0;
   if (isOptional) return "now";
   // Mandatory task — show in "Now" if currently blocking or done today
-  if (t.is_currently_blocking || isDoneToday(t.last_done)) return "now";
+  if (t.is_currently_blocking || t.completed_today) return "now";
   return "later";
 }
 
@@ -424,7 +416,9 @@ export function ChildDetailsPage(props: { childId: string }) {
         const nowIso = new Date().toISOString();
         setTasks((prev) =>
           prev.map((t) =>
-            t.id === confirm.task.id ? { ...t, last_done: nowIso } : t,
+            t.id === confirm.task.id
+              ? { ...t, last_done: nowIso, completed_today: true, is_currently_blocking: false }
+              : t,
           ),
         );
 
@@ -680,12 +674,11 @@ export function ChildDetailsPage(props: { childId: string }) {
             t: TaskWithStatusDto,
             muted: boolean,
           ) => {
-            const doneToday = isDoneToday(t.last_done);
+            const doneToday = t.completed_today;
             const last = t.last_done ? new Date(t.last_done) : null;
             const wasSubmitted = submitted.has(t.id);
             const isNegative = t.minutes < 0;
-            const isBlocking =
-              t.is_currently_blocking && !doneToday;
+            const isBlocking = t.is_currently_blocking;
 
             // Style: blue left border for currently-blocking mandatory tasks
             const taskRowStyle: React.CSSProperties = isBlocking

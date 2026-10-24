@@ -2,9 +2,11 @@
 ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 2;
 ALTER TABLE tasks ADD COLUMN mandatory_days INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE tasks ADD COLUMN mandatory_start_time TEXT;
-ALTER TABLE tasks ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
-ALTER TABLE tasks ADD COLUMN updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
+-- ADD COLUMN requires a constant default in SQLite; application inserts supply timestamps.
+ALTER TABLE tasks ADD COLUMN created_at TIMESTAMP NOT NULL DEFAULT '1970-01-01 00:00:00';
+ALTER TABLE tasks ADD COLUMN updated_at TIMESTAMP NOT NULL DEFAULT '1970-01-01 00:00:00';
 ALTER TABLE tasks ADD COLUMN deleted_at TIMESTAMP;
+UPDATE tasks SET created_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP;
 
 -- Backfill existing rows: required=true -> mandatory_days=127 (all days), start_time=00:00
 UPDATE tasks SET mandatory_days = 127, mandatory_start_time = '00:00' WHERE required = 1;

@@ -74,6 +74,8 @@ pub struct TaskWithStatusDto {
     pub required: bool,
     /// RFC 3339 UTC timestamp of the most recent completion, or `None` if never done.
     pub last_done: Option<String>,
+    /// Whether the most recent completion belongs to the current family-local day.
+    pub completed_today: bool,
     /// Priority level: 1 (high), 2 (normal), 3 (low).
     pub priority: i32,
     /// 7-bit bitmask of mandatory days (bit 0 = Mon .. bit 6 = Sun). 0 = optional task.

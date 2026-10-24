@@ -1617,7 +1617,7 @@ async fn tc072_invalid_start_time_rejected() {
     };
     let t = s.parent_token().await;
 
-    let invalid_times = ["25:00", "12:60", "abc"];
+    let invalid_times = ["25:00", "12:60", "abc", "+1:00", "01:+1"];
     for time in invalid_times {
         s.create_task_expect_error(
             &t,
@@ -1631,6 +1631,118 @@ async fn tc072_invalid_start_time_rejected() {
         )
         .await;
     }
+}
+
+#[tokio::test]
+async fn task_lifecycle_rejects_ineligible_submissions() {
+    let Some(s) = TestServer::spawn_default().await else {
+        return;
+    };
+    let parent = s.parent_token().await;
+    let alice = s.login("alice", "kidpass").await;
+    let task = s
+        .create_task(
+            &parent,
+            json!({
+                "name": "Bob only", "minutes": 10, "assigned_children": ["bob"]
+            }),
+        )
+        .await;
+    s.expect_status(
+        "POST",
+        &tenant_path(&format!("children/alice/tasks/{}/submit", task.id)),
+        Some(&alice),
+        None,
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    assert_eq!(s.list_tasks(&parent).await.len(), 1);
+}
+
+#[tokio::test]
+async fn deleted_task_rejects_submissions_and_rewards() {
+    let Some(s) = TestServer::spawn_default().await else {
+        return;
+    };
+    let parent = s.parent_token().await;
+    let alice = s.child_token("alice").await;
+    let task = s
+        .create_task(&parent, json!({"name": "Reading", "minutes": 10}))
+        .await;
+    s.delete_task(&parent, &task.id).await;
+    s.expect_status(
+        "POST",
+        &tenant_path(&format!("children/alice/tasks/{}/submit", task.id)),
+        Some(&alice),
+        None,
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+    s.expect_status(
+        "POST",
+        &tenant_path("children/alice/reward"),
+        Some(&parent),
+        Some(json!({"child_id": "alice", "task_id": task.id})),
+        StatusCode::BAD_REQUEST,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn shared_task_list_client_matches_server_response() {
+    let Some(s) = TestServer::spawn_default().await else {
+        return;
+    };
+    let parent = s.parent_token().await;
+    let created = s
+        .create_task(&parent, json!({"name": "Reading", "minutes": 5}))
+        .await;
+    let listed = gamiscreen_shared::api::rest::list_tasks(&s.base, TENANT_ID, &parent)
+        .await
+        .expect("decode task list");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].id, created.id);
+}
+
+#[tokio::test]
+async fn child_task_completion_status_uses_family_day() {
+    let Some(s) = TestServer::spawn_custom(
+        vec![Child {
+            id: "alice".into(),
+            display_name: "Alice".into(),
+        }],
+        vec![],
+        chrono_tz::America::New_York,
+    )
+    .await
+    else {
+        return;
+    };
+    let parent = s.parent_token().await;
+    let task = s
+        .create_task(&parent, json!({"name": "Reading", "minutes": 5}))
+        .await;
+    let tasks: Vec<Value> = s
+        .json_request(
+            "GET",
+            &tenant_path("children/alice/tasks"),
+            Some(&parent),
+            None,
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(tasks[0]["completed_today"], false);
+    s.reward_child(&parent, "alice", Some(&task.id), None).await;
+    let tasks: Vec<Value> = s
+        .json_request(
+            "GET",
+            &tenant_path("children/alice/tasks"),
+            Some(&parent),
+            None,
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(tasks[0]["completed_today"], true);
 }
 
 /// TC-077: `required` backward-compat column derived from mandatory_days.
@@ -1794,7 +1906,7 @@ async fn tc026_timezone_evaluation() {
     let today_bit = 1i32 << now_tokyo.weekday().num_days_from_monday();
 
     // Create a task mandatory today (in Tokyo) at a start time in the past (Tokyo time)
-    let start = format!("{:02}:{:02}", now_tokyo.hour().saturating_sub(1).max(0), 0);
+    let start = format!("{:02}:{:02}", now_tokyo.hour().saturating_sub(1), 0);
 
     let task = s
         .create_task(

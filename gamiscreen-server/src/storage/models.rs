@@ -45,6 +45,8 @@ pub struct NewTask<'a> {
     pub priority: i32,
     pub mandatory_days: i32,
     pub mandatory_start_time: Option<&'a str>,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
 }
 
 #[derive(Debug, Clone, Queryable, Identifiable, Associations, Selectable)]

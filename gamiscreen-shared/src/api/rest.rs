@@ -159,16 +159,8 @@ pub async fn list_tasks(
     base: &str,
     tenant_id: &str,
     bearer: &str,
-) -> Result<Vec<TaskDto>, RestError> {
-    let client = mk_client()?;
-    let url = ep::tasks(base, tenant_id);
-    let res = client
-        .get(url)
-        .bearer_auth(bearer)
-        .send()
-        .await
-        .map_err(|e| RestError::Http(e.to_string()))?;
-    handle_json(res).await
+) -> Result<Vec<TaskManagementDto>, RestError> {
+    list_tasks_management(base, tenant_id, bearer).await
 }
 
 pub async fn child_remaining(

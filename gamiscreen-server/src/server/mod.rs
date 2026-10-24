@@ -540,7 +540,12 @@ fn validate_task_fields(
 /// string comparison which only works correctly with fixed-width format.
 fn validate_time_format(time_str: &str) -> Result<(), AppError> {
     let bytes = time_str.as_bytes();
-    if bytes.len() != 5 || bytes[2] != b':' {
+    if bytes.len() != 5
+        || bytes[2] != b':'
+        || ![bytes[0], bytes[1], bytes[3], bytes[4]]
+            .iter()
+            .all(u8::is_ascii_digit)
+    {
         return Err(AppError::bad_request(
             "mandatory_start_time must be in HH:MM format (zero-padded, e.g. 03:00)",
         ));
@@ -765,6 +770,7 @@ async fn api_list_child_tasks(
                     chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc)
                         .to_rfc3339()
                 }),
+                completed_today: crate::storage::is_completed_today(last, now),
                 priority: t.priority,
                 mandatory_days: t.mandatory_days,
                 mandatory_start_time: t.mandatory_start_time,
@@ -893,7 +899,10 @@ async fn api_child_reward(
             task_completion,
         )
         .await
-        .map_err(AppError::internal)?;
+        .map_err(|error| match error {
+            crate::storage::StorageError::InvalidInput(message) => AppError::bad_request(message),
+            other => AppError::internal(other),
+        })?;
     *child_guard = Some(new_remaining);
 
     let (effective, balance, blocked) = state.compute_child_status(&p.id).await?;
@@ -1313,21 +1322,14 @@ async fn api_submit_task(
         Some(cid) if cid == &p.id => {}
         _ => return Err(AppError::forbidden()),
     }
-    // Ensure task exists
-    match state
-        .store
-        .get_task_by_id(&p.task_id)
-        .await
-        .map_err(AppError::internal)?
-    {
-        Some(_) => {}
-        None => return Err(AppError::bad_request("unknown task_id")),
-    }
     state
         .store
         .submit_task(&p.id, &p.task_id)
         .await
-        .map_err(AppError::internal)?;
+        .map_err(|error| match error {
+            crate::storage::StorageError::InvalidInput(message) => AppError::bad_request(message),
+            other => AppError::internal(other),
+        })?;
     if let Ok(c) = state.store.pending_submissions_count().await {
         let event = ServerEvent::PendingCount { count: c as u32 };
         state.dispatch_event(event);
