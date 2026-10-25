@@ -6,11 +6,12 @@ use ts_rs::{Config, TS};
 
 #[cfg(feature = "ts")]
 use super::{
-    AuthReq, AuthResp, ChildDto, ClientRegisterReq, ClientRegisterResp, ConfigResp, HeartbeatReq,
-    HeartbeatResp, NotificationItemDto, NotificationsCountDto, PushSubscribeReq, PushSubscribeResp,
-    PushUnsubscribeReq, RemainingDto, RewardHistoryItemDto, RewardReq, RewardResp, SubmitTaskReq,
-    TaskDto, TaskWithStatusDto, UpdateArtifactDto, UpdateItemDto, UpdateManifestDto,
-    UsageBucketDto, UsageSeriesDto, VersionInfoDto,
+    AuthReq, AuthResp, ChildDto, ClientRegisterReq, ClientRegisterResp, ConfigResp, CreateTaskReq,
+    DeleteTaskResp, HeartbeatReq, HeartbeatResp, NotificationItemDto, NotificationsCountDto,
+    PushSubscribeReq, PushSubscribeResp, PushUnsubscribeReq, RemainingDto, RewardHistoryItemDto,
+    RewardReq, RewardResp, SubmitTaskReq, TaskDto, TaskManagementDto, TaskWithStatusDto,
+    UpdateArtifactDto, UpdateItemDto, UpdateManifestDto, UpdateTaskReq, UsageBucketDto,
+    UsageSeriesDto, VersionInfoDto,
 };
 #[cfg(feature = "ts")]
 use crate::{auth::Role, jwt::JwtClaims};
@@ -50,6 +51,10 @@ pub fn export_types(path: impl AsRef<Path>) -> std::io::Result<()> {
     write_decl(ChildDto::decl(&config))?;
     write_decl(TaskDto::decl(&config))?;
     write_decl(TaskWithStatusDto::decl(&config))?;
+    write_decl(CreateTaskReq::decl(&config))?;
+    write_decl(UpdateTaskReq::decl(&config))?;
+    write_decl(TaskManagementDto::decl(&config))?;
+    write_decl(DeleteTaskResp::decl(&config))?;
     write_decl(RemainingDto::decl(&config))?;
     write_decl(RewardReq::decl(&config))?;
     write_decl(RewardResp::decl(&config))?;

@@ -31,6 +31,22 @@ import {
   UsageChart,
 } from "../components/UsageChart";
 import { formatMinutes } from "../formatTime";
+import { formatMandatoryDays } from "../taskHelpers";
+
+/**
+ * Classify a task into "now" or "later".
+ *
+ * "Now": optional tasks (mandatory_days === 0) + mandatory tasks that are
+ *        currently due (is_currently_blocking) or already done today.
+ * "Later": mandatory tasks not currently due and not done today.
+ */
+function classifyTask(t: TaskWithStatusDto): "now" | "later" {
+  const isOptional = t.mandatory_days === 0;
+  if (isOptional) return "now";
+  // Mandatory task — show in "Now" if currently blocking or done today
+  if (t.is_currently_blocking || t.completed_today) return "now";
+  return "later";
+}
 
 const USAGE_BASE_PRESETS = [
   { key: "1h", label: "1 hour", bucketMinutes: MINUTES_PER_HOUR },
@@ -96,33 +112,32 @@ function detectViewportVariant(): ViewportVariant {
   return isLandscape ? "mobileLandscape" : "mobilePortrait";
 }
 
-/** Single task row — extracted from ChildDetailsPage for readability. */
+/** A task row with its completion status and mandatory schedule. */
 function TaskRow(props: {
   task: TaskWithStatusDto;
+  muted: boolean;
   isParent: boolean;
   isChild: boolean;
   wasSubmitted: boolean;
-  childId: string;
   onConfirm: (task: TaskWithStatusDto) => void;
   onSubmit: (taskId: string) => Promise<void>;
 }) {
   const {
     task: t,
+    muted,
     isParent,
     isChild,
     wasSubmitted,
     onConfirm,
     onSubmit,
   } = props;
+  const doneToday = t.completed_today;
   const last = t.last_done ? new Date(t.last_done) : null;
-  const now = new Date();
-  const isDoneToday = last
-    ? last.getFullYear() === now.getFullYear() &&
-      last.getMonth() === now.getMonth() &&
-      last.getDate() === now.getDate()
-    : false;
   const isNegative = t.minutes < 0;
-  const taskRowStyle: React.CSSProperties = t.required
+  const isBlocking = t.is_currently_blocking;
+
+  // Style: blue left border for currently-blocking mandatory tasks
+  const taskRowStyle: React.CSSProperties = isBlocking
     ? {
         borderLeft: "4px solid #2563eb",
         background: "#eff6ff",
@@ -131,19 +146,61 @@ function TaskRow(props: {
       }
     : {};
 
+  // Muted style for "Later" tasks
+  if (muted) {
+    taskRowStyle.opacity = 0.55;
+  }
+
+  // Schedule info for mandatory tasks
+  const scheduleInfo =
+    t.mandatory_days > 0 && t.mandatory_start_time
+      ? `Due at ${t.mandatory_start_time}`
+      : t.mandatory_days > 0
+        ? formatMandatoryDays(t.mandatory_days)
+        : null;
+
   return (
     <div
       className={`row taskRow${isNegative ? " taskRowNegative" : ""}`}
       style={taskRowStyle}
       aria-label={
-        t.required
-          ? `Required task: ${t.name}, ${t.minutes} minutes`
-          : undefined
+        isBlocking
+          ? `Required task: ${t.name}, ${t.minutes} minutes, currently blocking`
+          : t.mandatory_days > 0
+            ? `Mandatory task: ${t.name}, ${t.minutes} minutes`
+            : `Task: ${t.name}, ${t.minutes} minutes`
       }
     >
       <div className="row taskRowHeader">
-        <span>{t.required ? <strong>* {t.name}</strong> : t.name}</span>
-        {isDoneToday && <mark title={last?.toLocaleString() || ""}>Done</mark>}
+        <span>
+          {isBlocking ? <strong>* {t.name}</strong> : t.name}
+        </span>
+        {doneToday && (
+          <mark
+            style={{
+              background: "#dcfce7",
+              color: "#166534",
+              padding: "2px 8px",
+              borderRadius: 4,
+              fontSize: 12,
+              fontWeight: 600,
+            }}
+            title={last?.toLocaleString() || ""}
+          >
+            Done
+          </mark>
+        )}
+        {scheduleInfo && !doneToday && (
+          <span
+            style={{
+              fontSize: 12,
+              color: "var(--muted-color, #666)",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {scheduleInfo}
+          </span>
+        )}
       </div>
       <div className="row taskRowActions">
         <span className={`subtitle${isNegative ? " negativeMinutes" : ""}`}>
@@ -152,25 +209,27 @@ function TaskRow(props: {
         </span>
         {isParent && (
           <button
-            className={isDoneToday ? "contrast" : undefined}
+            className={doneToday ? "contrast" : undefined}
             onClick={() => onConfirm(t)}
           >
             Accept
           </button>
         )}
         {isChild &&
-          (wasSubmitted || isDoneToday ? (
+          (wasSubmitted || doneToday ? (
             <button
               className="secondary"
               disabled
               title={
-                isDoneToday ? "Already done today" : "Submitted for approval"
+                doneToday ? "Already done today" : "Submitted for approval"
               }
             >
-              {isDoneToday ? "Done" : "Submitted"}
+              {doneToday ? "Done" : "Submitted"}
             </button>
           ) : (
-            <button onClick={() => onSubmit(t.id)}>Submit</button>
+            <button onClick={() => onSubmit(t.id)}>
+              Submit
+            </button>
           ))}
       </div>
     </div>
@@ -231,14 +290,6 @@ export function ChildDetailsPage(props: { childId: string }) {
   // Track locally submitted tasks to avoid duplicate submissions until page reload or approval
   const [submitted, setSubmitted] = useState<Set<string>>(new Set());
   const usageRequestIdRef = useRef(0);
-
-  const sortedTasks = useMemo(
-    () =>
-      [...tasks].sort((a, b) =>
-        a.required === b.required ? 0 : a.required ? -1 : 1,
-      ),
-    [tasks],
-  );
 
   const handleTaskConfirm = useCallback((task: TaskWithStatusDto) => {
     setTaskNote("");
@@ -511,7 +562,9 @@ export function ChildDetailsPage(props: { childId: string }) {
         const nowIso = new Date().toISOString();
         setTasks((prev) =>
           prev.map((t) =>
-            t.id === confirm.task.id ? { ...t, last_done: nowIso } : t,
+            t.id === confirm.task.id
+              ? { ...t, last_done: nowIso, completed_today: true, is_currently_blocking: false }
+              : t,
           ),
         );
 
@@ -751,21 +804,78 @@ export function ChildDetailsPage(props: { childId: string }) {
             Complete all starred (*) tasks to unlock screen time.
           </p>
         )}
-        <div className="col" style={{ gap: 6 }}>
-          {sortedTasks.map((t) => (
+        {(() => {
+          const nowTasks: TaskWithStatusDto[] = [];
+          const laterTasks: TaskWithStatusDto[] = [];
+          for (const t of tasks) {
+            if (classifyTask(t) === "now") {
+              nowTasks.push(t);
+            } else {
+              laterTasks.push(t);
+            }
+          }
+          // API returns pre-sorted by priority then name; preserve that order.
+
+          const renderTaskRow = (t: TaskWithStatusDto, muted: boolean) => (
             <TaskRow
               key={t.id}
               task={t}
+              muted={muted}
               isParent={isParent}
               isChild={isChild}
               wasSubmitted={submitted.has(t.id)}
-              childId={childId}
               onConfirm={handleTaskConfirm}
               onSubmit={handleTaskSubmit}
             />
-          ))}
-          {tasks.length === 0 && <p className="subtitle">No tasks</p>}
-        </div>
+          );
+
+          return (
+            <>
+              {/* "Now" section — always shown */}
+              <div
+                className="col"
+                style={{ gap: 6 }}
+                role="list"
+                aria-label="Current tasks"
+              >
+                {nowTasks.length > 0 ? (
+                  nowTasks.map((t) => renderTaskRow(t, false))
+                ) : tasks.length === 0 ? (
+                  <p className="subtitle">No tasks</p>
+                ) : (
+                  <p className="subtitle">All tasks are scheduled for later</p>
+                )}
+              </div>
+
+              {/* "Later" section — hidden when empty */}
+              {laterTasks.length > 0 && (
+                <div style={{ marginTop: 16 }}>
+                  <h4
+                    className="subtitle"
+                    style={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.05em",
+                      marginBottom: 6,
+                      color: "var(--muted-color, #888)",
+                    }}
+                  >
+                    Later
+                  </h4>
+                  <div
+                    className="col"
+                    style={{ gap: 6 }}
+                    role="list"
+                    aria-label="Upcoming tasks"
+                  >
+                    {laterTasks.map((t) => renderTaskRow(t, true))}
+                  </div>
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
       {isParent && (
         <div className="card" style={{ padding: "12px" }}>

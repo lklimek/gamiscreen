@@ -31,6 +31,20 @@ diesel::table! {
         name -> Text,
         minutes -> Integer,
         required -> Bool,
+        priority -> Integer,
+        mandatory_days -> Integer,
+        mandatory_start_time -> Nullable<Text>,
+        created_at -> Timestamp,
+        updated_at -> Timestamp,
+        deleted_at -> Nullable<Timestamp>,
+    }
+}
+
+diesel::table! {
+    task_assignments (id) {
+        id -> Integer,
+        task_id -> Text,
+        child_id -> Text,
     }
 }
 
@@ -102,6 +116,8 @@ diesel::joinable!(rewards -> tasks (task_id));
 diesel::joinable!(push_subscriptions -> children (child_id));
 diesel::joinable!(balance_transactions -> children (child_id));
 diesel::joinable!(balance_transactions -> rewards (related_reward_id));
+diesel::joinable!(task_assignments -> tasks (task_id));
+diesel::joinable!(task_assignments -> children (child_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     balances,
@@ -109,6 +125,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     children,
     rewards,
     tasks,
+    task_assignments,
     sessions,
     task_completions,
     task_submissions,

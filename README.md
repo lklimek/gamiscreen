@@ -11,6 +11,7 @@ Gamiscreen is a self-hosted parental control tool that turns good habits into sc
 - Reward minutes for tasks or custom amounts; instant updates to remaining time.
 - Parent dashboard with auto-refresh to monitor all children.
 - Child view shows remaining time and today’s tasks at a glance.
+- Parents manage task priorities, child assignments and mandatory schedules in the Tasks page. See [configuration](docs/CONFIGURATION.md) for family timezone settings.
 - Enforced limits on Linux: screen locks when time is up or offline for >5 minutes.
 - Pre-lock countdown warning: fixed 45-second notification before a lock fires.
 - Child push alerts on mobile/desktop (installable PWA): receive updates when remaining time reaches 5 minutes or increases.

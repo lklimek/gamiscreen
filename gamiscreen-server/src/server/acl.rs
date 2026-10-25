@@ -57,7 +57,12 @@ pub async fn enforce_acl(
 fn allow_parent(method: &Method, rest: &[&str]) -> Result<(), AppError> {
     match rest {
         ["children"] if *method == Method::GET => Ok(()),
-        ["tasks"] if *method == Method::GET => Ok(()),
+        ["tasks"] if *method == Method::GET || *method == Method::POST => Ok(()),
+        ["tasks", _]
+            if *method == Method::GET || *method == Method::PUT || *method == Method::DELETE =>
+        {
+            Ok(())
+        }
         ["notifications"] if *method == Method::GET => Ok(()),
         ["notifications", "count"] if *method == Method::GET => Ok(()),
         ["notifications", "task-submissions", id, action]
@@ -83,7 +88,6 @@ fn allow_parent(method: &Method, rest: &[&str]) -> Result<(), AppError> {
 
 fn allow_child(method: &Method, rest: &[&str], claims: &JwtClaims) -> Result<(), AppError> {
     match rest {
-        ["tasks"] if *method == Method::GET => Ok(()),
         ["children", child, "remaining"] if *method == Method::GET => ensure_child(claims, child),
         ["children", child, "usage"] if *method == Method::GET => ensure_child(claims, child),
         ["children", child, "tasks"] if *method == Method::GET => ensure_child(claims, child),
