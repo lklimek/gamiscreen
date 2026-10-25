@@ -15,6 +15,8 @@ Child
 
 Parents use **Tasks** to create, edit and delete tasks, set priority and child assignments, and choose mandatory days and a start time in the configured family timezone. Tasks under **Now** are optional, currently blocking, or completed today; **Later** contains mandatory tasks that are not yet due. A mandatory task must have at least one scheduled day. Deleted tasks disappear from active lists while past completions and rewards remain available.
 
+On narrow screens, task details and actions wrap to fit. Reward history scrolls horizontally within its table when needed; keyboard users can focus the history region and use the arrow keys.
+
 Notes
 - Minutes can carry over if not used in a day.
 - The server embeds and serves the web app build output.
