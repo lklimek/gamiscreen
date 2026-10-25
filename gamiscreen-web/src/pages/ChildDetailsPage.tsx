@@ -112,6 +112,130 @@ function detectViewportVariant(): ViewportVariant {
   return isLandscape ? "mobileLandscape" : "mobilePortrait";
 }
 
+/** A task row with its completion status and mandatory schedule. */
+function TaskRow(props: {
+  task: TaskWithStatusDto;
+  muted: boolean;
+  isParent: boolean;
+  isChild: boolean;
+  wasSubmitted: boolean;
+  onConfirm: (task: TaskWithStatusDto) => void;
+  onSubmit: (taskId: string) => Promise<void>;
+}) {
+  const {
+    task: t,
+    muted,
+    isParent,
+    isChild,
+    wasSubmitted,
+    onConfirm,
+    onSubmit,
+  } = props;
+  const doneToday = t.completed_today;
+  const last = t.last_done ? new Date(t.last_done) : null;
+  const isNegative = t.minutes < 0;
+  const isBlocking = t.is_currently_blocking;
+
+  // Style: blue left border for currently-blocking mandatory tasks
+  const taskRowStyle: React.CSSProperties = isBlocking
+    ? {
+        borderLeft: "4px solid #2563eb",
+        background: "#eff6ff",
+        borderRadius: 8,
+        paddingLeft: 12,
+      }
+    : {};
+
+  // Muted style for "Later" tasks
+  if (muted) {
+    taskRowStyle.opacity = 0.55;
+  }
+
+  // Schedule info for mandatory tasks
+  const scheduleInfo =
+    t.mandatory_days > 0 && t.mandatory_start_time
+      ? `Due at ${t.mandatory_start_time}`
+      : t.mandatory_days > 0
+        ? formatMandatoryDays(t.mandatory_days)
+        : null;
+
+  return (
+    <div
+      className={`row taskRow${isNegative ? " taskRowNegative" : ""}`}
+      style={taskRowStyle}
+      aria-label={
+        isBlocking
+          ? `Required task: ${t.name}, ${t.minutes} minutes, currently blocking`
+          : t.mandatory_days > 0
+            ? `Mandatory task: ${t.name}, ${t.minutes} minutes`
+            : `Task: ${t.name}, ${t.minutes} minutes`
+      }
+    >
+      <div className="row taskRowHeader">
+        <span>
+          {isBlocking ? <strong>* {t.name}</strong> : t.name}
+        </span>
+        {doneToday && (
+          <mark
+            style={{
+              background: "#dcfce7",
+              color: "#166534",
+              padding: "2px 8px",
+              borderRadius: 4,
+              fontSize: 12,
+              fontWeight: 600,
+            }}
+            title={last?.toLocaleString() || ""}
+          >
+            Done
+          </mark>
+        )}
+        {scheduleInfo && !doneToday && (
+          <span
+            style={{
+              fontSize: 12,
+              color: "var(--muted-color, #666)",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {scheduleInfo}
+          </span>
+        )}
+      </div>
+      <div className="row taskRowActions">
+        <span className={`subtitle${isNegative ? " negativeMinutes" : ""}`}>
+          {t.minutes > 0 ? "+" : ""}
+          {t.minutes} min
+        </span>
+        {isParent && (
+          <button
+            className={doneToday ? "contrast" : undefined}
+            onClick={() => onConfirm(t)}
+          >
+            Accept
+          </button>
+        )}
+        {isChild &&
+          (wasSubmitted || doneToday ? (
+            <button
+              className="secondary"
+              disabled
+              title={
+                doneToday ? "Already done today" : "Submitted for approval"
+              }
+            >
+              {doneToday ? "Done" : "Submitted"}
+            </button>
+          ) : (
+            <button onClick={() => onSubmit(t.id)}>
+              Submit
+            </button>
+          ))}
+      </div>
+    </div>
+  );
+}
+
 export function ChildDetailsPage(props: { childId: string }) {
   const { childId } = props;
   const [displayName, setDisplayName] = useState<string>(childId);
@@ -166,6 +290,28 @@ export function ChildDetailsPage(props: { childId: string }) {
   // Track locally submitted tasks to avoid duplicate submissions until page reload or approval
   const [submitted, setSubmitted] = useState<Set<string>>(new Set());
   const usageRequestIdRef = useRef(0);
+
+  const handleTaskConfirm = useCallback((task: TaskWithStatusDto) => {
+    setTaskNote("");
+    setConfirm({ mode: "task", task });
+  }, []);
+
+  const handleTaskSubmit = useCallback(
+    async (taskId: string) => {
+      try {
+        await submitTask(childId, taskId);
+        setError(null);
+        setSubmitted((prev) => {
+          const next = new Set(prev);
+          next.add(taskId);
+          return next;
+        });
+      } catch (e: any) {
+        setError(e.message || "Failed to submit task");
+      }
+    },
+    [childId],
+  );
 
   const handleEnableNotifications = useCallback(async () => {
     try {
@@ -670,141 +816,18 @@ export function ChildDetailsPage(props: { childId: string }) {
           }
           // API returns pre-sorted by priority then name; preserve that order.
 
-          const renderTaskRow = (
-            t: TaskWithStatusDto,
-            muted: boolean,
-          ) => {
-            const doneToday = t.completed_today;
-            const last = t.last_done ? new Date(t.last_done) : null;
-            const wasSubmitted = submitted.has(t.id);
-            const isNegative = t.minutes < 0;
-            const isBlocking = t.is_currently_blocking;
-
-            // Style: blue left border for currently-blocking mandatory tasks
-            const taskRowStyle: React.CSSProperties = isBlocking
-              ? {
-                  borderLeft: "4px solid #2563eb",
-                  background: "#eff6ff",
-                  borderRadius: 8,
-                  paddingLeft: 12,
-                }
-              : {};
-
-            // Muted style for "Later" tasks
-            if (muted) {
-              taskRowStyle.opacity = 0.55;
-            }
-
-            // Schedule info for mandatory tasks
-            const scheduleInfo =
-              t.mandatory_days > 0 && t.mandatory_start_time
-                ? `Due at ${t.mandatory_start_time}`
-                : t.mandatory_days > 0
-                  ? formatMandatoryDays(t.mandatory_days)
-                  : null;
-
-            return (
-              <div
-                className={`row taskRow${isNegative ? " taskRowNegative" : ""}`}
-                key={t.id}
-                style={taskRowStyle}
-                aria-label={
-                  isBlocking
-                    ? `Required task: ${t.name}, ${t.minutes} minutes, currently blocking`
-                    : t.mandatory_days > 0
-                      ? `Mandatory task: ${t.name}, ${t.minutes} minutes`
-                      : `Task: ${t.name}, ${t.minutes} minutes`
-                }
-              >
-                <div className="row taskRowHeader">
-                  <span>
-                    {isBlocking ? (
-                      <strong>* {t.name}</strong>
-                    ) : (
-                      t.name
-                    )}
-                  </span>
-                  {doneToday && (
-                    <mark
-                      style={{
-                        background: "#dcfce7",
-                        color: "#166534",
-                        padding: "2px 8px",
-                        borderRadius: 4,
-                        fontSize: 12,
-                        fontWeight: 600,
-                      }}
-                      title={last?.toLocaleString() || ""}
-                    >
-                      Done
-                    </mark>
-                  )}
-                  {scheduleInfo && !doneToday && (
-                    <span
-                      style={{
-                        fontSize: 12,
-                        color: "var(--muted-color, #666)",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {scheduleInfo}
-                    </span>
-                  )}
-                </div>
-                <div className="row taskRowActions">
-                  <span
-                    className={`subtitle${isNegative ? " negativeMinutes" : ""}`}
-                  >
-                    {t.minutes > 0 ? "+" : ""}
-                    {t.minutes} min
-                  </span>
-                  {isParent && (
-                    <button
-                      className={doneToday ? "contrast" : undefined}
-                      onClick={() => {
-                        setTaskNote("");
-                        setConfirm({ mode: "task", task: t });
-                      }}
-                    >
-                      Accept
-                    </button>
-                  )}
-                  {isChild &&
-                    (wasSubmitted || doneToday ? (
-                      <button
-                        className="secondary"
-                        disabled
-                        title={
-                          doneToday
-                            ? "Already done today"
-                            : "Submitted for approval"
-                        }
-                      >
-                        {doneToday ? "Done" : "Submitted"}
-                      </button>
-                    ) : (
-                      <button
-                        onClick={async () => {
-                          try {
-                            await submitTask(childId, t.id);
-                            setError(null);
-                            setSubmitted((prev) => {
-                              const next = new Set(prev);
-                              next.add(t.id);
-                              return next;
-                            });
-                          } catch (e: any) {
-                            setError(e.message || "Failed to submit task");
-                          }
-                        }}
-                      >
-                        Submit
-                      </button>
-                    ))}
-                </div>
-              </div>
-            );
-          };
+          const renderTaskRow = (t: TaskWithStatusDto, muted: boolean) => (
+            <TaskRow
+              key={t.id}
+              task={t}
+              muted={muted}
+              isParent={isParent}
+              isChild={isChild}
+              wasSubmitted={submitted.has(t.id)}
+              onConfirm={handleTaskConfirm}
+              onSubmit={handleTaskSubmit}
+            />
+          );
 
           return (
             <>
