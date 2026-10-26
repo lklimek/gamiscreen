@@ -433,6 +433,7 @@ export function TaskFormPage({ taskId }: TaskFormPageProps) {
                       style={{
                         width: 44,
                         height: 44,
+                        flex: "0 0 44px",
                         padding: 0,
                         fontSize: 14,
                         fontWeight: 600,

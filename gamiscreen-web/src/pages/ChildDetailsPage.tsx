@@ -1029,40 +1029,47 @@ export function ChildDetailsPage(props: { childId: string }) {
             className="col"
             style={{ gap: 8, marginTop: 8 }}
           >
-            <table role="grid">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Description</th>
-                  <th>Minutes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rewards.map((r, idx) => (
-                  <tr
-                    key={idx}
-                    style={
-                      r.is_borrowed ? { background: "#fffbeb" } : undefined
-                    }
-                  >
-                    <td>{new Date(r.time).toLocaleString()}</td>
-                    <td>{r.description ?? "Additional time"}</td>
-                    <td>
-                      {r.minutes > 0 ? "+" : ""}
-                      {r.minutes}
-                      {r.is_borrowed ? " (lent)" : ""}
-                    </td>
-                  </tr>
-                ))}
-                {rewards.length === 0 && (
+            <div
+              className="rewardHistoryTable"
+              role="region"
+              aria-label="Reward history"
+              tabIndex={0}
+            >
+              <table role="grid">
+                <thead>
                   <tr>
-                    <td colSpan={3}>
-                      <em>No rewards yet</em>
-                    </td>
+                    <th>Time</th>
+                    <th>Description</th>
+                    <th>Minutes</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {rewards.map((r, idx) => (
+                    <tr
+                      key={idx}
+                      style={
+                        r.is_borrowed ? { background: "#fffbeb" } : undefined
+                      }
+                    >
+                      <td>{new Date(r.time).toLocaleString()}</td>
+                      <td>{r.description ?? "Additional time"}</td>
+                      <td>
+                        {r.minutes > 0 ? "+" : ""}
+                        {r.minutes}
+                        {r.is_borrowed ? " (lent)" : ""}
+                      </td>
+                    </tr>
+                  ))}
+                  {rewards.length === 0 && (
+                    <tr>
+                      <td colSpan={3}>
+                        <em>No rewards yet</em>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
             <div className="row" style={{ justifyContent: "space-between" }}>
               <button
                 className="secondary"

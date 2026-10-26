@@ -96,16 +96,28 @@ textarea::placeholder {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
 }
 
 .taskRowHeader {
   align-items: center;
   gap: 8px;
+  flex: 1 1 12rem;
+  flex-wrap: wrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .taskRowActions {
   gap: 8px;
   align-items: center;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.rewardHistoryTable {
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .taskRowNegative {
