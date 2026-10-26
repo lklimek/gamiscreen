@@ -87,12 +87,15 @@ async fn main() {
         }
     };
 
-    // Seed children/tasks from config
-    if let Err(e) = store
-        .seed_from_config(&config.children, &config.tasks)
-        .await
-    {
-        tracing::error!(error=%e, "Failed to seed DB");
+    // Seed children from config (always runs)
+    if let Err(e) = store.seed_children_from_config(&config.children).await {
+        tracing::error!(error=%e, "Failed to seed children");
+        std::process::exit(4);
+    }
+
+    // Migrate YAML tasks to DB (only if no tasks exist in DB yet)
+    if let Err(e) = store.migrate_yaml_tasks_to_db(&config.tasks).await {
+        tracing::error!(error=%e, "Failed to migrate YAML tasks");
         std::process::exit(4);
     }
 

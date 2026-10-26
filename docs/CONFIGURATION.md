@@ -1,6 +1,6 @@
 # Configuration
 
-This page covers configuration for both the server and the Linux client, plus relevant environment variables.
+This page covers configuration for the server and the client (Linux and Windows), plus relevant environment variables.
 
 ## Server (`config.yaml`)
 
@@ -12,6 +12,7 @@ Top-level fields
 - `jwt_secret` (string): long random secret for signing JWTs.
 - `dev_cors_origin` (string, optional): allowed origin for development (e.g., `http://localhost:5173`).
 - `listen_port` (number, optional): port to listen on if provided; otherwise `PORT` env or 5151.
+- `timezone` (string, optional, default: `UTC`): IANA family timezone, for example `Europe/Warsaw`. Task days, completion dates and mandatory start times use this timezone.
 - `push` (object, optional): Web Push settings.
   - `enabled` (bool): turn Web Push delivery on/off (`false` by default).
   - `vapid_public` (string, optional): Base64URL-encoded VAPID public key.
@@ -25,11 +26,13 @@ Top-level fields
 - `children` (array): child records.
   - `id` (string): stable identifier.
   - `display_name` (string): friendly name.
-- `tasks` (array): rewardable tasks.
+- `tasks` (array): legacy task definitions imported when the database has no active tasks. Manage tasks in the parent's **Tasks** page after import; YAML changes do not update existing database tasks.
   - `id` (string)
   - `name` (string)
   - `minutes` (number): minutes rewarded when completed.
-  - `required` (bool, optional, default: false): when true, the child must complete this task daily (UTC) before screen time is unlocked. All required tasks must be completed.
+  - `required` (bool, optional, default: false): imports as mandatory every day starting at `00:00` in the family timezone. Optional tasks never block screen time.
+
+The Tasks page supports priority, assignment to all or selected children, mandatory days and a start time. To require daily tasks only from **10:00 UTC**, keep `timezone: UTC` and set each mandatory task's start time to `10:00`. Completion earlier that day counts. Screen time can still end earlier when minutes run out.
 
 Example
 See `gamiscreen-server/config.yaml.example` for a complete, annotated example including example bcrypt hashes and two children.
@@ -66,7 +69,7 @@ The command prints two Base64URL strings:
 Optionally provide a contact address—e.g. configure `push.contact_email: "mailto:admin@example.com"` or set `PUSH_CONTACT_EMAIL`. Some push services surface this in diagnostics.
 
 Notes
-- On first start, the server seeds the database with `children` and `tasks` from the config.
+- The server updates children from config on startup. Task settings are stored in the database after the initial import.
 - Use bcrypt for `password_hash`. The example config shows commands to generate hashes with `htpasswd` or `mkpasswd`.
 
 ## Client

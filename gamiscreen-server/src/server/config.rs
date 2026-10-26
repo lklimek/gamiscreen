@@ -13,6 +13,7 @@ pub struct AppConfig {
     pub config_version: String,
     pub tenant_id: String,
     pub children: Vec<Child>,
+    #[serde(default)]
     pub tasks: Vec<Task>,
     pub jwt_secret: String,
     pub users: Vec<UserConfig>,
@@ -20,6 +21,11 @@ pub struct AppConfig {
     pub listen_port: Option<u16>,
     #[serde(default)]
     pub push: Option<PushConfig>,
+    #[serde(default)]
+    pub timezone: Option<String>,
+    /// Parsed timezone, populated after config load via `resolve_timezone()`.
+    #[serde(skip)]
+    pub family_tz: chrono_tz::Tz,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -81,7 +87,22 @@ impl AppConfig {
         let text = fs::read_to_string(&path)?;
         let mut cfg: AppConfig = serde_yaml::from_str(&text)?;
         apply_env_overrides(&mut cfg);
+        cfg.resolve_timezone()?;
         Ok(cfg)
+    }
+
+    /// Parse the `timezone` string into a `chrono_tz::Tz`. Defaults to UTC when absent.
+    fn resolve_timezone(&mut self) -> Result<(), ConfigError> {
+        self.family_tz = match &self.timezone {
+            Some(tz_str) => tz_str.parse::<chrono_tz::Tz>().map_err(|_| {
+                ConfigError::Invalid(format!(
+                    "invalid timezone '{}': expected IANA timezone like 'Europe/Warsaw' or 'UTC'",
+                    tz_str
+                ))
+            })?,
+            None => chrono_tz::UTC,
+        };
+        Ok(())
     }
 }
 

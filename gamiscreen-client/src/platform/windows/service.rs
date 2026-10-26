@@ -68,6 +68,8 @@ fn service_main_impl() -> Result<(), AppError> {
     info!(service = SERVICE_NAME, "service main entry");
     let (tx, rx) = mpsc::channel(32);
     let ctx = Arc::new(ServiceContext::new(tx.clone()));
+    // Arc refcount is now 2: `ctx` (for local use) + `ctx_ptr` (passed to SCM handler).
+    // The `ctx_ptr` copy is intentionally leaked at end of function — see comment there.
     let ctx_ptr = Arc::into_raw(ctx.clone()) as *mut c_void;
     let service_name_w = to_wide_null(SERVICE_NAME);
 
@@ -625,21 +627,28 @@ async fn session_worker_task(
         "session agent process spawned"
     );
 
-    // SAFETY: Cast handles to usize for use across await points. Win32 HANDLEs are
-    // pointer-sized opaque values that remain valid until explicitly closed. The handles
-    // originate from SendHandle (which is Send+Sync) and are closed exactly once at the
-    // end of this function — either in the `handles_safe_to_close` branch, or intentionally
-    // leaked if the blocking wait thread is still using proc_h when shutdown times out.
+    // SAFETY: Cast HANDLE → usize for use across the await point (spawn_blocking
+    // requires 'static). The const assertion on SendHandle guarantees this cast is
+    // lossless. Handles remain valid until explicitly closed. We take ownership out
+    // of SendHandle and forget the wrapper to prevent its Drop from closing them
+    // prematurely — closing happens explicitly below based on `handles_safe_to_close`.
     let proc_h = child.process_handle.0 as usize;
     let thread_h = child.thread_handle.0 as usize;
+    // Transfer ownership out of ChildProcess — these handles are now managed
+    // manually via WaitForSingleObject + CloseHandle below. ManuallyDrop
+    // prevents SendHandle::Drop from closing them prematurely.
+    let _process_handle = std::mem::ManuallyDrop::new(child.process_handle);
+    let _thread_handle = std::mem::ManuallyDrop::new(child.thread_handle);
 
-    // Spawn the blocking wait as a JoinHandle so we can await it on both paths.
-    let wait_handle = tokio::task::spawn_blocking(move || unsafe {
+    let mut wait_handle = tokio::task::spawn_blocking(move || unsafe {
         let h = proc_h as windows_sys::Win32::Foundation::HANDLE;
-        const INFINITE: u32 = 0xFFFFFFFF;
+        // WAIT_FAILED is not exported by windows_sys; define locally (WinBase.h value).
         const WAIT_FAILED_VAL: u32 = 0xFFFFFFFF;
 
-        let wait_result = windows_sys::Win32::System::Threading::WaitForSingleObject(h, INFINITE);
+        let wait_result = windows_sys::Win32::System::Threading::WaitForSingleObject(
+            h,
+            windows_sys::Win32::System::Threading::INFINITE,
+        );
         if wait_result == WAIT_FAILED_VAL {
             return Err(last_error());
         }
@@ -665,6 +674,8 @@ async fn session_worker_task(
                     warn!(session_id, error=%err, "TerminateProcess failed");
                 }
                 let wait_ret = windows_sys::Win32::System::Threading::WaitForSingleObject(h, 5000);
+                // WAIT_TIMEOUT and WAIT_FAILED are not exported by windows_sys;
+                // define locally using WinBase.h values.
                 const WAIT_TIMEOUT: u32 = 0x00000102;
                 const WAIT_FAILED_VAL: u32 = 0xFFFFFFFF;
                 match wait_ret {
@@ -680,7 +691,7 @@ async fn session_worker_task(
             // indefinitely if TerminateProcess failed and the process won't exit.
             // SAFETY: If the timeout fires, the blocking thread may still be using
             // proc_h, so we must NOT close handles — they will leak instead.
-            match tokio::time::timeout(Duration::from_secs(10), wait_handle).await {
+            match tokio::time::timeout(Duration::from_secs(10), &mut wait_handle).await {
                 Ok(_) => {}
                 Err(_) => {
                     warn!(session_id, "timed out waiting for blocking wait thread after termination; handles will leak");
@@ -689,7 +700,7 @@ async fn session_worker_task(
             }
             WorkerExitKind::Requested
         }
-        join_result = wait_handle => {
+        join_result = &mut wait_handle => {
             match join_result {
                 Ok(Ok(0)) => {
                     info!(session_id, generation, "session agent exited cleanly");
@@ -730,11 +741,28 @@ async fn session_worker_task(
 /// SAFETY: Win32 handles are safe to send between threads and share across threads;
 /// the OS manages synchronization internally. The kernel object referenced by a handle
 /// is thread-safe — concurrent calls using the same handle are serialized by the kernel.
-// TODO: Add Drop impl to auto-close the handle and prevent leaks on refactoring.
-// Currently handles are manually closed in session_worker_task.
 struct SendHandle(windows_sys::Win32::Foundation::HANDLE);
 unsafe impl Send for SendHandle {}
 unsafe impl Sync for SendHandle {}
+
+// Compile-time guarantee that HANDLE↔usize casts in session_worker_task are lossless.
+const _: () = assert!(
+    std::mem::size_of::<windows_sys::Win32::Foundation::HANDLE>() == std::mem::size_of::<usize>()
+);
+
+impl Drop for SendHandle {
+    fn drop(&mut self) {
+        // SAFETY: Each SendHandle owns its Win32 HANDLE exclusively.
+        // CloseHandle is safe to call once per handle value.
+        if !self.0.is_null() {
+            let ret = unsafe { windows_sys::Win32::Foundation::CloseHandle(self.0) };
+            if ret == 0 {
+                warn!(handle = ?self.0, "CloseHandle failed in SendHandle::Drop");
+            }
+            debug_assert!(ret != 0, "CloseHandle failed in SendHandle::Drop");
+        }
+    }
+}
 
 struct ChildProcess {
     process_handle: SendHandle,

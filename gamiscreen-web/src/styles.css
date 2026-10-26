@@ -96,16 +96,28 @@ textarea::placeholder {
   justify-content: space-between;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
 }
 
 .taskRowHeader {
   align-items: center;
   gap: 8px;
+  flex: 1 1 12rem;
+  flex-wrap: wrap;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .taskRowActions {
   gap: 8px;
   align-items: center;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.rewardHistoryTable {
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .taskRowNegative {
@@ -234,4 +246,17 @@ dialog::-webkit-scrollbar {
 
 .usageBreakdown li span:last-child {
   font-variant-numeric: tabular-nums;
+}
+
+/* Screen-reader only utility */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
