@@ -1,16 +1,13 @@
 ---
-name: Claudius Review & Learn
+name: Claudius Review
 
 "on":
   pull_request:
-    types: [opened, synchronize, ready_for_review, closed]
+    types: [opened, synchronize, ready_for_review]
 
 jobs:
   review:
-    if: >
-      github.event.pull_request.draft == false &&
-      github.event.pull_request.merged != true &&
-      github.event.action != 'closed'
+    if: github.event.pull_request.draft == false
     concurrency:
       group: claudius-review-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -18,36 +15,29 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      issues: write
-      pull-requests: write
-      id-token: write
-    env:
-      ANTHROPIC_MODEL: ${{ vars.CLAUDE_MODEL }}
     steps:
+      - name: Create review App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.REVIEW_APP_CLIENT_ID }}
+          private-key: ${{ secrets.REVIEW_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
+          permission-issues: write
+          permission-pull-requests: write
+
+      # TODO: Use a released tag once upstream publishes one.
       - uses: lklimek/claudius-review-action@main
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ steps.app-token.outputs.token }}
+          model: ${{ vars.CLAUDE_MODEL || 'sonnet' }}
           memcan_url: ${{ secrets.MEMCAN_URL }}
           memcan_api_key: ${{ secrets.MEMCAN_API_KEY }}
+          remove_label_on_success: "false"
           prompt_extra: >
-            Rust + TypeScript (Tauri/Leptos) project with Android builds
-            and a game server. Focus on: memory safety, async correctness,
+            Rust server and device clients, React + TypeScript + Vite web UI,
+            and an Android wrapper for parental screen-time management.
+            Focus on: memory safety, async correctness,
             proper error handling, UI accessibility.
-
-  learn:
-    if: >
-      github.event.action == 'closed' &&
-      github.event.pull_request.merged == true
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      pull-requests: write
-    env:
-      ANTHROPIC_MODEL: sonnet
-    steps:
-      - uses: lklimek/claudius-review-action/learn@main
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          memcan_url: ${{ secrets.MEMCAN_URL }}
-          memcan_api_key: ${{ secrets.MEMCAN_API_KEY }}
