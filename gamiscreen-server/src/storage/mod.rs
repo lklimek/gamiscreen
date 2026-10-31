@@ -624,6 +624,27 @@ impl Store {
         .await?
     }
 
+    /// Task IDs submitted by this child and still awaiting parent approval.
+    pub async fn pending_task_ids_for_child(
+        &self,
+        child_id_: &str,
+    ) -> Result<std::collections::HashSet<String>, StorageError> {
+        use schema::task_submissions::dsl::*;
+        let pool = self.pool.clone();
+        let child = child_id_.to_string();
+        tokio::task::spawn_blocking(move || -> Result<_, StorageError> {
+            let mut conn = pool.get()?;
+            configure_sqlite_conn(&mut conn)?;
+            Ok(task_submissions
+                .filter(child_id.eq(child))
+                .select(task_id)
+                .load::<String>(&mut conn)?
+                .into_iter()
+                .collect())
+        })
+        .await?
+    }
+
     /// Seed children from config (always runs on startup).
     pub async fn seed_children_from_config(
         &self,
@@ -930,10 +951,6 @@ impl Store {
                     .select(balances::minutes_remaining)
                     .first(conn)?;
                 record_task_done_inner(conn, &child_id, &task_id, &approver)?;
-                diesel::delete(
-                    task_submissions::table.filter(task_submissions::id.eq(submission_id)),
-                )
-                .execute(conn)?;
                 result = Some((child_id, new_remaining));
                 Ok(())
             })?;
@@ -1333,16 +1350,24 @@ fn record_task_done_inner(
     by_username: &str,
 ) -> Result<(), StorageError> {
     use models::NewTaskCompletion;
-    use schema::task_completions;
-    let rec = NewTaskCompletion {
-        child_id,
-        task_id,
-        by_username,
-    };
-    diesel::insert_into(task_completions::table)
-        .values(&rec)
+    use schema::{task_completions, task_submissions};
+    conn.transaction(|conn| {
+        let rec = NewTaskCompletion {
+            child_id,
+            task_id,
+            by_username,
+        };
+        diesel::insert_into(task_completions::table)
+            .values(&rec)
+            .execute(conn)?;
+        diesel::delete(
+            task_submissions::table
+                .filter(task_submissions::child_id.eq(child_id))
+                .filter(task_submissions::task_id.eq(task_id)),
+        )
         .execute(conn)?;
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Read the stored account balance (virtual bank) for a child.

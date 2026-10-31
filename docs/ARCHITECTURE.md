@@ -23,6 +23,7 @@
 - Usage only affects `minutes_remaining`. Penalties only affect `minutes_remaining`. Borrowing decreases `account_balance` and increases `minutes_remaining`. Earning repays debt first (increases `account_balance` toward 0), then surplus goes to `minutes_remaining`.
 - **Mandatory tasks** can block screen time even with positive remaining minutes. A task blocks only its assigned children, on its scheduled days, at or after its start time, until completed that family-local day (`timezone`, default `UTC`). The server supplies completion and blocking status to the web app. Parents manage tasks in the database through the Tasks page; deletion preserves completion and reward history.
 - Clients send a heartbeat every minute; the server deduplicates timestamps per child/device and decrements remaining.
+- Locked clients refresh access status every minute without recording usage. Task changes publish status for affected children, and updates track both usable minutes and task blocking so scheduled blocks are delivered even when the stored credit is unchanged.
 - When remaining time reaches zero, tasks are blocking, or the server is unreachable for ~5 minutes, the client locks the session.
 
 ## Platform Clients
