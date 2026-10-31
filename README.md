@@ -24,6 +24,8 @@ Gamiscreen is a self-hosted parental control tool that turns good habits into sc
 - Android client: planned.
 - Windows client: planned.
 
+Build requirements: Rust **1.99.1**, Node.js **26.13.0 LTS**, and (for Android) JDK **25 LTS**. See [installation](docs/INSTALL.md) and [Android tooling](docs/ANDROID.md).
+
 ## Get Started
 
 - Install and run the server, then set up the Linux client on your child’s device.

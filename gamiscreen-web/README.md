@@ -51,3 +51,5 @@ Config
 
 Styling
 - Uses Pico defaults (no custom button/input styles). Minor layout helpers remain.
+
+Build with Node.js 26.13.0 LTS (see the root `.nvmrc`) and bundled npm.

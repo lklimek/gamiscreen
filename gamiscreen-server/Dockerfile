@@ -1,14 +1,18 @@
-# syntax=docker/dockerfile:1.6
+# syntax=docker/dockerfile:1
 
 ###############################
 # Build stage
 ###############################
-FROM rust:1-trixie AS builder
+FROM node:26.13.0-trixie-slim AS node
+
+FROM rust:1.99.1-trixie AS builder
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-    pkg-config libsqlite3-dev nodejs npm ca-certificates \
+    pkg-config libsqlite3-dev ca-certificates \
  && rm -rf /var/lib/apt/lists/*
+
+COPY --from=node /usr/local/ /usr/local/
 
 WORKDIR /app
 

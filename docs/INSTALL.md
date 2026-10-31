@@ -6,7 +6,8 @@ See also: docs/CONFIGURATION.md for all server/client settings and docs/DOCKER.m
 
 ## Prerequisites
 
-- Rust toolchain (stable) and Cargo
+- Rust 1.99.1 and Cargo (selected by `rust-toolchain.toml`)
+- Node.js 26.13.0 LTS and its bundled npm (run `nvm install` from the repository root)
 - Node.js (>=18) and npm (only required to build the web UI; can be skipped with `SKIP_WEB_BUILD=1`)
 - Linux for the client (systemd optional for service management)
 - Windows 10/11 for the Windows client (admin access required for service install)
