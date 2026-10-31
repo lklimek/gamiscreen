@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-31
+
+### Added
+- Manage tasks in the web app: create, edit, assign to children, set priorities and schedule mandatory days/start times (#49).
+- Store tasks in SQLite with an initial import from YAML; preserve task completion and reward history when deleting tasks (#49).
+- Apply family-local dates and times using the configured IANA timezone (UTC by default) (#49).
+
+### Changed
+- Update Rust, web and Android dependencies and CI actions; use Rust 1.99.1 stable, Node.js 26 LTS and JDK 25 LTS (#61).
+- Use maintained YAML, JWT/Web Push and desktop credential/notification backends (#61).
+- Replace retired Android credential storage with Android Keystore AES-256-GCM. Native Android sessions are not migrated; users may need to sign in again. Linux/Windows keyring identifiers and JWT compatibility are retained (#61).
+- Extend task APIs with assignment, priority, schedule and family-local completion/blocking status (#49).
+
+### Fixed
+- Keep task controls and history usable on narrow mobile screens (#60).
+- Preserve string identifiers, names and secrets during YAML configuration upgrades, and keep configuration values out of parse-error logs (#61).
+
+### Security
+- Remove vulnerable and unmaintained Rust dependency chains, including rsa, crypto-bigint, unsafe-libyaml and legacy zvariant packages; no audit advisories are ignored (#61).
+
 ## [0.13.0] - 2026-03-29
 
 ### Added
