@@ -98,3 +98,5 @@ Systemd (Linux)
 
 Windows Service
 - The `GamiScreenAgent` service runs under LocalSystem and spawns per-session agents automatically. See docs/INSTALL.md and docs/WINDOWS.md for setup.
+
+The Rust server delivers Web Push through `ece`, jsonwebtoken/AWS-LC and reqwest. Dependency migrations preserve existing VAPID keys, subscription fields and HS256 login tokens. See [dependency backends](DEPENDENCIES.md).

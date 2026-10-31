@@ -80,7 +80,7 @@ pub async fn login(
     )
     .await?;
     // Save device token in keyring under the server_url only (single-user support)
-    let entry = keyring_entry_for_login(&server_url)?;
+    let entry = crate::keyring_entry(&server_url)?;
     entry
         .set_password(&reg.token)
         .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
@@ -122,9 +122,4 @@ async fn register_client(
     api::rest::child_register(server_url, tenant_id, child_id, device_id, login_token)
         .await
         .map_err(|e| AppError::Http(format!("registration failed: {e}")))
-}
-
-fn keyring_entry_for_login(server_url: &str) -> Result<keyring::Entry, AppError> {
-    keyring::Entry::new("gamiscreen-client", server_url)
-        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))
 }
