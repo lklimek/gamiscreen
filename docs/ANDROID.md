@@ -50,6 +50,14 @@ android/
 - Define shared configuration (API host, feature flags) in `core`.
 - Introduce strict lint/Detekt rules to match repository quality standards.
 
+## Native session storage
+
+`SessionStore` protects native copies of authentication tokens with platform AES-256-GCM and a non-exportable Android Keystore key. Each write uses a fresh provider-generated IV and a 128-bit authentication tag; private preferences contain only the encrypted record. Empty storage and logout do not access the Keystore. Unreadable records are discarded and logged without token or exception details; no plaintext fallback is used and existing key aliases are never replaced on failure.
+
+The `gamiscreen_session_v2` preferences and key alias are independent of the retired security-crypto storage. Old native tokens are ignored without migration; users may need to sign in again. WebView storage is unchanged. App backups remain disabled.
+
+Host unit tests exercise encryption, authenticated decryption, malformed records, missing keys, logout and failures with ephemeral JCA keys and in-memory storage. A device test is still needed to verify Android Keystore persistence across process restarts and device-specific provider failures. See [Android Keystore](https://developer.android.com/privacy-and-security/keystore) and [cryptography guidance](https://developer.android.com/privacy-and-security/cryptography).
+
 ## Tooling, CI, and QA
 
 - Add Android builds to existing CI pipeline:
