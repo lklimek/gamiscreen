@@ -5,10 +5,18 @@ use chrono::{DateTime, Utc};
 use gamiscreen_shared::api::ServerEvent;
 use tokio::sync::Mutex;
 use tracing::{info, warn};
-use web_push::{
-    ContentEncoding, HyperWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient,
-    WebPushMessageBuilder,
-};
+mod transport;
+use transport::{PushTransport, TransportError};
+
+#[derive(Debug, thiserror::Error)]
+enum PushError {
+    #[error(transparent)]
+    Storage(#[from] crate::storage::StorageError),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Transport(#[from] TransportError),
+}
 
 use super::config::AppConfig;
 use crate::storage::Store;
@@ -20,9 +28,7 @@ pub struct PushService {
 }
 
 struct PushServiceInner {
-    client: HyperWebPushClient,
-    vapid_private: String,
-    contact: Option<String>,
+    transport: PushTransport,
     tenant_id: String,
     recent_remaining: Mutex<HashMap<String, RemainingSnapshot>>,
 }
@@ -51,13 +57,21 @@ impl PushService {
             return None;
         }
 
-        let client = HyperWebPushClient::new();
+        let transport = match PushTransport::new(
+            &vapid_private,
+            push_cfg.vapid_public.as_deref()?,
+            push_cfg.contact_email.clone(),
+        ) {
+            Ok(transport) => transport,
+            Err(error) => {
+                warn!(%error, "push: invalid VAPID configuration; disabling push service");
+                return None;
+            }
+        };
 
         Some(Self {
             inner: Arc::new(PushServiceInner {
-                client,
-                vapid_private,
-                contact: push_cfg.contact_email.clone(),
+                transport,
                 tenant_id: cfg.tenant_id.clone(),
                 recent_remaining: Mutex::new(HashMap::new()),
             }),
@@ -75,7 +89,11 @@ impl PushService {
 }
 
 impl PushServiceInner {
-    async fn handle_event(self: Arc<Self>, store: Store, event: ServerEvent) -> Result<(), String> {
+    async fn handle_event(
+        self: Arc<Self>,
+        store: Store,
+        event: ServerEvent,
+    ) -> Result<(), PushError> {
         match &event {
             ServerEvent::RemainingUpdated {
                 child_id,
@@ -90,23 +108,19 @@ impl PushServiceInner {
                 }
                 let subs = store
                     .list_push_subscriptions_for_child(&self.tenant_id, child_id)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                    .await?;
                 if subs.is_empty() {
                     return Ok(());
                 }
-                let payload = Arc::new(serde_json::to_vec(&event).map_err(|e| e.to_string())?);
+                let payload = Arc::new(serde_json::to_vec(&event)?);
                 self.send_to_subscriptions(store, subs, payload).await
             }
             ServerEvent::PendingCount { .. } => {
-                let subs = store
-                    .list_all_push_subscriptions(&self.tenant_id)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let subs = store.list_all_push_subscriptions(&self.tenant_id).await?;
                 if subs.is_empty() {
                     return Ok(());
                 }
-                let payload = Arc::new(serde_json::to_vec(&event).map_err(|e| e.to_string())?);
+                let payload = Arc::new(serde_json::to_vec(&event)?);
                 self.send_to_subscriptions(store, subs, payload).await
             }
         }
@@ -117,7 +131,7 @@ impl PushServiceInner {
         store: Store,
         subscriptions: Vec<PushSubscription>,
         payload: Arc<Vec<u8>>,
-    ) -> Result<(), String> {
+    ) -> Result<(), PushError> {
         for sub in subscriptions {
             let store_clone = store.clone();
             let payload_clone = payload.clone();
@@ -136,29 +150,17 @@ impl PushServiceInner {
         store: Store,
         subscription: PushSubscription,
         payload: Arc<Vec<u8>>,
-    ) -> Result<(), String> {
+    ) -> Result<(), PushError> {
         let endpoint = subscription.endpoint.clone();
 
-        let subscription_info = SubscriptionInfo::new(
-            subscription.endpoint.clone(),
-            subscription.p256dh.clone(),
-            subscription.auth.clone(),
-        );
-
-        let mut builder = WebPushMessageBuilder::new(&subscription_info);
-        builder.set_payload(ContentEncoding::Aes128Gcm, payload.as_ref());
-
-        let mut vapid = VapidSignatureBuilder::from_base64(&self.vapid_private, &subscription_info)
-            .map_err(|e| e.to_string())?;
-        if let Some(contact) = &self.contact {
-            vapid.add_claim("sub", contact.clone());
-        }
-        let signature = vapid.build().map_err(|e| e.to_string())?;
-        builder.set_vapid_signature(signature);
-
-        let result: Result<(), web_push::WebPushError> = self
-            .client
-            .send(builder.build().map_err(|e| e.to_string())?)
+        let result = self
+            .transport
+            .send(
+                &endpoint,
+                &subscription.p256dh,
+                &subscription.auth,
+                payload.as_ref(),
+            )
             .await;
         match result {
             Ok(()) => {
@@ -181,13 +183,14 @@ impl PushServiceInner {
                     warn!(endpoint = %endpoint, error = %e, "push: failed to mark error");
                 }
 
-                if matches!(
-                    err,
-                    web_push::WebPushError::EndpointNotFound(_)
-                        | web_push::WebPushError::EndpointNotValid(_)
-                ) && let Err(e) = store
-                    .delete_push_subscription(&self.tenant_id, &subscription.child_id, &endpoint)
-                    .await
+                if err.is_stale_subscription()
+                    && let Err(e) = store
+                        .delete_push_subscription(
+                            &self.tenant_id,
+                            &subscription.child_id,
+                            &endpoint,
+                        )
+                        .await
                 {
                     warn!(
                         endpoint = %endpoint,
@@ -196,7 +199,7 @@ impl PushServiceInner {
                     );
                 }
 
-                return Err(err_str);
+                return Err(err.into());
             }
         }
 

@@ -16,7 +16,7 @@ enforces limits locally, even when the server is offline.
 
 ## Tech Stack
 
-- **Server & Clients**: Rust (edition 2024, MSRV 1.91)
+- **Server & Clients**: Rust (edition 2024, MSRV 1.99.1)
 - **Web UI**: React 19 + TypeScript + Vite, styled with Pico CSS
 - **Android**: Kotlin + Jetpack Compose
 - **Database**: SQLite via Diesel ORM (migrations embedded and applied on startup)

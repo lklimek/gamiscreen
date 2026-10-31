@@ -1,6 +1,6 @@
 {
   "name": "gamiscreen-web",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,16 +9,19 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@picocss/pico": "^2.0.6",
-    "react": "19.2.0",
-    "react-dom": "19.2.0"
+    "@picocss/pico": "2.1.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
   },
   "devDependencies": {
-    "@types/node": "24.9.1",
-    "@types/react": "19.2.2",
-    "@types/react-dom": "19.2.2",
-    "@vitejs/plugin-react": "5.1.0",
-    "typescript": "5.9.3",
-    "vite": "7.3.7"
+    "@types/node": "26.6.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "typescript": "7.0.2",
+    "vite": "8.3.5"
+  },
+  "engines": {
+    "node": ">=26.13.0 <27"
   }
 }

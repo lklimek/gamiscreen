@@ -6,7 +6,7 @@ use crate::platform::notify_common::{self, NotificationMessage};
 #[derive(Debug)]
 pub struct Notifier {
     replace_id: u32,
-    handle: Option<notify_rust::NotificationHandle>,
+    handle: Option<u32>,
 }
 
 impl Default for Notifier {
@@ -34,25 +34,24 @@ impl Notifier {
         let text: NotificationMessage = notify_common::countdown_message(total_secs);
         let replace_id = self.replace_id;
         let mut n = notify_rust::Notification::new();
-        let res = n
-            .appname("GamiScreen")
+        n.appname("GamiScreen")
             .summary(&text.summary)
             .body(&text.body)
             .id(replace_id)
             .urgency(notify_rust::Urgency::Critical)
             .hint(Hint::SuppressSound(false))
             .hint(Hint::SoundName("dialog-warning".into()))
-            .hint(Hint::Resident(true))
-            .show_async()
-            .await;
+            .hint(Hint::Resident(true));
+        let res = tokio::task::spawn_blocking(move || n.show().map(|handle| handle.id())).await;
 
         match res {
-            Ok(handle) => {
+            Ok(Ok(handle)) => {
                 debug!(seconds = total_secs, "show_countdown: notification shown");
+                self.replace_id = handle;
                 self.handle = Some(handle);
             }
-            Err(e) => {
-                warn!(error=%e, "notify-rust failed while showing countdown");
+            e => {
+                warn!(error=?e, "notify-rust failed while showing countdown");
                 self.handle = None;
                 info!("{}", text.log);
             }
@@ -68,24 +67,23 @@ impl Notifier {
         let replace_id = self.replace_id;
         let mut n = notify_rust::Notification::new();
         let text: NotificationMessage = notify_common::message_text(remaining_secs);
-        let res = n
-            .appname("GamiScreen")
+        n.appname("GamiScreen")
             .summary(&text.summary)
             .body(&text.body)
             .id(replace_id)
             .urgency(notify_rust::Urgency::Critical)
             .hint(Hint::SuppressSound(false))
             .hint(Hint::SoundName("dialog-warning".into()))
-            .hint(Hint::Resident(true))
-            .show_async()
-            .await;
+            .hint(Hint::Resident(true));
+        let res = tokio::task::spawn_blocking(move || n.show().map(|handle| handle.id())).await;
         match res {
-            Ok(handle) => {
+            Ok(Ok(handle)) => {
                 debug!(remaining = remaining_secs, "update: notification updated");
+                self.replace_id = handle;
                 self.handle = Some(handle);
             }
-            Err(e) => {
-                warn!(error=%e, "notify-rust update failed");
+            e => {
+                warn!(error=?e, "notify-rust update failed");
                 self.handle = None;
                 info!("{}", text.log);
             }
@@ -95,7 +93,18 @@ impl Notifier {
     pub async fn close(&mut self) {
         if let Some(handle) = self.handle.take() {
             debug!("close: dismissing active notification");
-            let result = tokio::task::spawn_blocking(move || handle.close()).await;
+            let result: Result<(), zbus::Error> = async {
+                let conn = zbus::Connection::session().await?;
+                let proxy = zbus::proxy::Proxy::new(
+                    &conn,
+                    "org.freedesktop.Notifications",
+                    "/org/freedesktop/Notifications",
+                    "org.freedesktop.Notifications",
+                )
+                .await?;
+                proxy.call("CloseNotification", &(handle,)).await
+            }
+            .await;
             debug!(?result, "close: notification dismissed");
         }
     }

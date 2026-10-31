@@ -2,12 +2,23 @@ plugins {
     alias(libs.plugins.kotlin.multiplatform)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.compose.multiplatform)
-    alias(libs.plugins.android.library)
+    alias(libs.plugins.android.kmp.library)
 }
 
 kotlin {
-    androidTarget()
-    jvmToolchain(21)
+    android {
+        namespace = "ws.klimek.gamiscreen.pwashell"
+        compileSdk {
+            version = release(37) { minorApiLevel = 2 }
+        }
+        minSdk = 31
+        androidResources.enable = true
+        withHostTest {}
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21)
+        }
+    }
+    jvmToolchain(25)
 
     sourceSets {
         val commonMain by getting {
@@ -28,30 +39,10 @@ kotlin {
                 implementation(compose.preview)
             }
         }
-        val androidUnitTest by getting {
+        val androidHostTest by getting {
             dependencies {
                 implementation(kotlin("test"))
             }
         }
-    }
-}
-
-android {
-    namespace = "ws.klimek.gamiscreen.pwashell"
-    compileSdk = 36
-
-    defaultConfig {
-        minSdk = 31
-    }
-
-    sourceSets["main"].manifest.srcFile("src/androidMain/AndroidManifest.xml")
-
-    buildFeatures {
-        buildConfig = true
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_21
-        targetCompatibility = JavaVersion.VERSION_21
     }
 }

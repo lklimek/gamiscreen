@@ -39,14 +39,14 @@ fi
 cd "${ANDROID_DIR}"
 
 if [[ ! -x "./gradlew" ]]; then
-  echo "Gradle wrapper not found. Run 'gradle wrapper --gradle-version 9.2' inside android/ before executing CI tasks." >&2
+  echo "Gradle wrapper not found. Run 'gradle wrapper --gradle-version 9.8.2' inside android/ before executing CI tasks." >&2
   exit 1
 fi
 
 if [[ "${BUILD_TYPE}" == "release" ]]; then
-  ./gradlew clean lint test assembleRelease bundleRelease
+  ./gradlew clean lint test :pwaShell:testAndroidHostTest assembleRelease bundleRelease
 else
-  ./gradlew clean lint test assembleDebug
+  ./gradlew clean lint test :pwaShell:testAndroidHostTest assembleDebug
 fi
 
 METADATA_FILE="${ANDROID_DIR}/app/build/outputs/apk/${BUILD_TYPE}/output-metadata.json"

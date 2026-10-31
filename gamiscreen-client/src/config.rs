@@ -42,7 +42,7 @@ pub fn load_config(path: &PathBuf) -> Result<ClientConfig, AppError> {
             AppError::Config(format!("read {} failed: {e}", path.display()))
         }
     })?;
-    let cfg: ClientConfig = serde_yaml::from_str(&data)
+    let cfg: ClientConfig = serde_saphyr::from_str(&data)
         .map_err(|e| AppError::Config(format!("parse {} failed: {e}", path.display())))?;
     Ok(cfg)
 }
@@ -51,7 +51,7 @@ pub fn save_config(path: &PathBuf, cfg: &ClientConfig) -> Result<(), AppError> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
-    let data = serde_yaml::to_string(cfg)
+    let data = serde_saphyr::to_string(cfg)
         .map_err(|e| AppError::Config(format!("serialize config failed: {e}")))?;
     std::fs::write(path, data)
         .map_err(|e| AppError::Config(format!("write {} failed: {e}", path.display())))
@@ -248,5 +248,24 @@ mod tests {
             normalize_server_url("[2001:db8::1]:443"),
             "https://[2001:db8::1]:443"
         );
+    }
+}
+
+#[cfg(test)]
+mod yaml_compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn client_yaml_round_trip_preserves_url_and_rejects_invalid_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("client.yaml");
+        let url = "https://example.test:5151/a?x=1&y=two#fragment";
+        std::fs::write(&path, format!("# client\nserver_url: '{url}'\n")).unwrap();
+        let cfg = load_config(&path).unwrap();
+        assert_eq!(cfg.server_url, url);
+        save_config(&path, &cfg).unwrap();
+        assert_eq!(load_config(&path).unwrap().server_url, url);
+        std::fs::write(&path, "server_url: [unterminated").unwrap();
+        assert!(load_config(&path).is_err());
     }
 }

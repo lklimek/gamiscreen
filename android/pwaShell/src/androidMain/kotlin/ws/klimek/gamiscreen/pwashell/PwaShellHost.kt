@@ -1,5 +1,6 @@
 package ws.klimek.gamiscreen.pwashell
 
+import android.content.pm.ApplicationInfo
 import android.annotation.SuppressLint
 import android.content.ActivityNotFoundException
 import android.content.Context
@@ -43,7 +44,6 @@ import java.util.Locale
 import org.json.JSONObject
 import ws.klimek.gamiscreen.core.AppConfigDefaults
 import ws.klimek.gamiscreen.core.SessionStore
-import ws.klimek.gamiscreen.pwashell.BuildConfig
 
 private sealed interface ShellUiState {
     data object Loading : ShellUiState
@@ -65,14 +65,15 @@ fun PwaShellHost(
         startUrl: String = PwaShellDefaults.defaultPwaUrl,
         embeddedContent: EmbeddedPwaContent? = null
 ) {
-    // Enable WebView debugging only in debug builds (disabled in release for security)
-    WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG)
     var uiState by remember { mutableStateOf<ShellUiState>(ShellUiState.Loading) }
     var reloadToken by remember { mutableIntStateOf(0) }
     var webView by remember { mutableStateOf<WebView?>(null) }
     val inPreview = LocalInspectionMode.current
     var canNavigateBack by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    WebView.setWebContentsDebuggingEnabled(
+        (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+    )
     val appContext = context.applicationContext
     val sessionStore = remember(appContext) { SessionStore.getInstance(appContext) }
     val embeddedAssetsLoader = embeddedContent?.assetLoader

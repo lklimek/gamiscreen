@@ -3,8 +3,8 @@ use std::process::Stdio;
 use clap::ValueEnum;
 use tokio::process::Command;
 use tracing::{info, warn};
+use zbus::names::{InterfaceName, OwnedBusName};
 use zbus::proxy::Proxy;
-use zbus_names::{InterfaceName, OwnedBusName};
 
 use crate::AppError;
 use crate::config::ClientConfig;
@@ -164,12 +164,10 @@ pub async fn is_session_locked() -> Result<bool, AppError> {
             .map_err(|e| AppError::Dbus(e.to_string()))?;
         // Deserialize message body into object path
         let body = msg.body();
-        if let Ok(path) = body.deserialize::<zbus::zvariant::OwnedObjectPath>() {
+        if let Ok(path) = body.deserialize::<zbus::OwnedObjectPath>() {
             let props = zbus::fdo::PropertiesProxy::builder(&conn)
                 .destination("org.freedesktop.login1")
-                .map_err(|e| AppError::Dbus(e.to_string()))?
                 .path(path.as_str())
-                .map_err(|e| AppError::Dbus(e.to_string()))?
                 .build()
                 .await
                 .map_err(|e| AppError::Dbus(e.to_string()))?;
@@ -231,7 +229,7 @@ pub async fn lock_via_login1_manager() -> Result<(), AppError> {
 }
 
 pub async fn lock_via_login1_session() -> Result<(), AppError> {
-    use zbus::zvariant::OwnedObjectPath;
+    use zbus::OwnedObjectPath;
 
     let conn = zbus::Connection::system()
         .await
@@ -274,7 +272,7 @@ pub async fn lock_via_login1_session() -> Result<(), AppError> {
 /// Mirrors the approach used in timekpr-next: enumerate the user's sessions and
 /// invoke org.freedesktop.login1.Session.Lock() on each GUI session.
 pub async fn lock_via_login1_user_sessions() -> Result<(), AppError> {
-    use zbus::zvariant::OwnedObjectPath;
+    use zbus::OwnedObjectPath;
 
     let conn = zbus::Connection::system()
         .await
@@ -304,9 +302,7 @@ pub async fn lock_via_login1_user_sessions() -> Result<(), AppError> {
     // Read the Sessions property: array of (string id, object path)
     let user_props = zbus::fdo::PropertiesProxy::builder(&conn)
         .destination("org.freedesktop.login1")
-        .map_err(|e| AppError::Dbus(e.to_string()))?
         .path(user_path.as_str())
-        .map_err(|e| AppError::Dbus(e.to_string()))?
         .build()
         .await
         .map_err(|e| AppError::Dbus(e.to_string()))?;
@@ -329,9 +325,7 @@ pub async fn lock_via_login1_user_sessions() -> Result<(), AppError> {
         // Read session Type
         let sess_props = zbus::fdo::PropertiesProxy::builder(&conn)
             .destination("org.freedesktop.login1")
-            .map_err(|e| AppError::Dbus(e.to_string()))?
             .path(path.as_str())
-            .map_err(|e| AppError::Dbus(e.to_string()))?
             .build()
             .await
             .map_err(|e| AppError::Dbus(e.to_string()))?;

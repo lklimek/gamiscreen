@@ -101,9 +101,33 @@ fn resolve_log_config(command: &Command) -> Option<LogConfig> {
     }
 }
 
-pub(crate) fn keyring_entry(server_url: &str) -> Result<keyring::Entry, AppError> {
-    let service = "gamiscreen-client";
-    keyring::Entry::new(service, &crate::config::normalize_server_url(server_url))
+pub(crate) fn keyring_entry(server_url: &str) -> Result<keyring_core::Entry, AppError> {
+    use std::sync::{Arc, LazyLock};
+
+    static STORE: LazyLock<Result<Arc<keyring_core::CredentialStore>, keyring_core::Error>> =
+        LazyLock::new(|| {
+            #[cfg(target_os = "windows")]
+            let store = windows_native_keyring_store::Store::new()?;
+            #[cfg(not(target_os = "windows"))]
+            let store = dbus_secret_service_keyring_store::Store::new()?;
+            Ok(store)
+        });
+    let store = STORE
+        .as_ref()
+        .map_err(|e| AppError::Keyring(e.to_string()))?;
+    keyring_entry_in_store(store.as_ref(), server_url)
+}
+
+fn keyring_entry_in_store(
+    store: &keyring_core::CredentialStore,
+    server_url: &str,
+) -> Result<keyring_core::Entry, AppError> {
+    store
+        .build(
+            "gamiscreen-client",
+            &crate::config::normalize_server_url(server_url),
+            None,
+        )
         .map_err(|e| AppError::Keyring(e.to_string()))
 }
 
@@ -139,5 +163,23 @@ pub async fn run(cli: Cli) -> Result<(), AppError> {
             platform::linux::lock_tester::run_lock_cmd(method).await;
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+
+    #[test]
+    fn credential_lookup_preserves_service_and_normalized_server_address() {
+        let store = keyring_core::mock::Store::new().unwrap();
+        let entry = keyring_entry_in_store(store.as_ref(), "HTTPS://example.test/").unwrap();
+        assert_eq!(
+            entry.get_specifiers(),
+            Some(("gamiscreen-client".into(), "https://example.test".into()))
+        );
+        entry.set_password("device token").unwrap();
+        let lookup = keyring_entry_in_store(store.as_ref(), "https://example.test").unwrap();
+        assert_eq!(lookup.get_password().unwrap(), "device token");
     }
 }

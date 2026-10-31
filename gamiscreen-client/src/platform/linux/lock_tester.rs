@@ -82,7 +82,7 @@ async fn detect_backends() {
     {
         let has_gnome = dbus
             .name_has_owner(
-                zbus_names::OwnedBusName::try_from("org.gnome.ScreenSaver")
+                zbus::names::OwnedBusName::try_from("org.gnome.ScreenSaver")
                     .unwrap()
                     .into(),
             )
@@ -90,7 +90,7 @@ async fn detect_backends() {
             .unwrap_or(false);
         let has_fdo = dbus
             .name_has_owner(
-                zbus_names::OwnedBusName::try_from("org.freedesktop.ScreenSaver")
+                zbus::names::OwnedBusName::try_from("org.freedesktop.ScreenSaver")
                     .unwrap()
                     .into(),
             )
@@ -108,7 +108,7 @@ async fn detect_backends() {
     {
         let has_login1 = dbus
             .name_has_owner(
-                zbus_names::OwnedBusName::try_from("org.freedesktop.login1")
+                zbus::names::OwnedBusName::try_from("org.freedesktop.login1")
                     .unwrap()
                     .into(),
             )

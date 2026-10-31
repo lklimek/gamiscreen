@@ -18,8 +18,8 @@ This document captures the initial technical decisions and open questions for th
 ## Platform Targets
 
 - `minSdkVersion`: **31 (Android 12)** – aligns with modern WebView/privacy requirements, grants access to updated Device Policy APIs, and reduces legacy testing burden. Devices below Android 12 are out of scope.
-- `targetSdkVersion`: **36 (Android 15)** – matches Google Play's latest requirement for 2024+ and ensures compatibility with current privacy restrictions. (We'll revisit API 37 once tooling stabilizes.)
-- Compile SDK: **36** – keeps parity with target SDK and ensures WebView/Material components match Chrome 124 equivalents.
+- `targetSdkVersion`: **36 (Android 16)** – retained to avoid coupling dependency updates to runtime behavior changes.
+- Compile SDK: **37.2 (Android 17)** – required by current AndroidX dependencies.
 - Build variants:
   - `debug`: developer settings, mock WebView URL override, verbose logging.
   - `release`: Play-ready, ProGuard/R8 enabled, Crashlytics active.
@@ -43,11 +43,20 @@ android/
 ```
 
 - Keep Gradle version catalog (`gradle/libs.versions.toml`) at the root for dependency management.
-- Use Jetpack/Compose Multiplatform for UI; rely on Material 3 components that can later target iOS. Kotlin compose compiler plugin is applied (`org.jetbrains.kotlin.plugin.compose`) per Kotlin 2.0 requirements. Current stack: Compose Multiplatform **1.9.3**, Kotlin **2.2.21**, Material **1.13.0**, AndroidX WebKit **1.14.0**.
-- `pwaShell/` is a Kotlin Multiplatform module (Compose Multiplatform 1.9.3 on Kotlin 2.2.21) so shared UI can be reused by future iOS shells.
+- Use Jetpack/Compose Multiplatform for UI; rely on Material 3 components that can later target iOS. Kotlin compose compiler plugin is applied (`org.jetbrains.kotlin.plugin.compose`) per Kotlin 2.0 requirements. Current stack: Compose Multiplatform **1.12.2**, Kotlin **2.4.21**, Material **1.14.0**, AndroidX WebKit **1.18.0**.
+- AGP uses built-in Kotlin for Android modules; `pwaShell` uses `com.android.kotlin.multiplatform.library`. Its unit tests use `androidHostTest` / `:pwaShell:testAndroidHostTest`.
+- `pwaShell/` is a Kotlin Multiplatform module (Compose Multiplatform 1.12.2 on Kotlin 2.4.21) so shared UI can be reused by future iOS shells.
 - Dependency injection will use **Hilt** (Dagger) for first-party Jetpack support, generated graphs, and better long-term maintainability.
 - Define shared configuration (API host, feature flags) in `core`.
 - Introduce strict lint/Detekt rules to match repository quality standards.
+
+## Native session storage
+
+`SessionStore` protects native copies of authentication tokens with platform AES-256-GCM and a non-exportable Android Keystore key. Each write uses a fresh provider-generated IV and a 128-bit authentication tag; private preferences contain only the encrypted record. Empty storage and logout do not access the Keystore. Unreadable records are discarded and logged without token or exception details; no plaintext fallback is used and existing key aliases are never replaced on failure.
+
+The `gamiscreen_session_v2` preferences and key alias are independent of the retired security-crypto storage. Old native tokens are ignored without migration; users may need to sign in again. WebView storage is unchanged. App backups remain disabled.
+
+Host unit tests exercise encryption, authenticated decryption, malformed records, missing keys, logout and failures with ephemeral JCA keys and in-memory storage. A device test is still needed to verify Android Keystore persistence across process restarts and device-specific provider failures. See [Android Keystore](https://developer.android.com/privacy-and-security/keystore) and [cryptography guidance](https://developer.android.com/privacy-and-security/cryptography).
 
 ## Tooling, CI, and QA
 
@@ -56,7 +65,7 @@ android/
   - `./gradlew test`
   - `./gradlew assembleDebug` (PR validation) and `bundleRelease` (release pipeline).
   - Repository shortcut: run `scripts/android_ci.sh` (expects Gradle wrapper to be generated).
-- Standardize on OpenJDK **21.0.8** with Kotlin **2.2.21** / Compose Multiplatform **1.9.3**; use Gradle **9.2** (install via SDKMAN at `~/.sdkman/candidates/gradle/current/bin/gradle` and generate the wrapper with `gradle wrapper --gradle-version 9.2`).
+- Standardize on JDK **25 LTS**, Kotlin **2.4.21**, Compose Multiplatform **1.12.2**, AGP **9.5.0**, and Gradle **9.8.2** (committed wrapper). Java/Kotlin bytecode remains at JVM 21 for Android compatibility. Node.js **26.13.0 LTS** builds the embedded web app.
 - Configure static analysis: Detekt + Ktlint integration; fail the build on violations.
 - Set up Firebase Crashlytics + Analytics (config placeholders until keys provided).
 - Define signing strategy:

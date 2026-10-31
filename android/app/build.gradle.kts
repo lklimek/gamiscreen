@@ -65,7 +65,6 @@ fun versionCodeFrom(version: String): Int {
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.compose.multiplatform)
 }
@@ -82,7 +81,9 @@ val signingKeyAliasPassword = System.getenv("ANDROID_SIGNING_KEY_ALIAS_PASSWORD"
 
 android {
     namespace = "ws.klimek.gamiscreen.app"
-    compileSdk = 36
+    compileSdk {
+        version = release(37) { minorApiLevel = 2 }
+    }
 
     defaultConfig {
         applicationId = "ws.klimek.gamiscreen.app"
@@ -154,7 +155,7 @@ kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_21)
     }
-    jvmToolchain(21)
+    jvmToolchain(25)
 }
 
 dependencies {

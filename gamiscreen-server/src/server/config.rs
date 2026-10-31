@@ -4,13 +4,17 @@ use std::{env, fs};
 pub use gamiscreen_shared::auth::Role;
 use gamiscreen_shared::domain::{Child, Task};
 use semver::Version;
-use serde::Deserialize;
-use serde_yaml::{Mapping, Value};
+use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 use tracing::warn;
 
-#[derive(Debug, Clone, Deserialize)]
+type Mapping = Map<String, Value>;
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AppConfig {
+    #[serde(default)]
     pub config_version: String,
+    #[serde(default = "default_tenant_id")]
     pub tenant_id: String,
     pub children: Vec<Child>,
     #[serde(default)]
@@ -28,7 +32,7 @@ pub struct AppConfig {
     pub family_tz: chrono_tz::Tz,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UserConfig {
     pub username: String,
     pub password_hash: String, // bcrypt hash
@@ -36,7 +40,7 @@ pub struct UserConfig {
     pub child_id: Option<String>, // required when role == child
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(default)]
 pub struct PushConfig {
     pub enabled: bool,
@@ -48,7 +52,9 @@ pub struct PushConfig {
 #[derive(Debug)]
 pub enum ConfigError {
     Io(std::io::Error),
-    Yaml(serde_yaml::Error),
+    Yaml(serde_saphyr::Error),
+    SerializeYaml(serde_saphyr::SerializeError),
+    SerializeValues(serde_json::Error),
     Invalid(String),
 }
 
@@ -56,13 +62,47 @@ impl std::fmt::Display for ConfigError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ConfigError::Io(e) => write!(f, "IO error: {}", e),
-            ConfigError::Yaml(e) => write!(f, "YAML error: {}", e),
+            ConfigError::Yaml(e) => {
+                write!(f, "invalid YAML configuration")?;
+                if let Some(location) = e.location() {
+                    write!(
+                        f,
+                        " at line {} column {}",
+                        location.line(),
+                        location.column()
+                    )?;
+                }
+                Ok(())
+            }
+            ConfigError::SerializeYaml(_) | ConfigError::SerializeValues(_) => {
+                write!(f, "failed to serialize configuration")
+            }
             ConfigError::Invalid(e) => write!(f, "invalid config: {}", e),
         }
     }
 }
 
-impl std::error::Error for ConfigError {}
+impl std::error::Error for ConfigError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(error) => Some(error),
+            Self::Yaml(error) => Some(error),
+            Self::SerializeYaml(error) => Some(error),
+            Self::SerializeValues(error) => Some(error),
+            Self::Invalid(_) => None,
+        }
+    }
+}
+
+fn default_tenant_id() -> String {
+    "first".to_owned()
+}
+
+fn parse_config<'de, T: Deserialize<'de>>(text: &'de str) -> Result<T, serde_saphyr::Error> {
+    let mut options = serde_saphyr::Options::default();
+    options.with_snippet = false;
+    serde_saphyr::from_str_with_options(text, options)
+}
 
 impl From<std::io::Error> for ConfigError {
     fn from(value: std::io::Error) -> Self {
@@ -70,9 +110,21 @@ impl From<std::io::Error> for ConfigError {
     }
 }
 
-impl From<serde_yaml::Error> for ConfigError {
-    fn from(value: serde_yaml::Error) -> Self {
+impl From<serde_saphyr::Error> for ConfigError {
+    fn from(value: serde_saphyr::Error) -> Self {
         ConfigError::Yaml(value)
+    }
+}
+
+impl From<serde_saphyr::SerializeError> for ConfigError {
+    fn from(value: serde_saphyr::SerializeError) -> Self {
+        Self::SerializeYaml(value)
+    }
+}
+
+impl From<serde_json::Error> for ConfigError {
+    fn from(value: serde_json::Error) -> Self {
+        Self::SerializeValues(value)
     }
 }
 
@@ -85,7 +137,7 @@ impl AppConfig {
     pub fn load_from_path<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
         migrate_config(path.as_ref())?;
         let text = fs::read_to_string(&path)?;
-        let mut cfg: AppConfig = serde_yaml::from_str(&text)?;
+        let mut cfg: AppConfig = parse_config(&text)?;
         apply_env_overrides(&mut cfg);
         cfg.resolve_timezone()?;
         Ok(cfg)
@@ -113,13 +165,17 @@ const MIGRATIONS: &[(&str, MigrationFn)] =
 
 fn migrate_config(path: &Path) -> Result<(), ConfigError> {
     let text = fs::read_to_string(path)?;
-    let mut doc: Value = serde_yaml::from_str(&text)?;
+    let mut doc: Value = parse_config(&text)?;
 
-    let Some(mapping) = doc.as_mapping_mut() else {
+    // Schema-directed strings retain their original spelling before YAML is rewritten.
+    let typed: AppConfig = parse_config(&text)?;
+    preserve_schema_values(&mut doc, &serde_json::to_value(typed)?);
+
+    let Some(mapping) = doc.as_object_mut() else {
         return Ok(());
     };
 
-    let version_key = Value::String("config_version".to_string());
+    let version_key = "config_version".to_string();
 
     let mut changed = false;
     let mut major_update = false;
@@ -178,7 +234,7 @@ fn migrate_config(path: &Path) -> Result<(), ConfigError> {
     }
 
     if changed {
-        let updated = serde_yaml::to_string(&doc)?;
+        let updated = serde_saphyr::to_string(&doc)?;
         if let Err(e) = fs::write(path, updated) {
             if major_update {
                 warn!(
@@ -195,10 +251,28 @@ fn migrate_config(path: &Path) -> Result<(), ConfigError> {
     Ok(())
 }
 
+fn preserve_schema_values(value: &mut Value, typed: &Value) {
+    match (value, typed) {
+        (Value::Object(values), Value::Object(fields)) => {
+            for (key, typed) in fields {
+                if let Some(value) = values.get_mut(key) {
+                    preserve_schema_values(value, typed);
+                }
+            }
+        }
+        (Value::Array(values), Value::Array(fields)) => {
+            for (value, typed) in values.iter_mut().zip(fields) {
+                preserve_schema_values(value, typed);
+            }
+        }
+        (value, typed) => *value = typed.clone(),
+    }
+}
+
 fn migrate_to_0_7_0(map: &mut Mapping) -> bool {
     let mut changed = false;
 
-    let tenant_key = Value::String("tenant_id".to_string());
+    let tenant_key = "tenant_id".to_string();
     if !map.contains_key(&tenant_key) {
         map.insert(tenant_key, Value::String("first".to_string()));
         changed = true;
@@ -208,15 +282,15 @@ fn migrate_to_0_7_0(map: &mut Mapping) -> bool {
 }
 
 fn migrate_to_0_9_0(map: &mut Mapping) -> bool {
-    let push_key = Value::String("push".to_string());
+    let push_key = "push".to_string();
     if map.contains_key(&push_key) {
         return false;
     }
 
     let mut push_map = Mapping::new();
-    push_map.insert(Value::String("enabled".to_string()), Value::Bool(false));
+    push_map.insert("enabled".to_string(), Value::Bool(false));
 
-    map.insert(push_key, Value::Mapping(push_map));
+    map.insert(push_key, Value::Object(push_map));
     true
 }
 
@@ -243,7 +317,7 @@ fn apply_env_overrides(cfg: &mut AppConfig) {
 
 #[cfg(test)]
 mod tests {
-    use serde_yaml::Value;
+    use serde_json::Value;
     use tempfile::NamedTempFile;
 
     use super::*;
@@ -277,17 +351,15 @@ tasks:
         migrate_config(file.path()).expect("migrate config");
 
         let text = std::fs::read_to_string(file.path()).expect("read migrated");
-        let value: Value = serde_yaml::from_str(&text).expect("parse migrated");
-        let mapping = value.as_mapping().expect("mapping root");
+        let value: Value = serde_saphyr::from_str(&text).expect("parse migrated");
+        let mapping = value.as_object().expect("mapping root");
 
         assert_eq!(
-            mapping
-                .get(Value::String("tenant_id".into()))
-                .and_then(Value::as_str),
+            mapping.get("tenant_id").and_then(Value::as_str),
             Some("first")
         );
         let version = mapping
-            .get(Value::String("config_version".into()))
+            .get("config_version")
             .and_then(Value::as_str)
             .and_then(|s| Version::parse(s).ok());
         let current = Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
@@ -303,9 +375,60 @@ tasks:
 
         assert!(matches!(
             mapping
-                .get(Value::String("push".into()))
-                .and_then(Value::as_mapping),
-            Some(push_map) if push_map.get(Value::String("enabled".into())) == Some(&Value::Bool(false))
+                .get("push")
+                .and_then(Value::as_object),
+            Some(push_map) if push_map.get("enabled") == Some(&Value::Bool(false))
         ));
+    }
+    #[test]
+    fn upgrade_preserves_schema_string_values() {
+        let original = "config_version: '0.13.0'\ntenant_id: no\njwt_secret: 00123\nchildren:\n  - id: 00123\n    display_name: NO\nusers:\n  - username: on\n    password_hash: fake-hash\n    role: child\n    child_id: 00123\ntasks:\n  - id: off\n    name: yes\n    minutes: 5\n    required: true\ncustom: {retained: 'extra'}\n";
+        let file = NamedTempFile::new().unwrap();
+        fs::write(file.path(), original).unwrap();
+        let cfg = AppConfig::load_from_path(file.path()).unwrap();
+        assert_eq!(cfg.tenant_id, "no");
+        assert_eq!(cfg.jwt_secret, "00123");
+        assert_eq!(cfg.children[0].id, "00123");
+        assert_eq!(cfg.children[0].display_name, "NO");
+        assert_eq!(cfg.users[0].username, "on");
+        assert_eq!(cfg.users[0].child_id.as_deref(), Some("00123"));
+        assert_eq!(cfg.tasks[0].id, "off");
+        assert_eq!(cfg.tasks[0].name, "yes");
+        assert!(cfg.tasks[0].required);
+        let text = fs::read_to_string(file.path()).unwrap();
+        let migrated: Value = serde_saphyr::from_str(&text).unwrap();
+        assert_eq!(migrated["custom"]["retained"], "extra");
+        assert_eq!(migrated["children"][0]["id"], "00123");
+        assert_eq!(migrated["config_version"], env!("CARGO_PKG_VERSION"));
+        let again = AppConfig::load_from_path(file.path()).unwrap();
+        assert_eq!(again.jwt_secret, cfg.jwt_secret);
+        assert_eq!(fs::read_to_string(file.path()).unwrap(), text);
+    }
+
+    #[test]
+    fn malformed_yaml_diagnostics_do_not_expose_neighboring_secrets() {
+        let file = NamedTempFile::new().unwrap();
+        fs::write(
+            file.path(),
+            "jwt_secret: review-sentinel-never-log\nlisten_port: [unterminated\n",
+        )
+        .unwrap();
+        let error = AppConfig::load_from_path(file.path()).unwrap_err();
+        let rendered = error.to_string();
+        assert!(
+            !rendered.contains("review-sentinel-never-log"),
+            "{rendered}"
+        );
+        assert!(!format!("{error:?}").contains("review-sentinel-never-log"));
+        assert!(rendered.contains("line 2"), "{rendered}");
+    }
+
+    #[test]
+    fn typed_yaml_errors_do_not_render_values() {
+        let file = NamedTempFile::new().unwrap();
+        fs::write(file.path(), format!("config_version: '{}'\ntenant_id: family\njwt_secret: review-sentinel-never-log\nchildren: []\nusers: []\nlisten_port: not-a-port\n", env!("CARGO_PKG_VERSION"))).unwrap();
+        let error = AppConfig::load_from_path(file.path()).unwrap_err();
+        assert!(!error.to_string().contains("review-sentinel-never-log"));
+        assert!(!error.to_string().contains("not-a-port"));
     }
 }

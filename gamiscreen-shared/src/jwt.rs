@@ -63,3 +63,51 @@ pub fn tenant_id_from_token(token: &str) -> Result<String, JwtError> {
     let claims = decode_unverified(token)?;
     Ok(claims.tenant_id.clone())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn claims(exp: i64) -> JwtClaims {
+        JwtClaims {
+            sub: "parent".into(),
+            jti: "session".into(),
+            exp,
+            role: Role::Parent,
+            child_id: None,
+            device_id: None,
+            tenant_id: "family".into(),
+        }
+    }
+
+    #[test]
+    fn hs256_tokens_keep_claims_and_require_the_correct_secret() {
+        let token = encode(&claims(i64::MAX / 2), b"test secret").unwrap();
+        let decoded = decode_and_verify(&token, b"test secret").unwrap();
+        assert_eq!(decoded.tenant_id, "family");
+        assert_eq!(decoded.sub, "parent");
+        assert!(decode_and_verify(&token, b"wrong secret").is_err());
+        let unsigned = format!(
+            "{}.{}.",
+            token.split('.').next().unwrap(),
+            token.split('.').nth(1).unwrap()
+        );
+        assert!(decode_and_verify(&unsigned, b"test secret").is_err());
+    }
+
+    #[test]
+    fn expired_tokens_are_rejected() {
+        let token = encode(&claims(1), b"test secret").unwrap();
+        assert!(decode_and_verify(&token, b"test secret").is_err());
+    }
+
+    #[test]
+    fn existing_hs256_token_remains_valid_after_provider_change() {
+        // Fixed HS256 fixture signed independently with Python's hmac/sha256.
+        let token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJwYXJlbnQiLCJqdGkiOiJzZXNzaW9uIiwiZXhwIjo0MTAyNDQ0ODAwLCJyb2xlIjoicGFyZW50IiwiY2hpbGRfaWQiOm51bGwsImRldmljZV9pZCI6bnVsbCwidGVuYW50X2lkIjoiZmFtaWx5In0.pwVF5-s1PBeJenJrRQHm2LzgZ2NUrAaQdzSF_siyVE4";
+        assert_eq!(
+            decode_and_verify(token, b"test secret").unwrap().tenant_id,
+            "family"
+        );
+    }
+}
