@@ -287,8 +287,7 @@ export function ChildDetailsPage(props: { childId: string }) {
   const perPage = 10;
   const [rewardsOpen, setRewardsOpen] = useState(true);
   const [rewardsLoading, setRewardsLoading] = useState(false);
-  // Track locally submitted tasks to avoid duplicate submissions until page reload or approval
-  const [submitted, setSubmitted] = useState<Set<string>>(new Set());
+  const [submitting, setSubmitting] = useState<Set<string>>(new Set());
   const usageRequestIdRef = useRef(0);
 
   const handleTaskConfirm = useCallback((task: TaskWithStatusDto) => {
@@ -298,16 +297,21 @@ export function ChildDetailsPage(props: { childId: string }) {
 
   const handleTaskSubmit = useCallback(
     async (taskId: string) => {
+      setSubmitting((prev) => new Set(prev).add(taskId));
       try {
         await submitTask(childId, taskId);
         setError(null);
-        setSubmitted((prev) => {
-          const next = new Set(prev);
-          next.add(taskId);
-          return next;
-        });
+        setTasks((prev) => prev.map((task) =>
+          task.id === taskId ? { ...task, pending_submission: true } : task,
+        ));
       } catch (e: any) {
         setError(e.message || "Failed to submit task");
+      } finally {
+        setSubmitting((prev) => {
+          const next = new Set(prev);
+          next.delete(taskId);
+          return next;
+        });
       }
     },
     [childId],
@@ -823,7 +827,7 @@ export function ChildDetailsPage(props: { childId: string }) {
               muted={muted}
               isParent={isParent}
               isChild={isChild}
-              wasSubmitted={submitted.has(t.id)}
+              wasSubmitted={t.pending_submission || submitting.has(t.id)}
               onConfirm={handleTaskConfirm}
               onSubmit={handleTaskSubmit}
             />
