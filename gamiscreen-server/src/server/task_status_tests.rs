@@ -312,7 +312,11 @@ async fn task_status_manual_accept_clears_pending_submissions() {
     let submission_id = state.store.list_pending_submissions().await.unwrap()[0]
         .0
         .id;
-    state.store.submit_task("bob", &task.id).await.unwrap();
+    state
+        .store
+        .submit_task("bob", &task.id, state.config.family_tz)
+        .await
+        .unwrap();
     let mut rx = state.notif_tx.subscribe();
     let _ = api_child_reward(
         State(state.clone()),
@@ -397,4 +401,45 @@ async fn task_status_repeated_submit_keeps_one_pending_submission() {
         matches!(rx.try_recv(), Err(broadcast::error::TryRecvError::Empty)),
         "a repeated submit must not notify parents again"
     );
+}
+
+#[tokio::test]
+async fn task_status_submit_after_completion_today_is_rejected() {
+    let (state, _dir) = setup(30).await;
+    let task = state
+        .store
+        .create_task("Homework", 5, 2, 127, Some("00:00"), None)
+        .await
+        .unwrap();
+    state
+        .store
+        .record_task_done("alice", &task.id, "parent")
+        .await
+        .unwrap();
+    let mut rx = state.notif_tx.subscribe();
+    let result = api_submit_task(
+        State(state.clone()),
+        auth(Some("alice")),
+        Path(ChildTaskPath {
+            id: "alice".into(),
+            task_id: task.id.clone(),
+        }),
+    )
+    .await;
+    assert!(
+        matches!(&result, Err(AppError::BadRequest(message)) if message.contains("already completed today")),
+        "unexpected submit result: {result:?}"
+    );
+    assert_eq!(state.store.pending_submissions_count().await.unwrap(), 0);
+    assert!(matches!(
+        rx.try_recv(),
+        Err(broadcast::error::TryRecvError::Empty)
+    ));
+    // Bob has not completed the task, so he can still submit it.
+    state
+        .store
+        .submit_task("bob", &task.id, state.config.family_tz)
+        .await
+        .unwrap();
+    assert_eq!(state.store.pending_submissions_count().await.unwrap(), 1);
 }

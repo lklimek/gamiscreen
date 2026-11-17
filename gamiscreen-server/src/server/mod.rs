@@ -1298,17 +1298,14 @@ async fn api_submit_task(
         Some(cid) if cid == &p.id => {}
         _ => return Err(AppError::forbidden()),
     }
-    let created =
-        state
-            .store
-            .submit_task(&p.id, &p.task_id)
-            .await
-            .map_err(|error| match error {
-                crate::storage::StorageError::InvalidInput(message) => {
-                    AppError::bad_request(message)
-                }
-                other => AppError::internal(other),
-            })?;
+    let created = state
+        .store
+        .submit_task(&p.id, &p.task_id, state.config.family_tz)
+        .await
+        .map_err(|error| match error {
+            crate::storage::StorageError::InvalidInput(message) => AppError::bad_request(message),
+            other => AppError::internal(other),
+        })?;
     if created && let Ok(c) = state.store.pending_submissions_count().await {
         let event = ServerEvent::PendingCount { count: c as u32 };
         state.dispatch_event(event);
