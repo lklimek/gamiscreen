@@ -289,6 +289,7 @@ export function ChildDetailsPage(props: { childId: string }) {
   const [rewardsLoading, setRewardsLoading] = useState(false);
   const [submitting, setSubmitting] = useState<Set<string>>(new Set());
   const usageRequestIdRef = useRef(0);
+  const tasksRequestIdRef = useRef(0);
 
   const handleTaskConfirm = useCallback((task: TaskWithStatusDto) => {
     setTaskNote("");
@@ -300,6 +301,8 @@ export function ChildDetailsPage(props: { childId: string }) {
       setSubmitting((prev) => new Set(prev).add(taskId));
       try {
         await submitTask(childId, taskId);
+        // Discard task lists requested before this submission was stored.
+        tasksRequestIdRef.current++;
         setError(null);
         setTasks((prev) => prev.map((task) =>
           task.id === taskId ? { ...task, pending_submission: true } : task,
@@ -427,8 +430,9 @@ export function ChildDetailsPage(props: { childId: string }) {
       }
       // Anyone (parent or child) may list tasks for this child (includes last_done)
       try {
+        const requestId = ++tasksRequestIdRef.current;
         const ts = await listChildTasks(childId);
-        setTasks(ts);
+        if (tasksRequestIdRef.current === requestId) setTasks(ts);
       } catch (e) {
         // Non-fatal for this view
       }
