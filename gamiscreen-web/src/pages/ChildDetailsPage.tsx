@@ -309,6 +309,13 @@ export function ChildDetailsPage(props: { childId: string }) {
         ));
       } catch (e: any) {
         setError(e.message || "Failed to submit task");
+        // Refresh tasks so a rejected Submit (e.g. already done today) reflects server state.
+        const requestId = ++tasksRequestIdRef.current;
+        listChildTasks(childId)
+          .then((ts) => {
+            if (tasksRequestIdRef.current === requestId) setTasks(ts);
+          })
+          .catch(() => {});
       } finally {
         setSubmitting((prev) => {
           const next = new Set(prev);
