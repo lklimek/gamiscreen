@@ -3,6 +3,8 @@ pub mod auth;
 mod config;
 mod push;
 mod rate_limit;
+#[cfg(test)]
+mod task_status_tests;
 
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::{HeaderName, HeaderValue, Method, StatusCode, header};
@@ -18,7 +20,7 @@ use mime_guess::from_path;
 use push::PushService;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{Mutex, MutexGuard, broadcast};
+use tokio::sync::{Mutex, broadcast};
 use tokio_util::sync::CancellationToken;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
@@ -30,15 +32,18 @@ use crate::server::rate_limit::LoginRateLimiter;
 
 const MAX_PUSH_SUBSCRIPTIONS_PER_CHILD: i64 = 10;
 
-type ChildCacheMap =
-    std::sync::Arc<Mutex<std::collections::HashMap<String, std::sync::Arc<Mutex<Option<i32>>>>>>;
+type ChildLockMap =
+    std::sync::Arc<Mutex<std::collections::HashMap<String, std::sync::Arc<Mutex<()>>>>>;
+type ChildStatus = (i32, i32, bool);
+type PublishedStatusMap = std::sync::Arc<Mutex<std::collections::HashMap<String, ChildStatus>>>;
 
 #[derive(Clone)]
 pub struct AppState {
     pub config: AppConfig,
     pub store: crate::storage::Store,
-    // Cache of remaining minutes per child. None => needs recompute
-    children_cache: ChildCacheMap,
+    // Per-child locks that keep status publishes in update order.
+    child_locks: ChildLockMap,
+    published_status: PublishedStatusMap,
     // Broadcast notifications to connected websocket clients
     notif_tx: broadcast::Sender<ServerEvent>,
     // Global shutdown token to allow canceling long-lived streams (e.g., SSE)
@@ -55,7 +60,8 @@ impl AppState {
         Self {
             config,
             store,
-            children_cache: Default::default(),
+            child_locks: Default::default(),
+            published_status: Default::default(),
             notif_tx,
             shutdown: CancellationToken::new(),
             push,
@@ -67,49 +73,44 @@ impl AppState {
         self.shutdown.clone()
     }
 
-    async fn child_mutex(&self, child_id: &str) -> std::sync::Arc<Mutex<Option<i32>>> {
-        let mut map = self.children_cache.lock().await;
+    async fn child_mutex(&self, child_id: &str) -> std::sync::Arc<Mutex<()>> {
+        let mut map = self.child_locks.lock().await;
         map.entry(child_id.to_string())
             .or_insert_with(Default::default)
             .clone()
     }
 
-    /// Invalidate and recompute remaining minutes for child, broadcasting update.
-    pub async fn reset_remaining_minutes(
-        &self,
-        child_id: &str,
-        guard: &mut MinutesGuard<'_>,
-    ) -> Result<i32, AppError> {
-        let prev = guard.take().unwrap_or_default();
-        let stored = self
-            .store
-            .get_remaining(child_id)
-            .await
-            .map_err(AppError::internal)?;
-        **guard = Some(stored);
-        let all_done = self
-            .store
-            .all_required_tasks_done_today(child_id, self.config.family_tz)
-            .await
-            .map_err(AppError::internal)?;
-        let effective = if all_done { stored } else { 0 };
-
-        if effective != prev {
-            let balance = self
-                .store
-                .get_balance(child_id)
-                .await
-                .map_err(AppError::internal)?;
-            let event = ServerEvent::RemainingUpdated {
+    // Call while holding the child's mutex so status events preserve update order.
+    async fn publish_child_status(&self, child_id: &str) -> Result<ChildStatus, AppError> {
+        let status @ (remaining_minutes, balance, blocked_by_tasks) =
+            self.compute_child_status(child_id).await?;
+        let mut published = self.published_status.lock().await;
+        if published.get(child_id).copied() != Some(status) {
+            published.insert(child_id.to_string(), status);
+            self.dispatch_event(ServerEvent::RemainingUpdated {
                 child_id: child_id.to_string(),
-                remaining_minutes: effective,
+                remaining_minutes,
                 balance,
-                blocked_by_tasks: !all_done,
-            };
-            self.dispatch_event(event);
+                blocked_by_tasks,
+            });
         }
+        Ok(status)
+    }
 
-        Ok(effective)
+    /// Best-effort republish of every child's status; failures are logged per child.
+    async fn refresh_children_status(&self) {
+        // Refresh all children to cover both removed and newly added assignments.
+        for child in &self.config.children {
+            let mutex = self.child_mutex(&child.id).await;
+            let _guard = mutex.lock().await;
+            if let Err(error) = self.publish_child_status(&child.id).await {
+                tracing::warn!(
+                    child_id = %child.id,
+                    error = ?error,
+                    "failed to republish child status after task change; clients update on next heartbeat"
+                );
+            }
+        }
     }
 
     /// Compute (effective_remaining, balance, blocked_by_tasks) for a child.
@@ -138,31 +139,6 @@ impl AppState {
         if let Some(push) = &self.push {
             push.dispatch_event(self.store.clone(), event);
         }
-    }
-
-    pub async fn remaining_minutes(
-        &self,
-        child_id: &str,
-        guard: &mut MinutesGuard<'_>,
-    ) -> Result<i32, AppError> {
-        let stored = match **guard {
-            Some(v) => v,
-            None => {
-                let v = self
-                    .store
-                    .get_remaining(child_id)
-                    .await
-                    .map_err(AppError::internal)?;
-                **guard = Some(v);
-                v
-            }
-        };
-        let all_done = self
-            .store
-            .all_required_tasks_done_today(child_id, self.config.family_tz)
-            .await
-            .map_err(AppError::internal)?;
-        if all_done { Ok(stored) } else { Ok(0) }
     }
 }
 
@@ -662,6 +638,7 @@ async fn api_create_task(
         .map_err(AppError::internal)?
         .unwrap_or((task, Vec::new()));
 
+    state.refresh_children_status().await;
     Ok((
         StatusCode::CREATED,
         Json(task_to_management_dto(result.0, result.1)),
@@ -715,6 +692,7 @@ async fn api_update_task(
         .map_err(AppError::internal)?
         .unwrap_or((task, Vec::new()));
 
+    state.refresh_children_status().await;
     Ok(Json(task_to_management_dto(result.0, result.1)))
 }
 
@@ -736,6 +714,7 @@ async fn api_delete_task(
         )));
     }
 
+    state.refresh_children_status().await;
     Ok(Json(api::DeleteTaskResp { deleted: true }))
 }
 
@@ -745,6 +724,13 @@ async fn api_list_child_tasks(
     Path(id): Path<String>,
 ) -> Result<Json<Vec<api::TaskWithStatusDto>>, AppError> {
     // ACL enforced by middleware
+    // Read pending before completions: approval swaps them atomically, so a racing approval
+    // shows up as pending or completed, never neither.
+    let pending = state
+        .store
+        .pending_task_ids_for_child(&id)
+        .await
+        .map_err(AppError::internal)?;
     let rows = state
         .store
         .list_tasks_for_child(&id)
@@ -762,6 +748,7 @@ async fn api_list_child_tasks(
                 now,
             );
             api::TaskWithStatusDto {
+                pending_submission: pending.contains(&t.id),
                 id: t.id,
                 name: t.name,
                 minutes: t.minutes,
@@ -787,13 +774,9 @@ async fn api_remaining(
     Path(id): Path<String>,
 ) -> Result<Json<api::RemainingDto>, AppError> {
     // ACL enforced by middleware
-    // Warm the cache if needed
     let child_mutex = state.child_mutex(&id).await;
-    let mut child_guard = child_mutex.lock().await;
-    let _ = state.remaining_minutes(&id, &mut child_guard).await?;
-    drop(child_guard);
-
-    let (effective, balance, blocked) = state.compute_child_status(&id).await?;
+    let _child_guard = child_mutex.lock().await;
+    let (effective, balance, blocked) = state.publish_child_status(&id).await?;
     Ok(Json(api::RemainingDto {
         child_id: id,
         remaining_minutes: effective,
@@ -841,9 +824,9 @@ async fn api_child_reward(
         return Err(AppError::bad_request(format!("unknown child: {}", p.id)));
     }
 
-    // Invalidate cache for this child; compute after DB update
+    // Serialize with other updates for this child; compute after DB update
     let child_mutex = state.child_mutex(&p.id).await;
-    let mut child_guard = child_mutex.lock().await;
+    let _child_guard = child_mutex.lock().await;
 
     // Determine minutes and description rules:
     // - If task_id is provided, copy task name into description and use task.minutes
@@ -898,7 +881,7 @@ async fn api_child_reward(
         .task_id
         .as_deref()
         .map(|tid| (tid, auth.claims.sub.as_str()));
-    let new_remaining = state
+    state
         .store
         .add_reward_minutes(
             &p.id,
@@ -913,17 +896,15 @@ async fn api_child_reward(
             crate::storage::StorageError::InvalidInput(message) => AppError::bad_request(message),
             other => AppError::internal(other),
         })?;
-    *child_guard = Some(new_remaining);
 
-    let (effective, balance, blocked) = state.compute_child_status(&p.id).await?;
-
-    let event = ServerEvent::RemainingUpdated {
-        child_id: p.id.clone(),
-        remaining_minutes: effective,
-        balance,
-        blocked_by_tasks: blocked,
-    };
-    state.dispatch_event(event);
+    let (effective, balance, _) = state.publish_child_status(&p.id).await?;
+    if body.task_id.is_some()
+        && let Ok(count) = state.store.pending_submissions_count().await
+    {
+        state.dispatch_event(ServerEvent::PendingCount {
+            count: count as u32,
+        });
+    }
 
     Ok(Json(api::RewardResp {
         remaining_minutes: effective,
@@ -1176,7 +1157,7 @@ async fn sse_notifications(
     use futures::StreamExt;
     use tokio_stream::wrappers::BroadcastStream;
 
-    // Prepare a stream that first sends initial snapshot, then relays broadcasted events
+    let mut rx = state.notif_tx.subscribe();
     // Prepare initial snapshot
     let mut init_items: Vec<ServerEvent> = Vec::new();
     if claims.role == Role::Parent {
@@ -1187,14 +1168,8 @@ async fn sse_notifications(
         && let Some(cid) = claims.child_id.clone()
     {
         let child_mutex = state.child_mutex(&cid).await;
-        let mut guard = child_mutex.lock().await;
-        if let Ok(rem) = state.remaining_minutes(&cid, &mut guard).await {
-            let balance = state.store.get_balance(&cid).await.unwrap_or(0);
-            let blocked = !state
-                .store
-                .all_required_tasks_done_today(&cid, state.config.family_tz)
-                .await
-                .unwrap_or(false); // on failure, assume tasks NOT done (blocked)
+        let _guard = child_mutex.lock().await;
+        if let Ok((rem, balance, blocked)) = state.publish_child_status(&cid).await {
             init_items.push(ServerEvent::RemainingUpdated {
                 child_id: cid.clone(),
                 remaining_minutes: rem,
@@ -1202,9 +1177,10 @@ async fn sse_notifications(
                 blocked_by_tasks: blocked,
             });
         }
+        // Subscribe under the child mutex, after the snapshot, to avoid stale queued events.
+        rx = state.notif_tx.subscribe();
     }
 
-    let rx = state.notif_tx.subscribe();
     let bstream = BroadcastStream::new(rx)
         .filter_map(move |msg| {
             let claims2 = claims.clone();
@@ -1280,20 +1256,10 @@ async fn api_approve_submission(
         .approve_submission(id, &auth.claims.sub)
         .await
         .map_err(AppError::internal)?;
-    if let Some((child_id, new_remaining)) = result {
+    if let Some((child_id, _)) = result {
         let child_mutex = state.child_mutex(&child_id).await;
-        let mut child_guard = child_mutex.lock().await;
-        *child_guard = Some(new_remaining);
-        drop(child_guard);
-
-        let (effective, balance, blocked) = state.compute_child_status(&child_id).await?;
-        let event = ServerEvent::RemainingUpdated {
-            child_id: child_id.clone(),
-            remaining_minutes: effective,
-            balance,
-            blocked_by_tasks: blocked,
-        };
-        state.dispatch_event(event);
+        let _child_guard = child_mutex.lock().await;
+        state.publish_child_status(&child_id).await?;
         if let Ok(c) = state.store.pending_submissions_count().await {
             let event = ServerEvent::PendingCount { count: c as u32 };
             state.dispatch_event(event);
@@ -1332,22 +1298,20 @@ async fn api_submit_task(
         Some(cid) if cid == &p.id => {}
         _ => return Err(AppError::forbidden()),
     }
-    state
+    let created = state
         .store
-        .submit_task(&p.id, &p.task_id)
+        .submit_task(&p.id, &p.task_id, state.config.family_tz)
         .await
         .map_err(|error| match error {
             crate::storage::StorageError::InvalidInput(message) => AppError::bad_request(message),
             other => AppError::internal(other),
         })?;
-    if let Ok(c) = state.store.pending_submissions_count().await {
+    if created && let Ok(c) = state.store.pending_submissions_count().await {
         let event = ServerEvent::PendingCount { count: c as u32 };
         state.dispatch_event(event);
     }
     Ok(StatusCode::NO_CONTENT)
 }
-
-type MinutesGuard<'a> = MutexGuard<'a, Option<i32>>;
 
 async fn api_device_heartbeat(
     State(state): State<AppState>,
@@ -1357,30 +1321,14 @@ async fn api_device_heartbeat(
 ) -> Result<Json<api::HeartbeatResp>, AppError> {
     // Lock the child ID to avoid concurrent updates
     let child_mutex = state.child_mutex(&p.id).await;
-    let mut child_guard = child_mutex.lock().await;
+    let _child_guard = child_mutex.lock().await;
 
-    let prev = child_guard.unwrap_or(0);
-    let new_remaining = state
+    state
         .store
         .process_usage_minutes(&p.id, &p.device_id, &body.minutes)
         .await
         .map_err(AppError::internal)?;
-    *child_guard = Some(new_remaining);
-    drop(child_guard);
-
-    let (effective, balance, blocked) = state.compute_child_status(&p.id).await?;
-    let all_done = !blocked;
-
-    let prev_effective = if all_done { prev } else { 0 };
-    if effective != prev_effective {
-        let event = ServerEvent::RemainingUpdated {
-            child_id: p.id.clone(),
-            remaining_minutes: effective,
-            balance,
-            blocked_by_tasks: blocked,
-        };
-        state.dispatch_event(event);
-    }
+    let (effective, balance, blocked) = state.publish_child_status(&p.id).await?;
 
     Ok(Json(api::HeartbeatResp {
         remaining_minutes: effective,

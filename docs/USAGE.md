@@ -15,6 +15,10 @@ Child
 
 Parents use **Tasks** to create, edit and delete tasks, set priority and child assignments, and choose mandatory days and a start time in the configured family timezone. Tasks under **Now** are optional, currently blocking, or completed today; **Later** contains mandatory tasks that are not yet due. A mandatory task must have at least one scheduled day. Deleted tasks disappear from active lists while past completions and rewards remain available.
 
+Changing a task's schedule, assignments or mandatory status, or deleting it, updates connected clients. Locked clients also refresh access status every 60 seconds without consuming minutes. Once access is allowed again, the client stops re-locking; the child can unlock the session normally.
+
+The child view refreshes pending submissions from the server every 60 seconds or when **Refresh** is pressed. After rejection, a task can be submitted again. Approved recurring tasks become available again on the next family-local day. Reloading the page preserves the status of submissions that are still pending.
+
 On narrow screens, task details and actions wrap to fit. Reward history scrolls horizontally within its table when needed; keyboard users can focus the history region and use the arrow keys.
 
 Notes

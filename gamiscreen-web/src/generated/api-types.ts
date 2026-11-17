@@ -59,6 +59,10 @@ last_done: string | null,
  */
 completed_today: boolean,
 /**
+ * Whether this child has a submission awaiting parent approval.
+ */
+pending_submission: boolean,
+/**
  * Priority level: 1 (high), 2 (normal), 3 (low).
  */
 priority: number, 

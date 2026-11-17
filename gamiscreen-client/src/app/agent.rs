@@ -14,6 +14,10 @@ use tracing::{debug, error, info, warn};
 use crate::config::ClientConfig;
 use crate::{AppError, platform, sse, update};
 
+#[cfg(test)]
+#[path = "agent_tests.rs"]
+mod tests;
+
 const RELOCK_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const RELOCK_INITIAL_DELAY_SECS: u64 = 60;
 const RELOCK_DELAY_DECREMENT_PER_MINUTE: u64 = 10;
@@ -171,6 +175,7 @@ async fn main_loop(
         countdown_task,
         mut pending_minutes,
     } = ctx;
+    let base = crate::config::normalize_server_url(&cfg.server_url);
     let mut failures: u32 = 0;
     let fail_fuse_secs = HEARTBEAT_INTERVAL_SECS * 5;
     let interval = Duration::from_secs(HEARTBEAT_INTERVAL_SECS);
@@ -183,34 +188,36 @@ async fn main_loop(
         let start = std::time::Instant::now();
         let session_locked = platform.is_session_locked().await;
         debug!(?session_locked, "session lock status checked");
-        if let Ok(true) = &session_locked {
+        let session_locked = matches!(session_locked, Ok(true));
+        let response = if session_locked {
             countdown_task.cancel().await;
-            info!("session locked; skipping heartbeat and accounting for this interval");
-            let elapsed = start.elapsed();
-            if elapsed < interval {
-                tokio::select! {
-                    _ = cancel.cancelled() => { break; }
-                    _ = sleep(interval - elapsed) => {}
-                }
+            api::rest::child_remaining(&base, &claims.tenant_id, &child_id, &token)
+                .await
+                .map(|status| {
+                    Some(HeartbeatResp {
+                        remaining_minutes: status.remaining_minutes,
+                        balance: status.balance,
+                        blocked_by_tasks: status.blocked_by_tasks,
+                    })
+                })
+                .map_err(|e| AppError::Http(format!("status refresh error: {e}")))
+        } else {
+            let now_min: i64 = chrono::Utc::now().timestamp() / 60;
+            if let Err(e) = pending_minutes.insert(now_min) {
+                warn!(error=%e, "failed to append minute to pending log");
             }
-            continue;
-        }
+            send_pending(
+                &base,
+                &claims.tenant_id,
+                &child_id,
+                &device_id,
+                &token,
+                &mut pending_minutes,
+            )
+            .await
+        };
 
-        let now_min: i64 = chrono::Utc::now().timestamp() / 60;
-        if let Err(e) = pending_minutes.insert(now_min) {
-            warn!(error=%e, "failed to append minute to pending log");
-        }
-
-        match send_pending(
-            &cfg.server_url,
-            &claims.tenant_id,
-            &child_id,
-            &device_id,
-            &token,
-            &mut pending_minutes,
-        )
-        .await
-        {
+        match response {
             Ok(Some(resp)) => {
                 info!(
                     remaining = resp.remaining_minutes,
@@ -220,7 +227,9 @@ async fn main_loop(
                 );
                 failures = 0;
                 if resp.remaining_minutes >= 1 {
-                    countdown_task.tick(resp.remaining_minutes as u64).await;
+                    if !session_locked {
+                        countdown_task.tick(resp.remaining_minutes as u64).await;
+                    }
                     relocker.disable().await;
                 } else {
                     countdown_task.cancel().await;
@@ -231,10 +240,18 @@ async fn main_loop(
                     } else {
                         warn!("minutes exhausted; enabling re-lock loop");
                     }
-                    relocker.enable(Some(resp.remaining_minutes)).await;
+                    if session_locked {
+                        relocker.ensure_enabled(Some(resp.remaining_minutes)).await;
+                    } else {
+                        relocker.enable(Some(resp.remaining_minutes)).await;
+                    }
                 }
             }
             Ok(None) => {}
+            Err(e) if session_locked => {
+                // The session is already locked, so this outage must not arm the offline failsafe.
+                warn!(error=%e, "status refresh failed while session locked; will retry");
+            }
             Err(e) => {
                 failures = failures.saturating_add(1);
                 error!(error=%e, failures=failures, "heartbeat failed");
@@ -264,7 +281,7 @@ async fn main_loop(
 }
 
 async fn send_pending(
-    server_url: &str,
+    base: &str,
     tenant_id: &str,
     child_id: &str,
     device_id: &str,
@@ -274,10 +291,9 @@ async fn send_pending(
     if pending_minutes.is_empty() {
         return Ok(None);
     }
-    let base = crate::config::normalize_server_url(server_url);
     let minutes = pending_minutes.snapshot();
     let resp = api::rest::child_device_heartbeat_with_minutes(
-        &base, tenant_id, child_id, device_id, token, &minutes,
+        base, tenant_id, child_id, device_id, token, &minutes,
     )
     .await
     .map_err(|e| AppError::Http(format!("heartbeat error: {e}")))?;
@@ -606,12 +622,21 @@ impl ReLocker {
     }
 
     async fn enable(&self, remaining_minutes: Option<i32>) {
+        self.start(remaining_minutes, true).await;
+    }
+
+    /// Like `enable`, but leaves the notification of an already active loop untouched.
+    async fn ensure_enabled(&self, remaining_minutes: Option<i32>) {
+        self.start(remaining_minutes, false).await;
+    }
+
+    async fn start(&self, remaining_minutes: Option<i32>, refresh_notification: bool) {
         let remaining_secs = remaining_minutes.map(|rem| rem as i64 * 60);
 
         let mut h = self.handle.lock().await;
         if h.is_some() {
             drop(h);
-            if let Some(secs) = remaining_secs {
+            if refresh_notification && let Some(secs) = remaining_secs {
                 self.platform.update_notification(secs).await;
             }
             return;

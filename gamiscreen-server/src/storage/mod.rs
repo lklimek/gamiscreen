@@ -624,6 +624,27 @@ impl Store {
         .await?
     }
 
+    /// Task IDs submitted by this child and still awaiting parent approval.
+    pub async fn pending_task_ids_for_child(
+        &self,
+        child_id_: &str,
+    ) -> Result<std::collections::HashSet<String>, StorageError> {
+        use schema::task_submissions::dsl::*;
+        let pool = self.pool.clone();
+        let child = child_id_.to_string();
+        tokio::task::spawn_blocking(move || -> Result<_, StorageError> {
+            let mut conn = pool.get()?;
+            configure_sqlite_conn(&mut conn)?;
+            Ok(task_submissions
+                .filter(child_id.eq(child))
+                .select(task_id)
+                .load::<String>(&mut conn)?
+                .into_iter()
+                .collect())
+        })
+        .await?
+    }
+
     /// Seed children from config (always runs on startup).
     pub async fn seed_children_from_config(
         &self,
@@ -785,13 +806,20 @@ impl Store {
     }
 
     // Task submissions (pending approvals)
-    pub async fn submit_task(&self, child: &str, task: &str) -> Result<(), StorageError> {
+    /// Records a pending submission; returns `false` if one is already pending.
+    /// Rejects tasks the child already completed today in `family_tz`.
+    pub async fn submit_task(
+        &self,
+        child: &str,
+        task: &str,
+        family_tz: Tz,
+    ) -> Result<bool, StorageError> {
         use models::NewTaskSubmission;
-        use schema::task_submissions;
+        use schema::{task_completions, task_submissions};
         let pool = self.pool.clone();
         let c = child.to_string();
         let t = task.to_string();
-        tokio::task::spawn_blocking(move || -> Result<(), StorageError> {
+        tokio::task::spawn_blocking(move || -> Result<bool, StorageError> {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
             conn.immediate_transaction(|conn| {
@@ -812,6 +840,22 @@ impl Store {
                         "task is not available to this child".into(),
                     ));
                 }
+                let last_done: Option<NaiveDateTime> = task_completions::table
+                    .filter(task_completions::child_id.eq(&c))
+                    .filter(task_completions::task_id.eq(&t))
+                    .select(diesel::dsl::max(task_completions::done_at))
+                    .first(conn)?;
+                if is_completed_today(last_done, Utc::now().with_timezone(&family_tz)) {
+                    return Err(StorageError::InvalidInput(
+                        "task was already completed today".into(),
+                    ));
+                }
+                let pending = task_submissions::table
+                    .filter(task_submissions::child_id.eq(&c))
+                    .filter(task_submissions::task_id.eq(&t));
+                if diesel::select(exists(pending)).get_result::<bool>(conn)? {
+                    return Ok(false);
+                }
                 let rec = NewTaskSubmission {
                     child_id: &c,
                     task_id: &t,
@@ -819,7 +863,7 @@ impl Store {
                 diesel::insert_into(task_submissions::table)
                     .values(&rec)
                     .execute(conn)?;
-                Ok(())
+                Ok(true)
             })
         })
         .await?
@@ -930,10 +974,6 @@ impl Store {
                     .select(balances::minutes_remaining)
                     .first(conn)?;
                 record_task_done_inner(conn, &child_id, &task_id, &approver)?;
-                diesel::delete(
-                    task_submissions::table.filter(task_submissions::id.eq(submission_id)),
-                )
-                .execute(conn)?;
                 result = Some((child_id, new_remaining));
                 Ok(())
             })?;
@@ -1333,16 +1373,24 @@ fn record_task_done_inner(
     by_username: &str,
 ) -> Result<(), StorageError> {
     use models::NewTaskCompletion;
-    use schema::task_completions;
-    let rec = NewTaskCompletion {
-        child_id,
-        task_id,
-        by_username,
-    };
-    diesel::insert_into(task_completions::table)
-        .values(&rec)
+    use schema::{task_completions, task_submissions};
+    conn.transaction(|conn| {
+        let rec = NewTaskCompletion {
+            child_id,
+            task_id,
+            by_username,
+        };
+        diesel::insert_into(task_completions::table)
+            .values(&rec)
+            .execute(conn)?;
+        diesel::delete(
+            task_submissions::table
+                .filter(task_submissions::child_id.eq(child_id))
+                .filter(task_submissions::task_id.eq(task_id)),
+        )
         .execute(conn)?;
-    Ok(())
+        Ok(())
+    })
 }
 
 /// Read the stored account balance (virtual bank) for a child.
@@ -2435,7 +2483,10 @@ mod tests {
             .create_task("Test", 10, 2, 0, None, None)
             .await
             .unwrap();
-        store.submit_task("alice", &task.id).await.unwrap();
+        store
+            .submit_task("alice", &task.id, chrono_tz::UTC)
+            .await
+            .unwrap();
 
         let count_before = store.pending_submissions_count().await.unwrap();
         assert_eq!(count_before, 1);

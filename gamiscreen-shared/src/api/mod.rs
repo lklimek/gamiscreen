@@ -76,6 +76,9 @@ pub struct TaskWithStatusDto {
     pub last_done: Option<String>,
     /// Whether the most recent completion belongs to the current family-local day.
     pub completed_today: bool,
+    /// Whether this child has a submission awaiting parent approval.
+    #[serde(default)]
+    pub pending_submission: bool,
     /// Priority level: 1 (high), 2 (normal), 3 (low).
     pub priority: i32,
     /// 7-bit bitmask of mandatory days (bit 0 = Mon .. bit 6 = Sun). 0 = optional task.

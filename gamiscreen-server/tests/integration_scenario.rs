@@ -651,67 +651,22 @@ async fn parent_access_control() {
         )
         .await;
 
-    server
-        .request_expect_status(
+    // Homework was already rewarded today, so the child cannot submit it again.
+    let resubmit_error = server
+        .request_expect_text(
             "POST",
             &tenant_path("children/alice/tasks/homework/submit"),
             Some(&child_token),
             None,
-            StatusCode::NO_CONTENT,
+            StatusCode::BAD_REQUEST,
         )
         .await;
-
-    let notifications: Vec<api::NotificationItemDto> = server
-        .request_expect_json(
-            "GET",
-            &tenant_path("notifications"),
-            Some(&parent_token),
-            None,
-            StatusCode::OK,
-        )
-        .await;
-    let submission_id = notifications[0].id;
-    assert_eq!(notifications[0].task_id, "homework");
-    assert_eq!(notifications[0].child_id, "alice");
+    assert!(resubmit_error.contains("already completed today"));
 
     server
         .request_expect_status(
             "POST",
-            &tenant_path(&format!(
-                "notifications/task-submissions/{submission_id}/approve"
-            )),
-            Some(&parent_token),
-            None,
-            StatusCode::NO_CONTENT,
-        )
-        .await;
-
-    let count: api::NotificationsCountDto = server
-        .request_expect_json(
-            "GET",
-            &tenant_path("notifications/count"),
-            Some(&parent_token),
-            None,
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(count.count, 0);
-
-    let remaining_after_approve: api::RemainingDto = server
-        .request_expect_json(
-            "GET",
-            &tenant_path("children/alice/remaining"),
-            Some(&parent_token),
-            None,
-            StatusCode::OK,
-        )
-        .await;
-    assert_eq!(remaining_after_approve.remaining_minutes, 4);
-
-    server
-        .request_expect_status(
-            "POST",
-            &tenant_path("children/alice/tasks/homework/submit"),
+            &tenant_path("children/alice/tasks/chores/submit"),
             Some(&child_token),
             None,
             StatusCode::NO_CONTENT,
@@ -728,6 +683,8 @@ async fn parent_access_control() {
         )
         .await;
     let discard_id = notifications[0].id;
+    assert_eq!(notifications[0].task_id, "chores");
+    assert_eq!(notifications[0].child_id, "alice");
 
     server
         .request_expect_status(
@@ -762,6 +719,72 @@ async fn parent_access_control() {
         )
         .await;
     assert_eq!(count_after_discard.count, 0);
+
+    server
+        .request_expect_status(
+            "POST",
+            &tenant_path("children/alice/tasks/chores/submit"),
+            Some(&child_token),
+            None,
+            StatusCode::NO_CONTENT,
+        )
+        .await;
+
+    let notifications: Vec<api::NotificationItemDto> = server
+        .request_expect_json(
+            "GET",
+            &tenant_path("notifications"),
+            Some(&parent_token),
+            None,
+            StatusCode::OK,
+        )
+        .await;
+    let submission_id = notifications[0].id;
+
+    server
+        .request_expect_status(
+            "POST",
+            &tenant_path(&format!(
+                "notifications/task-submissions/{submission_id}/approve"
+            )),
+            Some(&parent_token),
+            None,
+            StatusCode::NO_CONTENT,
+        )
+        .await;
+
+    let count: api::NotificationsCountDto = server
+        .request_expect_json(
+            "GET",
+            &tenant_path("notifications/count"),
+            Some(&parent_token),
+            None,
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(count.count, 0);
+
+    let remaining_after_approve: api::RemainingDto = server
+        .request_expect_json(
+            "GET",
+            &tenant_path("children/alice/remaining"),
+            Some(&parent_token),
+            None,
+            StatusCode::OK,
+        )
+        .await;
+    assert_eq!(remaining_after_approve.remaining_minutes, 3);
+
+    // Approval completes the task for today, so it cannot be submitted again.
+    server
+        .request_expect_status(
+            "POST",
+            &tenant_path("children/alice/tasks/chores/submit"),
+            Some(&child_token),
+            None,
+            StatusCode::BAD_REQUEST,
+        )
+        .await;
 }
 
 #[tokio::test]
@@ -874,10 +897,11 @@ async fn child_access_control() {
         .await;
     assert_eq!(remaining_after.remaining_minutes, 1);
 
+    // Homework was already rewarded today, so submit a task that is still open.
     server
         .request_expect_status(
             "POST",
-            &tenant_path("children/alice/tasks/homework/submit"),
+            &tenant_path("children/alice/tasks/chores/submit"),
             Some(&child_token),
             None,
             StatusCode::NO_CONTENT,
