@@ -724,6 +724,13 @@ async fn api_list_child_tasks(
     Path(id): Path<String>,
 ) -> Result<Json<Vec<api::TaskWithStatusDto>>, AppError> {
     // ACL enforced by middleware
+    // Read pending before completions: approval swaps them atomically, so a racing approval
+    // shows up as pending or completed, never neither.
+    let pending = state
+        .store
+        .pending_task_ids_for_child(&id)
+        .await
+        .map_err(AppError::internal)?;
     let rows = state
         .store
         .list_tasks_for_child(&id)
@@ -731,11 +738,6 @@ async fn api_list_child_tasks(
         .map_err(AppError::internal)?;
     let family_tz = state.config.family_tz;
     let now = chrono::Utc::now().with_timezone(&family_tz);
-    let pending = state
-        .store
-        .pending_task_ids_for_child(&id)
-        .await
-        .map_err(AppError::internal)?;
     let items = rows
         .into_iter()
         .map(|(t, last)| {
