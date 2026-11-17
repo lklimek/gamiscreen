@@ -349,3 +349,52 @@ async fn task_status_manual_accept_clears_pending_submissions() {
     assert_eq!(state.store.get_remaining("alice").await.unwrap(), 35);
     assert_eq!(state.store.pending_submissions_count().await.unwrap(), 1);
 }
+
+#[tokio::test]
+async fn task_status_refresh_failure_does_not_fail_committed_task_change() {
+    let (mut state, _dir) = setup(30).await;
+    // A configured child without stored balances makes its status refresh fail.
+    state.config.children.insert(
+        0,
+        gamiscreen_shared::domain::Child {
+            id: "carol".into(),
+            display_name: "Carol".into(),
+        },
+    );
+    let mut rx = state.notif_tx.subscribe();
+    let (_, Json(task)) = api_create_task(
+        State(state.clone()),
+        auth(None),
+        Json(serde_json::from_value(task_body()).unwrap()),
+    )
+    .await
+    .expect("a committed task change must not be reported as failed");
+    expect_status(&mut rx, "alice", true);
+    assert!(
+        state
+            .store
+            .get_task_by_id(&task.id)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn task_status_repeated_submit_keeps_one_pending_submission() {
+    let (state, _dir) = setup(30).await;
+    let task = state
+        .store
+        .create_task("Homework", 5, 2, 127, Some("00:00"), None)
+        .await
+        .unwrap();
+    submit(&state, &task.id).await;
+    let mut rx = state.notif_tx.subscribe();
+    submit(&state, &task.id).await;
+    assert_eq!(state.store.pending_submissions_count().await.unwrap(), 1);
+    assert_eq!(child_task(&state).await["pending_submission"], true);
+    assert!(
+        matches!(rx.try_recv(), Err(broadcast::error::TryRecvError::Empty)),
+        "a repeated submit must not notify parents again"
+    );
+}

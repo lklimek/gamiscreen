@@ -806,13 +806,14 @@ impl Store {
     }
 
     // Task submissions (pending approvals)
-    pub async fn submit_task(&self, child: &str, task: &str) -> Result<(), StorageError> {
+    /// Records a pending submission; returns `false` if one is already pending.
+    pub async fn submit_task(&self, child: &str, task: &str) -> Result<bool, StorageError> {
         use models::NewTaskSubmission;
         use schema::task_submissions;
         let pool = self.pool.clone();
         let c = child.to_string();
         let t = task.to_string();
-        tokio::task::spawn_blocking(move || -> Result<(), StorageError> {
+        tokio::task::spawn_blocking(move || -> Result<bool, StorageError> {
             let mut conn = pool.get()?;
             configure_sqlite_conn(&mut conn)?;
             conn.immediate_transaction(|conn| {
@@ -833,6 +834,12 @@ impl Store {
                         "task is not available to this child".into(),
                     ));
                 }
+                let pending = task_submissions::table
+                    .filter(task_submissions::child_id.eq(&c))
+                    .filter(task_submissions::task_id.eq(&t));
+                if diesel::select(exists(pending)).get_result::<bool>(conn)? {
+                    return Ok(false);
+                }
                 let rec = NewTaskSubmission {
                     child_id: &c,
                     task_id: &t,
@@ -840,7 +847,7 @@ impl Store {
                 diesel::insert_into(task_submissions::table)
                     .values(&rec)
                     .execute(conn)?;
-                Ok(())
+                Ok(true)
             })
         })
         .await?
